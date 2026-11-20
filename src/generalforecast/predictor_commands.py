@@ -935,16 +935,6 @@ class PredictorCommands:
                     raise
         number = (current.revision or 0) + 1 if current else 1
         context = predictor.get("context") or {}
-        resources = spec.document.get("resources")
-        resources = resources if isinstance(resources, dict) else {}
-        replicas = resources.get("replicas")
-        replicas = replicas if isinstance(replicas, dict) else {}
-        accelerator = resources.get("accelerator") or "L4"
-        hardware = (
-            f"{accelerator}, "
-            f"{replicas.get('min') or 0}-{replicas.get('max') or 1} replicas, "
-            f"idle {resources.get('idle_seconds') or 300}s"
-        )
         plan = [
             ("name", name),
             ("revision", str(number)),
@@ -963,8 +953,12 @@ class PredictorCommands:
                 )
                 + (f", {_short(context['digest'])}" if context.get("digest") else ""),
             ),
-            ("hardware", hardware),
-            ("first call", _cost_line(accelerator)),
+            # Every predictor runs on the service's shared GPU pool, whatever
+            # gf.yaml's `resources` says.
+            (
+                "runs on",
+                "shared H100 pool; the first call after 20 idle minutes starts it",
+            ),
         ]
         # The plan is what a confirmation answers, so it shows whenever one is asked.
         out.table(plan, indent=2, force=not args.yes)
@@ -1498,9 +1492,3 @@ def _bytes(size: float) -> str:
             return f"{size:.1f} {unit}" if unit != "B" else f"{size} B"
         size /= 1024
     return f"{size:.1f} GiB"
-
-
-def _cost_line(accelerator: str) -> str:
-    rates = {"cpu": 0.0002, "L4": 0.0004, "A10G": 0.0006, "L40S": 0.0010}
-    starts = {"cpu": 15, "L4": 40, "A10G": 40, "L40S": 45}
-    return f"about ${rates.get(accelerator, 0.0004):.4f} after a cold start of about {starts.get(accelerator, 40)}s"
