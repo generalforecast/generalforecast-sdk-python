@@ -1,0 +1,7 @@
+name: churn
+model: general-forecast/tabicl-v2-classifier
+target: churned
+id: customer_id
+context:
+  snapshot: customers.csv
+  holdout: {fraction: 0.2, seed: 0}
