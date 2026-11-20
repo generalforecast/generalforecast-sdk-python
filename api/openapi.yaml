@@ -328,11 +328,11 @@ paths:
                     resource: {kind: predictor, name: ad-hoc}
                     error:
                       code: CapacityExceeded
-                      message: queries exceed the limit for general-forecast/tabicl-v2-classifier
-                      param: queries
-                      hint: split the queries, or push a predictor and call it in batches
-                      limit: 100
-                      actual: 1000
+                      message: context exceeds the limit for general-forecast/tabicl-v2-classifier
+                      param: context
+                      hint: pass a selection with core and neighbors, or push the rows as a context with a predictor that reads it
+                      limit: 100000
+                      actual: 250000
         "202":
           $ref: "#/components/responses/Accepted"
         "503":
@@ -1155,9 +1155,12 @@ paths:
         model digest other than the one `previous` pins is refused unless
         `upgrade` is true. With `keep`, a snapshot context's resolved rows
         are stored as the snapshot `<name>-<12 hex of their digest>` and
-        `snapshot` answers it; `gf push` then registers the revision with
-        `lock`, `snapshot.digest` and `manifest`. Without `keep` nothing is
-        written, and the predictor need not exist.
+        `snapshot` answers it. With `deploy`, a snapshot context's every
+        labeled row, those the holdout or `until` holds out included, is
+        stored that way, and `deployed` answers the lock and manifest for
+        them; `gf push` registers the revision with `deployed.lock`,
+        `deployed.snapshot.digest` and `deployed.manifest`. Without `keep`
+        or `deploy` nothing is written, and the predictor need not exist.
       parameters:
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/predictor"
@@ -6077,7 +6080,9 @@ components:
 
     Limits:
       type: object
-      description: the most a model accepts in one call
+      description: |
+        a model's bounds: the most context rows and inputs one call sends
+        it, and `queries`, how many query rows it scores in one pass
       required: [context_rows, queries, inputs]
       additionalProperties: false
       properties:
@@ -6337,7 +6342,7 @@ components:
       type: object
       description: |
         the catalog's description of a served model: `model` is the resolved
-        id with its content digest, `limits` what one call may send here,
+        id with its content digest, `limits` its bounds,
         `warm_shapes` the shapes compiled at startup
       required: [model, name, task, artifact, bounds, capabilities, runtime, license, repository, revision, limits, warm_shapes]
       additionalProperties: false
@@ -8992,7 +8997,14 @@ components:
           default: false
           description: |
             store a snapshot context's resolved rows as a content-addressed
-            snapshot, for `gf push`; without it nothing is written
+            snapshot; without it, or `deploy`, nothing is written
+        deploy:
+          type: boolean
+          default: false
+          description: |
+            store a snapshot context's every labeled row, those the holdout
+            or `until` holds out included, as a content-addressed snapshot,
+            and answer `deployed`, what `gf push` registers; not with `keep`
 
     PredictorCheckRequest:
       allOf:
@@ -9028,6 +9040,31 @@ components:
             - $ref: "#/components/schemas/KeptSnapshot"
             - type: "null"
           description: with `keep` and a snapshot context, the stored rows; null otherwise
+        deployed:
+          oneOf:
+            - $ref: "#/components/schemas/DeployedContext"
+            - type: "null"
+          description: with `deploy`, what a push registers for a snapshot context; null for another context, absent without `deploy`
+
+    DeployedContext:
+      type: object
+      description: |
+        a snapshot context's every labeled row, those the holdout or `until`
+        holds out included, stored for `gf push`, with the lock and manifest
+        for them
+      required: [lock, manifest, context, snapshot, held_out]
+      additionalProperties: false
+      properties:
+        lock: {$ref: "#/components/schemas/Lock"}
+        manifest:
+          type: object
+          description: the normalized gf.yaml document without the context's holdout and `until`
+        context: {$ref: "#/components/schemas/CheckedContext"}
+        snapshot: {$ref: "#/components/schemas/KeptSnapshot"}
+        held_out:
+          type: integer
+          minimum: 0
+          description: how many of the rows the holdout or `until` holds out from `lock`'s split context
 
     CheckedContext:
       type: object

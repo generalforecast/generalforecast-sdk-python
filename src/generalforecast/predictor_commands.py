@@ -956,6 +956,11 @@ class PredictorCommands:
             (
                 "context",
                 f"{context.get('kind')}, {term.count(context.get('rows', 0))} rows"
+                + (
+                    " and those gf eval holds out"
+                    if context.get("holdout") or context.get("until")
+                    else ""
+                )
                 + (f", {_short(context['digest'])}" if context.get("digest") else ""),
             ),
             ("hardware", hardware),
@@ -966,17 +971,23 @@ class PredictorCommands:
         self.confirm("Push?", declined="Nothing was pushed.")
         rows = checked.checked.snapshot
         if rows is not None:
+            source = _snapshot_source(spec.document)
             out.status(
                 "Uploading",
-                f"{name} revision {number}  snapshot, {term.count(rows.num_rows)} rows, {_bytes(rows.nbytes)}",
+                f"{name} revision {number}  {source}, "
+                f"{term.count(rows.num_rows)} rows, {_bytes(rows.nbytes)}",
             )
         else:
             out.status("Uploading", f"{name} revision {number}  {context.get('kind')}")
-        # The service checks the directory again and keeps the snapshot's
-        # resolved rows, which the revision then names by their digest.
+        # The service checks the directory again and stores a snapshot's
+        # every labeled row, those gf eval held out included, which the
+        # revision then names by their digest.
         with during(f"the check of predictor {name}"):
-            answer = self.client.predictors.check(root, keep=True)
+            answer = self.client.predictors.check(root, deploy=True)
         payload = registered(answer, checked.lock)
+        deployed = answer.get("deployed")
+        if isinstance(deployed, dict):
+            out.status("Context", _deployed_rows(deployed))
         started = time.perf_counter()
         if not exists:
             with during(f"the registration of predictor {name}"):
@@ -1462,6 +1473,22 @@ def _number(value: Any) -> Any:
     if isinstance(value, str) and re.fullmatch(r"\d+", value):
         return int(value)
     return value
+
+
+def _snapshot_source(document: Any) -> str:
+    """The file a manifest's snapshot context names, as gf.yaml writes it."""
+    context = document.get("context") if isinstance(document, dict) else None
+    source = context.get("snapshot") if isinstance(context, dict) else None
+    return str(source) if isinstance(source, str) else "snapshot"
+
+
+def _deployed_rows(deployed: dict) -> str:
+    """What a push deploys: every labeled row, and how many of them gf eval held out."""
+    rows = term.count(deployed["context"]["rows"])
+    held = deployed["held_out"]
+    if held:
+        return f"{rows} rows, including the {term.count(held)} gf eval held out"
+    return f"{rows} rows"
 
 
 def _bytes(size: float) -> str:

@@ -182,6 +182,7 @@ class Client:
         selection: JsonObject | None = None,
         exclude: Sequence[str] = (),
         future: Sequence[str] = (),
+        request_id: str | None = None,
     ) -> PredictionResult:
         """Predicts with an ad hoc predictor: a manifest fragment plus rows.
 
@@ -201,10 +202,14 @@ class Client:
             selection: How each query's context is drawn: core, neighbors, kind.
             exclude: Columns left out of the inferred inputs.
             future: A forecaster's inputs whose values each query brings ahead.
+            request_id: The id the prediction is sent under; a fresh one if
+                None. Past `contracts.MAX_QUERIES` queries the rows go as
+                several calls, `<request_id>-1`, `<request_id>-2` and so on,
+                and come back as one result in the order given.
 
         Raises:
-            CapacityExceeded: For more context rows, queries or inputs than the
-                model takes in one call; push a context and a predictor for more.
+            CapacityExceeded: For more context rows or inputs than the model
+                reads; push a context and a predictor for more.
         """
         return self._run(
             ops.predict(
@@ -224,6 +229,7 @@ class Client:
                 selection=selection,
                 exclude=exclude,
                 future=future,
+                request_id=request_id,
             )
         )
 
@@ -979,6 +985,7 @@ class Predictors(Collection):
         context: Any = None,
         as_of: Any = None,
         env: str | None = None,
+        request_id: str | None = None,
     ) -> PredictionResult:
         """Predicts with a declared predictor in an environment.
 
@@ -989,15 +996,30 @@ class Predictors(Collection):
                 context kind is `request`.
             as_of: The time the context is read as of, for a live context.
             env: The environment; the profile's (`production` by default).
+            request_id: The id the prediction is sent under; a fresh one if
+                None. Past `contracts.MAX_QUERIES` queries the rows go as
+                several calls, `<request_id>-1`, `<request_id>-2` and so on,
+                and come back as one result in the order given.
         """
         return self.client._run(
             ops.predictor_predict(
-                self.client, predictor, queries, context=context, as_of=as_of, env=env
+                self.client,
+                predictor,
+                queries,
+                context=context,
+                as_of=as_of,
+                env=env,
+                request_id=request_id,
             )
         )
 
     def check(
-        self, predictor: str | Path, *, upgrade: bool = False, keep: bool = False
+        self,
+        predictor: str | Path,
+        *,
+        upgrade: bool = False,
+        keep: bool = False,
+        deploy: bool = False,
     ) -> JsonObject:
         """Resolves a predictor directory's `gf.yaml` on the service.
 
@@ -1009,11 +1031,17 @@ class Predictors(Collection):
         Args:
             predictor: The predictor directory.
             upgrade: Accept a model digest other than the previous lock pins.
-            keep: Store a snapshot context's resolved rows for a push; the
-                answer's `snapshot` names them. Without it nothing is written.
+            keep: Store a snapshot context's resolved rows; the answer's
+                `snapshot` names them. Without it nothing is written.
+            deploy: Store a snapshot context's every labeled row, those the
+                holdout or `until` held out included, as a push deploys
+                them; the answer's `deployed` names the lock, manifest and
+                snapshot for them. Not with `keep`.
         """
         return self.client._run(
-            ops.predictor_check(self.client, predictor, upgrade=upgrade, keep=keep)
+            ops.predictor_check(
+                self.client, predictor, upgrade=upgrade, keep=keep, deploy=deploy
+            )
         )
 
     def evaluate(

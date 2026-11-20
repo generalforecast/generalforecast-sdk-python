@@ -102,6 +102,8 @@ from generalforecast.tabular import arrow_bytes
 from generalforecast.validation import PredictorError, bytes_digest
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from generalforecast.transport import Profile, Reply
 
 ARROW_STREAM = "application/vnd.apache.arrow.stream"
@@ -131,6 +133,8 @@ class Call:
     (`generalforecast.retry`): `PREDICT`, `READ` or `WRITE`, for a write the
     service applies once however often it is sent, or `ONCE`. None retries
     a GET as a `READ` and sends any other request once.
+
+    `request_id` is the id the call is sent under; a fresh one if None.
     """
 
     method: str
@@ -142,6 +146,7 @@ class Call:
     params: Mapping[str, Any] | None = None
     deadline: float | None = None
     retry: str | None = None
+    request_id: str | None = None
 
     @property
     def retry_class(self) -> str | None:
@@ -214,6 +219,11 @@ class Prepared:
     deadline: float | None = None
 
 
+def new_request_id() -> str:
+    """A fresh request id, as every call is sent under unless it names one."""
+    return "r-" + uuid.uuid4().hex
+
+
 def prepare(
     project: str, step: Call | Upload | Chunk, *, respond_async: bool = True
 ) -> Prepared:
@@ -223,7 +233,11 @@ def prepare(
     (`Prefer: respond-async`) unless `respond_async` is False, as it is for
     a server known to be a standalone model server.
     """
-    request_id = "r-" + uuid.uuid4().hex
+    request_id = (
+        step.request_id
+        if isinstance(step, Call) and step.request_id is not None
+        else new_request_id()
+    )
     if isinstance(step, Chunk):
         end = step.start + len(step.data) - 1
         return Prepared(
@@ -458,12 +472,16 @@ class Context(Protocol):
     _live_context: Any
 
 
-def predict(client: Context, **settings: Any) -> Operation[PredictionResult]:
+def predict(
+    client: Context, *, request_id: str | None = None, **settings: Any
+) -> Operation[PredictionResult]:
     """`POST /predict`: an ad hoc predictor's manifest fragment and rows.
 
     The model's task and limits come from `GET /models/{name}`, read once
     per client and model, so a request the model cannot take is refused
-    before its rows are sent.
+    before its rows are sent. More queries than one call carries go as
+    several calls (`generalforecast.batches`), a forecaster's series each
+    whole within one, and come back as one result in the order given.
     """
     from generalforecast.catalog import ModelInfo
     from generalforecast.predict_request import PredictRequest
@@ -476,10 +494,73 @@ def predict(client: Context, **settings: Any) -> Operation[PredictionResult]:
         if isinstance(seen, dict):
             seen[model] = entry
     request = yield Work(PredictRequest.build, kwargs={**settings, "entry": entry})
-    result = yield Call(
-        "POST", "/predict", "predictor", "ad-hoc", request.payload(), retry=PREDICT
+    series = request.series if request.task == "forecast" else ()
+    return (
+        yield from _in_parts(
+            request.queries,
+            series,
+            request_id,
+            yield_payload=lambda queries: Work(request.payload, (queries,)),
+            path="/predict",
+            resource="ad-hoc",
+            params=None,
+        )
     )
-    return inference_result(result)
+
+
+def _in_parts(
+    queries: pa.Table,
+    series: tuple[str, ...],
+    request_id: str | None,
+    *,
+    yield_payload: Callable[[pa.Table | None], Work],
+    path: str,
+    resource: str,
+    params: Mapping[str, Any] | None,
+) -> Generator[Step, Any, PredictionResult]:
+    """Scores `queries` in calls of at most `MAX_QUERIES` rows and stitches the results.
+
+    One call goes under `request_id` as given. Several go under
+    `<request_id>-1`, `<request_id>-2` and so on, one id for the whole, and
+    an error a part answers with names the query rows it carried.
+    """
+    import pyarrow as pa
+
+    from generalforecast.batches import described, part_id, query_batches, stitched
+    from generalforecast.contracts import MAX_QUERIES
+
+    if queries.num_rows <= MAX_QUERIES:
+        payload = yield yield_payload(None)
+        result = yield Call(
+            "POST",
+            path,
+            "predictor",
+            resource,
+            payload,
+            params=params,
+            retry=PREDICT,
+            request_id=request_id,
+        )
+        return inference_result(result)
+    base = request_id if request_id is not None else new_request_id()
+    batches = query_batches(queries, series, MAX_QUERIES)
+    results, order = [], []
+    for part, rows in enumerate(batches, start=1):
+        payload = yield yield_payload(queries.take(pa.array(rows)))
+        with during(described(rows, part, len(batches), queries.num_rows)):
+            result = yield Call(
+                "POST",
+                path,
+                "predictor",
+                resource,
+                payload,
+                params=params,
+                retry=PREDICT,
+                request_id=part_id(base, part),
+            )
+        results.append(inference_result(result))
+        order.append(rows)
+    return stitched(results, order)
 
 
 def snapshot_name(prefix: str, digest: str) -> str:
@@ -1506,32 +1587,47 @@ def predictor_predict(
     context: Any,
     as_of: Any,
     env: str | None,
+    request_id: str | None = None,
 ) -> Operation[PredictionResult]:
     """Predicts with a declared predictor in an environment, the profile's by default.
 
     Services score `production` when a request names no environment, so
     production is named by omission; a standalone model server, whose
-    predictors have no environments, refuses any other.
+    predictors have no environments, refuses any other. More queries than
+    one call carries go as several calls, as `predict` sends them; for
+    those, the predictor is read first, so a forecaster's series stay whole.
     """
+    from generalforecast import tabular
+    from generalforecast.contracts import MAX_QUERIES
     from generalforecast.predict_request import PredictRequest
     from generalforecast.transport import DEFAULT_ENVIRONMENT
 
-    payload = yield Work(
-        PredictRequest.declared_payload,
-        (queries,),
-        {"context": context, "as_of": as_of},
-    )
+    table = yield Work(tabular.frame, (queries,))
+    series: tuple[str, ...] = ()
+    if table.num_rows > MAX_QUERIES:
+        facts = yield from got("predictor", "predictors", predictor)
+        if isinstance(facts, dict) and facts.get("task") == "forecast":
+            series = tuple(facts.get("series") or ())
     selected = environment_name(env, client.profile.environment)
-    result = yield Call(
-        "POST",
-        _predictor(predictor, "/predict"),
-        "predictor",
-        predictor,
-        payload,
-        params=None if selected == DEFAULT_ENVIRONMENT else {"env": selected},
-        retry=PREDICT,
+
+    def payload(part: pa.Table | None) -> Work:
+        return Work(
+            PredictRequest.declared_payload,
+            (table if part is None else part,),
+            {"context": context, "as_of": as_of},
+        )
+
+    return (
+        yield from _in_parts(
+            table,
+            series,
+            request_id,
+            yield_payload=payload,
+            path=_predictor(predictor, "/predict"),
+            resource=predictor,
+            params=None if selected == DEFAULT_ENVIRONMENT else {"env": selected},
+        )
     )
-    return inference_result(result)
 
 
 def predictor_push(
@@ -1544,15 +1640,18 @@ def predictor_push(
 ) -> Operation[Revision]:
     """Registers a checked predictor's revision and points an environment at it.
 
-    The service checks the directory again with `keep`, which stores a
-    snapshot context's resolved rows, and the revision registers the lock,
-    those rows' digest and the normalized manifest it answers. A lock that
-    is no longer what `gf check` wrote is refused before anything registers.
+    The service checks the directory again with `deploy`, which stores a
+    snapshot context's every labeled row, those `gf eval` held out included,
+    and answers the lock and manifest for them; the revision registers that
+    lock, those rows' digest and that manifest. A lock that is no longer
+    what `gf check` wrote is refused before anything registers.
     """
     checked = yield Work(pushed, (predictor,))
     resource = checked.name
     selected = environment_name(env, client.profile.environment)
-    answer = yield from _checked(client, checked.checked, upgrade=False, keep=True)
+    answer = yield from _checked(
+        client, checked.checked, upgrade=False, keep=False, deploy=True
+    )
     revision_payload = registered(answer, checked.lock)
     try:
         yield from got("predictor", "predictors", resource)
@@ -1597,10 +1696,13 @@ def predictor_push(
 
 
 def registered(answer: JsonObject, lock: PredictorLock) -> JsonObject:
-    """The `POST /predictors/{name}/revisions` payload from a check that kept its rows.
+    """The `POST /predictors/{name}/revisions` payload from a check with `deploy`.
 
-    Raises `LockRequired` when the service resolved another lock than the
-    directory's: the manifest, its snapshot or the model moved since `gf check`.
+    A snapshot context deploys as the answer's `deployed` names it: every
+    labeled row, under the lock and manifest for them. Any other context
+    deploys as checked. Raises `LockRequired` when the service resolved
+    another lock than the directory's: the manifest, its snapshot or the
+    model moved since `gf check`.
     """
     if answer["lock"].get("digest") != lock.digest:
         raise ServiceError(
@@ -1611,6 +1713,13 @@ def registered(answer: JsonObject, lock: PredictorLock) -> JsonObject:
             param="lock",
             hint="run `gf check` again",
         )
+    deployed = answer.get("deployed")
+    if isinstance(deployed, dict):
+        return {
+            "lock": deployed["lock"],
+            "snapshot": deployed["snapshot"]["digest"],
+            "manifest": deployed["manifest"],
+        }
     kept = answer.get("snapshot")
     return {
         "lock": answer["lock"],
@@ -1640,28 +1749,39 @@ def _checked_snapshot(
 
 
 def _checked(
-    client: Context, checked: Checked, *, upgrade: bool, keep: bool
+    client: Context,
+    checked: Checked,
+    *,
+    upgrade: bool,
+    keep: bool,
+    deploy: bool = False,
 ) -> Generator[Step, Any, JsonObject]:
     """Uploads the manifest's snapshot and has the service check the manifest against it."""
+    require(not (keep and deploy), "a check keeps its rows or deploys them, not both")
     resource = checked.manifest.name
     snapshot = yield from _checked_snapshot(client, checked)
+    payload: JsonObject = {
+        "manifest": checked.manifest.text,
+        "snapshot": snapshot,
+        "previous": checked.previous,
+        "upgrade": upgrade,
+        "keep": keep,
+    }
+    if deploy:
+        payload["deploy"] = True
     value = yield Call(
         "POST",
         _predictor(resource, "/check"),
         "predictor",
         resource,
-        {
-            "manifest": checked.manifest.text,
-            "snapshot": snapshot,
-            "previous": checked.previous,
-            "upgrade": upgrade,
-            "keep": keep,
-        },
+        payload,
         retry=PREDICT,
     )
     if type(value) is not dict or type(value.get("lock")) is not dict:
         raise ServiceError("ProtocolError", "invalid check response", 502)
     decoded(PredictorLock.from_dict, value["lock"], "lock")
+    if deploy:
+        _deployed(value, snapshot)
     if keep:
         kept = value.get("snapshot")
         if type(value.get("manifest")) is not dict or not (
@@ -1677,23 +1797,53 @@ def _checked(
     return value
 
 
+def _deployed(value: JsonObject, snapshot: str | None) -> None:
+    """Refuses a check answer whose `deployed` is not what a push registers."""
+    deployed = value.get("deployed")
+    if deployed is None and snapshot is None:
+        return
+    context = deployed.get("context") if type(deployed) is dict else None
+    stored = deployed.get("snapshot") if type(deployed) is dict else None
+    if not (
+        type(deployed) is dict
+        and type(deployed.get("lock")) is dict
+        and type(deployed.get("manifest")) is dict
+        and type(context) is dict
+        and type(context.get("rows")) is int
+        and type(stored) is dict
+        and type(stored.get("name")) is str
+        and type(stored.get("digest")) is str
+        and type(stored.get("rows")) is int
+        and type(deployed.get("held_out")) is int
+        and deployed["held_out"] >= 0
+    ):
+        raise ServiceError("ProtocolError", "invalid check response", 502)
+    decoded(PredictorLock.from_dict, deployed["lock"], "deployed lock")
+
+
 def predictor_check(
     client: Context,
     predictor: str | Path,
     *,
     upgrade: bool = False,
     keep: bool = False,
+    deploy: bool = False,
 ) -> Operation[JsonObject]:
     """`POST /predictors/{name}/check`: the service resolves `gf.yaml` and answers its `gf.lock`.
 
     The manifest's snapshot is uploaded first and the check names it. The
     reply carries `lock`, `model`, `inferred`, `changes` against the previous
     lock, the normalized `manifest`, the resolved `context` and, with `keep`,
-    the `snapshot` its rows were stored as. A model digest other than the
-    previous lock's is refused unless `upgrade`.
+    the `snapshot` its rows were stored as. With `deploy`, it also carries
+    `deployed`: the lock, manifest, context and stored snapshot for every
+    labeled row, those the holdout or `until` held out included, as a push
+    registers them, and `held_out`, how many those were. A model digest
+    other than the previous lock's is refused unless `upgrade`.
     """
     checked = yield Work(checked_manifest, (predictor,))
-    return (yield from _checked(client, checked, upgrade=upgrade, keep=keep))
+    return (
+        yield from _checked(client, checked, upgrade=upgrade, keep=keep, deploy=deploy)
+    )
 
 
 def predictor_evaluate(

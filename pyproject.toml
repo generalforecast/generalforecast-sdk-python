@@ -1,6 +1,6 @@
 [project]
 name = "generalforecast"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python SDK and gf CLI for General Forecast: hosted predictors on structured data foundation models"
 readme = "README.md"
 license = "MIT"

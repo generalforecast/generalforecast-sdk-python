@@ -332,10 +332,10 @@ test("a capacity error carries limit and actual", async () => {
       );
     },
   });
-  const rows = Array.from({ length: 1000 }, (_, i) => ({ spend: i }));
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ spend: i, churned: i % 2 }));
   await assert.rejects(
-    gf.predict({ model: "general-forecast/tabicl-v2-classifier", target: "churned", context: [{ spend: 1, churned: 0 }], queries: rows }),
-    (error) => error instanceof GFError && error.code === "CapacityExceeded" && error.limit === 100 && error.actual === 1000,
+    gf.predict({ model: "general-forecast/tabicl-v2-classifier", target: "churned", context: rows, queries: [{ spend: 1 }] }),
+    (error) => error instanceof GFError && error.code === "CapacityExceeded" && error.limit === 100000 && error.actual === 250000,
   );
 });
 

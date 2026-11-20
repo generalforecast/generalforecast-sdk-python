@@ -732,7 +732,11 @@ class PredictionAccepted(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class Limits(Payload):
-    """The most a model accepts in one call."""
+    """The Limits schema.
+
+    a model's bounds: the most context rows and inputs one call sends it, and
+    `queries`, how many query rows it scores in one pass
+    """
 
     context_rows: int
     queries: int
@@ -1481,8 +1485,7 @@ class Model(Payload):
     """The Model schema.
 
     the catalog's description of a served model: `model` is the resolved id with its
-    content digest, `limits` what one call may send here, `warm_shapes` the shapes
-    compiled at startup
+    content digest, `limits` its bounds, `warm_shapes` the shapes compiled at startup
     """
 
     model: str
@@ -4042,6 +4045,7 @@ class PredictorCheck(Payload):
     previous: dict[str, Any] | None = None
     upgrade: bool | None = None
     keep: bool | None = None
+    deploy: bool | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("manifest", "manifest", True, _text),
@@ -4049,8 +4053,13 @@ class PredictorCheck(Payload):
         Field("previous", "previous", False, _union(_mapping(_any), _null)),
         Field("upgrade", "upgrade", False, _boolean),
         Field("keep", "keep", False, _boolean),
+        Field("deploy", "deploy", False, _boolean),
     )
-    DEFAULTS: ClassVar[dict[str, Any]] = {"upgrade": False, "keep": False}
+    DEFAULTS: ClassVar[dict[str, Any]] = {
+        "upgrade": False,
+        "keep": False,
+        "deploy": False,
+    }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -4105,6 +4114,29 @@ class KeptSnapshot(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class DeployedContext(Payload):
+    """The DeployedContext schema.
+
+    a snapshot context's every labeled row, those the holdout or `until` holds out
+    included, stored for `gf push`, with the lock and manifest for them
+    """
+
+    lock: Lock
+    manifest: dict[str, Any]
+    context: CheckedContext
+    snapshot: KeptSnapshot
+    held_out: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("lock", "lock", True, _record(Lock)),
+        Field("manifest", "manifest", True, _mapping(_any)),
+        Field("context", "context", True, _record(CheckedContext)),
+        Field("snapshot", "snapshot", True, _record(KeptSnapshot)),
+        Field("held_out", "held_out", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class PredictorCheckResult(Payload):
     """The PredictorCheckResult schema."""
 
@@ -4115,6 +4147,7 @@ class PredictorCheckResult(Payload):
     manifest: dict[str, Any]
     context: CheckedContext
     snapshot: KeptSnapshot | None
+    deployed: DeployedContext | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("lock", "lock", True, _record(Lock)),
@@ -4124,6 +4157,7 @@ class PredictorCheckResult(Payload):
         Field("manifest", "manifest", True, _mapping(_any)),
         Field("context", "context", True, _record(CheckedContext)),
         Field("snapshot", "snapshot", True, _union(_record(KeptSnapshot), _null)),
+        Field("deployed", "deployed", False, _union(_record(DeployedContext), _null)),
     )
 
 
