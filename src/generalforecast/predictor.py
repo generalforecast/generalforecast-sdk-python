@@ -15,6 +15,7 @@ import os
 import re
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,9 @@ import numpy as np
 import pyarrow as pa
 
 from generalforecast import tabular
-from generalforecast.errors import Error, InvalidInput, boundary
+from generalforecast.batches import described, part_id, query_batches
+from generalforecast.contracts import MAX_QUERIES
+from generalforecast.errors import Error, InvalidInput, boundary, during
 from generalforecast.predict_request import (
     PredictRequest,
     Progress,
@@ -82,33 +85,6 @@ def resolve_reference(ref: Any) -> tuple[str, str]:
         "general-forecast/<name>",
         param="ref",
     )
-
-
-def _query_batches(
-    table: pa.Table, series: Sequence[str], cap: int
-) -> list[np.ndarray]:
-    """The row indices of each call, at most `cap` rows apiece, in row order.
-
-    With series columns, each series' rows stay in one call, as a
-    forecaster needs a series' whole horizon at once; series are packed in
-    order of first appearance. A series of more than `cap` rows is a call
-    of its own, which the service bounds.
-    """
-    if not series:
-        return [
-            np.arange(start, min(start + cap, table.num_rows))
-            for start in range(0, table.num_rows, cap)
-        ]
-    keys = list(zip(*(table[name].to_pylist() for name in series), strict=True))
-    members: dict[Any, list[int]] = {}
-    for index, key in enumerate(keys):
-        members.setdefault(key, []).append(index)
-    batches: list[list[int]] = [[]]
-    for rows in members.values():
-        if batches[-1] and len(batches[-1]) + len(rows) > cap:
-            batches.append([])
-        batches[-1].extend(rows)
-    return [np.asarray(sorted(rows), dtype=np.int64) for rows in batches if rows]
 
 
 @dataclass(frozen=True)
@@ -333,11 +309,16 @@ class Predictor:
             from generalforecast.catalog import ModelInfo
 
             client = self._client()
+            seen = getattr(client, "_models_seen", None)
+            known = seen.get(self.model) if isinstance(seen, dict) else None
+            if known is not None:
+                self._entry = known
+                self.task = known.task
+                return known
             with boundary():
                 self._entry = ModelInfo.from_reply(client.models.get(self.model))
             self.task = self._entry.task
             # The client's predictions read the same entry, not the route again.
-            seen = getattr(client, "_models_seen", None)
             if isinstance(seen, dict):
                 seen[self.model] = self._entry
         return self._entry
@@ -361,9 +342,9 @@ class Predictor:
         """Scores rows on the service.
 
         Any number of query rows score: past one call's bound
-        (`contracts.MAX_QUERIES`, or the model's own) they go as several
-        calls, a forecaster's series each whole within one, and come back
-        in the order given.
+        (`contracts.MAX_QUERIES`) they go as several calls under one request
+        id, a forecaster's series each whole within one, and come back in
+        the order given.
 
         Args:
             queries: Rows to score: a frame, list of dicts, Arrow table, or a
@@ -381,15 +362,20 @@ class Predictor:
         """
         import pandas as pd
 
+        from generalforecast._operations import new_request_id
+
         table = tabular.frame(queries)
         if self._kind == "catalog" and (as_of if as_of is not None else self._as_of):
             raise InvalidInput(
                 "as_of reads a live context; an ad hoc predictor's is a request context",
                 param="as_of",
             )
-        cap = self._query_cap()
+        cap = MAX_QUERIES
         named = self.model if self._kind == "catalog" else self.name
         scored = 0
+        # One id for the whole, each call its part of it: `<id>-1`, `<id>-2`.
+        base = new_request_id()
+        sent = 0
 
         def tell() -> None:
             if progress is not None:
@@ -398,17 +384,31 @@ class Predictor:
         tell()
         series = self._series_columns()
         parts, order = [], []
-        pending = list(reversed(_query_batches(table, series, cap)))
+        pending = list(reversed(query_batches(table, series, cap)))
+        whole = len(pending) == 1
         while pending:
             rows = pending.pop()
+            sent += 1
+            single = whole and sent == 1
+            named_part = (
+                nullcontext()
+                if single
+                else during(described(rows, sent, sent + len(pending), table.num_rows))
+            )
             try:
-                parts.append(self._predict_once(table.take(rows), context, as_of))
+                with named_part:
+                    parts.append(
+                        self._predict_once(
+                            table.take(rows),
+                            context,
+                            as_of,
+                            request_id=base if single else part_id(base, sent),
+                        )
+                    )
             except Error as error:
                 # A reply past the SDK's response bound comes back as a
                 # protocol error; half as many rows answer in half the bytes.
-                halves = _query_batches(
-                    table.take(rows), series, max(1, len(rows) // 2)
-                )
+                halves = query_batches(table.take(rows), series, max(1, len(rows) // 2))
                 if error.code != "ProtocolError" or len(halves) < 2:
                     raise
                 pending.extend(reversed([rows[half] for half in halves]))
@@ -423,16 +423,6 @@ class Predictor:
         placed[np.concatenate(order)] = np.arange(table.num_rows)
         return frame.iloc[placed].reset_index(drop=True)
 
-    def _query_cap(self) -> int:
-        """Most query rows one call carries: the wire bound, or a model's lower one."""
-        from generalforecast.contracts import MAX_QUERIES
-
-        if self._kind == "catalog":
-            entry = self._model_entry()
-            if entry.task != "forecast":
-                return max(1, min(MAX_QUERIES, entry.limits.queries))
-        return MAX_QUERIES
-
     def _series_columns(self) -> tuple[str, ...]:
         """A forecaster's series columns, which a batch keeps whole; none otherwise."""
         if self._kind == "hosted" and not self.series:
@@ -441,8 +431,10 @@ class Predictor:
                 self.series = tuple(facts.get("series") or ())
         return tuple(self.series)
 
-    def _predict_once(self, queries: pa.Table, context: Any, as_of: Any) -> Any:
-        """One prediction call: at most one call's query rows."""
+    def _predict_once(
+        self, queries: pa.Table, context: Any, as_of: Any, *, request_id: str
+    ) -> Any:
+        """One prediction call: at most one call's query rows, under `request_id`."""
         when = as_of if as_of is not None else self._as_of
         if self._kind == "catalog":
             rows = context if context is not None else self._context_frame
@@ -468,6 +460,7 @@ class Predictor:
                     selection=self.selection,
                     exclude=self.exclude,
                     future=self.future,
+                    request_id=request_id,
                 )
             frame = _frame_of_result(result, self.id)
             if self._model_entry().task == "forecast" and self.time is not None:
@@ -477,7 +470,12 @@ class Predictor:
             return frame
         with boundary():
             result = self._client().predictors.predict(
-                self.name, queries, context=context, as_of=when, env=self._env
+                self.name,
+                queries,
+                context=context,
+                as_of=when,
+                env=self._env,
+                request_id=request_id,
             )
         return self._keyed(_frame_of_result(result, self._id_name()), queries)
 

@@ -62,13 +62,41 @@ CONTEXT = {
     "digest": "sha256:" + "c" * 64,
 }
 KEPT = {"name": "churn-" + "c" * 12, "digest": "sha256:" + "c" * 64, "rows": 6}
+# What a check with `deploy` answers for the held-out churn directory: every
+# labeled row, 6, under the lock and manifest without the holdout.
+DEPLOYED_LOCK = {
+    **LOCK,
+    "digest": "sha256:" + "f" * 64,
+    "predictor": {**LOCK["predictor"], "context": {"kind": "snapshot", "rows": 6}},
+}
+DEPLOYED = {
+    "lock": DEPLOYED_LOCK,
+    "manifest": NORMALIZED,
+    "context": {**CONTEXT, "digest": "sha256:" + "9" * 64},
+    "snapshot": {
+        "name": "churn-" + "9" * 12,
+        "digest": "sha256:" + "9" * 64,
+        "rows": 6,
+    },
+    "held_out": 2,
+}
 HELD = "  holdout: {fraction: 0.34, seed: 0}\n"
 OUTSIDE = "local serving is not part of gf"
 
 
-def checked(lock=LOCK, *, changes=(), snapshot=None, inferred=None):
-    """A check's answer: the lock, what was inferred and, when kept, the stored rows."""
+def checked(lock=LOCK, *, changes=(), snapshot=None, inferred=None, deployed=False):
+    """A check's answer: the lock, what was inferred and, when kept, the stored rows.
+
+    With `deployed`, a check with `deploy` answers it too: `DEPLOYED`, or the
+    value given.
+    """
+    extra = (
+        {}
+        if deployed is False
+        else {"deployed": DEPLOYED if deployed is True else deployed}
+    )
     return {
+        **extra,
         "lock": lock,
         "model": MODEL_ID,
         "inferred": {"task": "classification", "inputs": ["x"], "id": "id"}
@@ -81,15 +109,26 @@ def checked(lock=LOCK, *, changes=(), snapshot=None, inferred=None):
     }
 
 
-def asked(snapshot, previous=None, *, upgrade=False, keep=False, manifest=MANIFEST):
-    """A check's payload."""
-    return {
+def asked(
+    snapshot,
+    previous=None,
+    *,
+    upgrade=False,
+    keep=False,
+    deploy=False,
+    manifest=MANIFEST,
+):
+    """A check's payload; `deploy` is sent only when true."""
+    payload = {
         "manifest": manifest,
         "snapshot": snapshot,
         "previous": previous,
         "upgrade": upgrade,
         "keep": keep,
     }
+    if deploy:
+        payload["deploy"] = True
+    return payload
 
 
 @pytest.fixture
@@ -406,7 +445,7 @@ def test_the_sdk_evaluates_and_waits(wire, held):
 
 
 def push_answers(wire, *, read=True, ready=False):
-    """What a first push to staging meets once its check kept the snapshot's rows."""
+    """What a first push to staging meets once its check stored every labeled row."""
     if read:
         wire.expect("GET", "/predictors/churn", "NotFound", status=404)
     wire.expect("POST", "/predictors", {"name": "churn"}, payload={"name": "churn"})
@@ -422,7 +461,11 @@ def push_answers(wire, *, read=True, ready=False):
         "POST",
         "/predictors/churn/revisions",
         revision,
-        payload={"lock": LOCK, "snapshot": KEPT["digest"], "manifest": NORMALIZED},
+        payload={
+            "lock": DEPLOYED_LOCK,
+            "snapshot": DEPLOYED["snapshot"]["digest"],
+            "manifest": NORMALIZED,
+        },
     )
     environment = {
         "predictor": "churn",
@@ -454,15 +497,15 @@ def push_answers(wire, *, read=True, ready=False):
     )
 
 
-def test_push_checks_with_keep_and_registers_the_rows_the_service_kept(wire, churn):
+def test_push_deploys_every_labeled_row_the_check_stored(wire, churn):
     (churn / "gf.lock").write_text(json.dumps(LOCK))
     name, _ = uploaded(churn)
     wire.expect("POST", "/snapshots")
     wire.expect(
         "POST",
         "/predictors/churn/check",
-        checked(snapshot=KEPT),
-        payload=asked(name, LOCK, keep=True),
+        checked(deployed=True),
+        payload=asked(name, LOCK, deploy=True),
     )
     push_answers(wire)
     with client(wire) as hosted:
@@ -478,8 +521,8 @@ def test_the_cli_pushes_the_same_way(wire, hosted, churn, monkeypatch):
     wire.expect(
         "POST",
         "/predictors/churn/check",
-        checked(snapshot=KEPT),
-        payload=asked(name, LOCK, keep=True),
+        checked(deployed=True),
+        payload=asked(name, LOCK, deploy=True),
     )
     push_answers(wire, read=False, ready=True)
     code, _, stderr = run(
@@ -492,7 +535,8 @@ def test_the_cli_pushes_the_same_way(wire, hosted, churn, monkeypatch):
         env=hosted,
     )
     assert code == 0, (stderr, wire.errors)
-    assert "Uploading churn revision 1  snapshot, 6 rows" in stderr
+    assert "Uploading churn revision 1  rows.csv, 6 rows" in stderr
+    assert "Context 6 rows, including the 2 gf eval held out" in stderr
     assert "Deployed churn revision 1 to staging" in stderr
     assert not wire.expected
 
@@ -505,8 +549,8 @@ def test_push_refuses_a_lock_the_service_no_longer_resolves(wire, churn):
     wire.expect(
         "POST",
         "/predictors/churn/check",
-        checked(moved, snapshot=KEPT),
-        payload=asked(name, LOCK, keep=True),
+        checked(moved, deployed=True),
+        payload=asked(name, LOCK, deploy=True),
     )
     with client(wire) as hosted, pytest.raises(gf.Error) as raised:
         hosted.predictors.push(churn, env="staging")

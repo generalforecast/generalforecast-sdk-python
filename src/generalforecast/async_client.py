@@ -263,6 +263,7 @@ class AsyncClient:
         selection: JsonObject | None = None,
         exclude: Sequence[str] = (),
         future: Sequence[str] = (),
+        request_id: str | None = None,
     ) -> PredictionResult:
         """Predicts with an ad hoc predictor; see `Client.predict`."""
         return await self._run(
@@ -283,6 +284,7 @@ class AsyncClient:
                 selection=selection,
                 exclude=exclude,
                 future=future,
+                request_id=request_id,
             )
         )
 
@@ -1033,16 +1035,28 @@ class Predictors(Collection):
         context: Any = None,
         as_of: Any = None,
         env: str | None = None,
+        request_id: str | None = None,
     ) -> PredictionResult:
         """Predicts with a declared predictor; see `Client.predictors.predict`."""
         return await self.client._run(
             ops.predictor_predict(
-                self.client, predictor, queries, context=context, as_of=as_of, env=env
+                self.client,
+                predictor,
+                queries,
+                context=context,
+                as_of=as_of,
+                env=env,
+                request_id=request_id,
             )
         )
 
     async def check(
-        self, predictor: str | Path, *, upgrade: bool = False, keep: bool = False
+        self,
+        predictor: str | Path,
+        *,
+        upgrade: bool = False,
+        keep: bool = False,
+        deploy: bool = False,
     ) -> JsonObject:
         """Resolves a predictor directory's `gf.yaml` on the service.
 
@@ -1054,11 +1068,17 @@ class Predictors(Collection):
         Args:
             predictor: The predictor directory.
             upgrade: Accept a model digest other than the previous lock pins.
-            keep: Store a snapshot context's resolved rows for a push; the
-                answer's `snapshot` names them. Without it nothing is written.
+            keep: Store a snapshot context's resolved rows; the answer's
+                `snapshot` names them. Without it nothing is written.
+            deploy: Store a snapshot context's every labeled row, those the
+                holdout or `until` held out included, as a push deploys
+                them; the answer's `deployed` names the lock, manifest and
+                snapshot for them. Not with `keep`.
         """
         return await self.client._run(
-            ops.predictor_check(self.client, predictor, upgrade=upgrade, keep=keep)
+            ops.predictor_check(
+                self.client, predictor, upgrade=upgrade, keep=keep, deploy=deploy
+            )
         )
 
     async def evaluate(

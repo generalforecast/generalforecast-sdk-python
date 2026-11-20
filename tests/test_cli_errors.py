@@ -171,20 +171,20 @@ def test_a_services_reason_limit_and_hint_stay_under_its_words():
         answered(
             429,
             "CapacityExceeded",
-            "queries exceed the limit for general-forecast/tabicl-v2-classifier",
-            limit=100,
-            actual=1000,
-            hint="split the queries, or push a predictor and call it in batches",
+            "context exceeds the limit for general-forecast/tabicl-v2-classifier",
+            limit=100000,
+            actual=250000,
+            hint="pass a selection with core and neighbors",
             request_id="r-3abb2401f119428db148927c6a0d358c",
         ),
     )
     assert shown(error)[1] == (
         "error: the service refused the prediction\n"
-        "note: CapacityExceeded (429): queries exceed the limit for "
+        "note: CapacityExceeded (429): context exceeds the limit for "
         "general-forecast/tabicl-v2-classifier\n"
-        "note: the limit is 100; the request sent 1,000\n"
+        "note: the limit is 100,000; the request sent 250,000\n"
         "note: request r-3abb2401f119428db148927c6a0d358c\n"
-        "help: split the queries, or push a predictor and call it in batches\n"
+        "help: pass a selection with core and neighbors\n"
     )
 
 
@@ -419,7 +419,7 @@ class Service:
     def predictors(self):
         return self
 
-    def check(self, root, *, upgrade=False, keep=False):
+    def check(self, root, *, upgrade=False, keep=False, deploy=False):
         """A check uploads the snapshot first, as the SDK's operation does."""
         with errors.during("the snapshot upload", framed=True):
             self.upload_snapshot(None)
@@ -464,7 +464,7 @@ def test_push_says_which_of_its_requests_the_service_refused(monkeypatch, pushab
     assert code == 1 and stdout == ""
     lines = stderr.splitlines()
     at = next(i for i, line in enumerate(lines) if line.startswith("   Uploading"))
-    assert lines[at].startswith("   Uploading churn revision 1  snapshot, 60 rows, ")
+    assert lines[at].startswith("   Uploading churn revision 1  rows.csv, 60 rows, ")
     assert lines[at + 1 :] == [
         "error: the service refused the snapshot upload",
         "note: ValidationError (422): application/json required",

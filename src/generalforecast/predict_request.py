@@ -242,8 +242,6 @@ class PredictRequest:
                     hint="the queries have " + ", ".join(query_table.column_names),
                 )
         limits = entry.limits
-        if task != "forecast" and len(query_table) > limits.queries:
-            raise _capacity("queries", canonical, limits.queries, len(query_table))
         if (
             task != "forecast"
             and len(context_table) > limits.context_rows
@@ -329,13 +327,13 @@ class PredictRequest:
             manifest["selection"] = dict(self.selection)
         return manifest
 
-    def payload(self) -> dict[str, Any]:
-        """The ad hoc request payload of section 5."""
+    def payload(self, queries: pa.Table | None = None) -> dict[str, Any]:
+        """The ad hoc request payload of section 5, for `queries` or all of its own."""
         payload: dict[str, Any] = {
             "model": self.model,
             "target": self.target,
             "context": _records(self.context),
-            "queries": _records(self.queries),
+            "queries": _records(self.queries if queries is None else queries),
             "inputs": list(self.inputs),
         }
         for key in ("id", "time", "frequency", "horizon"):
@@ -387,12 +385,10 @@ def _capacity(what: str, model: str, limit: int, actual: int) -> Error:
     from generalforecast.errors import CapacityExceeded
 
     unit = {
-        "queries": ("accepts", "queries per call"),
         "context": ("reads", "context rows"),
         "inputs": ("reads", "inputs"),
     }[what]
     hints = {
-        "queries": "split the queries, or push a predictor and call it in batches",
         "context": "pass a selection with core and neighbors, or push the rows as a "
         "context with a predictor that reads it (`gf push`)",
         "inputs": "list the inputs the model should read, or exclude columns",

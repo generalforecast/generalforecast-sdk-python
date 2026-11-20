@@ -39,8 +39,8 @@ gf predict churn --queries new_customers.csv
 `gf check` uploads the manifest's snapshot and writes the `gf.lock` the service
 answers with (`--upgrade` accepts a newer model digest). `gf eval` needs a
 snapshot context with a `holdout` or `until`, which `gf init` writes. `gf push`
-has the service check the directory again, keep the snapshot's resolved rows
-and register them with the lock as a new revision; a lock that no longer
+has the service check the directory again, store the snapshot's rows and
+register them as a new revision; a lock that no longer
 matches is refused until `gf check` runs again.
 `gf status`, `gf promote` and `gf rollback` move environments between
 revisions.
@@ -52,7 +52,7 @@ gf predict --model general-forecast/tabicl-v2-classifier \
   --target churned --context customers.csv --queries new_customers.csv
 ```
 
-`gf model list` shows the catalog with each model's task and per-call limits.
+`gf model list` shows the catalog with each model's task and limits.
 
 ## Python
 

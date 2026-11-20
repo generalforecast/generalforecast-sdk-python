@@ -288,7 +288,6 @@ def _model_info(info: Any) -> dict:
         "task": info.task,
         "limits": {
             "context_rows": limits.context_rows,
-            "queries": limits.queries,
             "inputs": limits.inputs,
         },
     }

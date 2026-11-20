@@ -254,7 +254,10 @@ export interface PredictionAccepted extends Envelope {
   result: PredictionStatus;
 }
 
-/** the most a model accepts in one call */
+/**
+ * a model's bounds: the most context rows and inputs one call sends it, and `queries`,
+ * how many query rows it scores in one pass
+ */
 export interface Limits {
   context_rows: number;
   queries: number;
@@ -606,8 +609,7 @@ export interface ModelArchitecture {
 
 /**
  * the catalog's description of a served model: `model` is the resolved id with its
- * content digest, `limits` what one call may send here, `warm_shapes` the shapes
- * compiled at startup
+ * content digest, `limits` its bounds, `warm_shapes` the shapes compiled at startup
  */
 export interface Model {
   model: string;
@@ -1584,6 +1586,7 @@ export interface PredictorCheck {
   previous?: Record<string, unknown> | null;
   upgrade?: boolean;
   keep?: boolean;
+  deploy?: boolean;
 }
 
 export interface PredictorCheckRequest extends Envelope {
@@ -1605,6 +1608,18 @@ export interface KeptSnapshot {
   rows: number;
 }
 
+/**
+ * a snapshot context's every labeled row, those the holdout or `until` holds out
+ * included, stored for `gf push`, with the lock and manifest for them
+ */
+export interface DeployedContext {
+  lock: Lock;
+  manifest: Record<string, unknown>;
+  context: CheckedContext;
+  snapshot: KeptSnapshot;
+  held_out: number;
+}
+
 export interface PredictorCheckResult {
   lock: Lock;
   model: string;
@@ -1613,6 +1628,7 @@ export interface PredictorCheckResult {
   manifest: Record<string, unknown>;
   context: CheckedContext;
   snapshot: KeptSnapshot | null;
+  deployed?: DeployedContext | null;
 }
 
 export interface PredictorCheckReply extends Envelope {
