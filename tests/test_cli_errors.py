@@ -12,7 +12,9 @@ from typing import Any
 import pytest
 
 from generalforecast import cli, errors, term
+from generalforecast.catalog import Catalog
 from tests.test_cli_output import Tty, _write_rows, gf
+from tests.test_hosted import MODEL
 
 REQUEST = "r-524a763d64e2"
 UPGRADE = (
@@ -548,6 +550,11 @@ def test_escape_at_a_prompt_says_nothing_was_written(monkeypatch, tmp_path):
             )
 
     monkeypatch.setattr(term, "Prompter", Escaping)
+    # The catalog comes from here, not the service, with or without a key.
+    monkeypatch.setattr(
+        "generalforecast.commands.model_registry",
+        lambda args: Catalog.from_reply([MODEL]),
+    )
     code, _, stderr = gf("init", str(tmp_path), monkeypatch=monkeypatch)
     assert code == cli.ABORTED_EXIT
     assert stderr == (
