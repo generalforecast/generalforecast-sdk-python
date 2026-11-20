@@ -42,7 +42,7 @@ from generalforecast.contracts import (
     Revision,
     parse_lock,
 )
-from generalforecast.errors import Error
+from generalforecast.errors import Error, InvalidInput, during
 from generalforecast.retry import (
     DEFAULT_POLL,
     MAX_POLL,
@@ -1542,34 +1542,30 @@ def predictor_push(
     wait: bool,
     timeout: float,
 ) -> Operation[Revision]:
-    """Registers a checked predictor's revision and points an environment at it."""
+    """Registers a checked predictor's revision and points an environment at it.
+
+    The service checks the directory again with `keep`, which stores a
+    snapshot context's resolved rows, and the revision registers the lock,
+    those rows' digest and the normalized manifest it answers. A lock that
+    is no longer what `gf check` wrote is refused before anything registers.
+    """
     checked = yield Work(pushed, (predictor,))
-    lock = checked.lock
     resource = checked.name
     selected = environment_name(env, client.profile.environment)
+    answer = yield from _checked(client, checked.checked, upgrade=False, keep=True)
+    revision_payload = registered(answer, checked.lock)
     try:
         yield from got("predictor", "predictors", resource)
     except ServiceError as error:
         if error.status != 404:
             raise
         yield from predictor_create(client, resource)
-    snapshot = None
-    if checked.snapshot is not None:
-        snapshot = (
-            yield from upload_snapshot(client, checked.snapshot, prefix=resource)
-        )["digest"]
-        if lock.data_digest is not None and snapshot != lock.data_digest:
-            raise ServiceError(
-                "SnapshotMismatch",
-                "the snapshot changed since `gf check`; run `gf check` again",
-                422,
-            )
     value = yield from posted(
         "predictor",
         "predictors",
         resource,
         "revisions",
-        {"lock": lock.to_dict(), "snapshot": snapshot, "manifest": checked.manifest},
+        revision_payload,
         retry=WRITE,
     )
     revision = decoded(Revision.from_dict, value, "revision")
@@ -1600,8 +1596,32 @@ def predictor_push(
     return revision
 
 
-# The states an evaluation passes through before it ends.
-EVALUATION_RUNNING = frozenset({"queued", "pending", "running"})
+def registered(answer: JsonObject, lock: PredictorLock) -> JsonObject:
+    """The `POST /predictors/{name}/revisions` payload from a check that kept its rows.
+
+    Raises `LockRequired` when the service resolved another lock than the
+    directory's: the manifest, its snapshot or the model moved since `gf check`.
+    """
+    if answer["lock"].get("digest") != lock.digest:
+        raise ServiceError(
+            "LockRequired",
+            "gf.lock is not current: the manifest, its snapshot or the model "
+            "changed since `gf check`",
+            422,
+            param="lock",
+            hint="run `gf check` again",
+        )
+    kept = answer.get("snapshot")
+    return {
+        "lock": answer["lock"],
+        "snapshot": kept["digest"] if isinstance(kept, dict) else None,
+        "manifest": answer["manifest"],
+    }
+
+
+# The states an evaluation passes through before it ends in `finished`,
+# `failed` or `cancelled`.
+EVALUATION_RUNNING = frozenset({"queued", "running"})
 
 
 def _checked_snapshot(
@@ -1610,20 +1630,19 @@ def _checked_snapshot(
     """Uploads a checked manifest's snapshot rows and returns the snapshot's name."""
     if checked.snapshot is None:
         return None
-    made = yield from upload_snapshot(
-        client, checked.snapshot, prefix=checked.manifest.name
-    )
+    # gf writes the upload's bytes itself, so a service that finds them
+    # malformed and this gf disagree about their form.
+    with during("the snapshot upload", framed=True):
+        made = yield from upload_snapshot(
+            client, checked.snapshot, prefix=checked.manifest.name
+        )
     return made["name"]
 
 
-def predictor_check(client: Context, predictor: str | Path) -> Operation[JsonObject]:
-    """`POST /predictors/{name}/check`: the service resolves `gf.yaml` and answers its `gf.lock`.
-
-    The manifest's snapshot is uploaded first, as `push` uploads it, and
-    the check names it. The reply carries `lock`, `model`, `inferred` and
-    `changes` against the previous lock, when there was one.
-    """
-    checked = yield Work(checked_manifest, (predictor,))
+def _checked(
+    client: Context, checked: Checked, *, upgrade: bool, keep: bool
+) -> Generator[Step, Any, JsonObject]:
+    """Uploads the manifest's snapshot and has the service check the manifest against it."""
     resource = checked.manifest.name
     snapshot = yield from _checked_snapshot(client, checked)
     value = yield Call(
@@ -1635,13 +1654,46 @@ def predictor_check(client: Context, predictor: str | Path) -> Operation[JsonObj
             "manifest": checked.manifest.text,
             "snapshot": snapshot,
             "previous": checked.previous,
+            "upgrade": upgrade,
+            "keep": keep,
         },
         retry=PREDICT,
     )
     if type(value) is not dict or type(value.get("lock")) is not dict:
         raise ServiceError("ProtocolError", "invalid check response", 502)
     decoded(PredictorLock.from_dict, value["lock"], "lock")
+    if keep:
+        kept = value.get("snapshot")
+        if type(value.get("manifest")) is not dict or not (
+            (kept is None and snapshot is None)
+            or (
+                type(kept) is dict
+                and type(kept.get("name")) is str
+                and type(kept.get("digest")) is str
+                and type(kept.get("rows")) is int
+            )
+        ):
+            raise ServiceError("ProtocolError", "invalid check response", 502)
     return value
+
+
+def predictor_check(
+    client: Context,
+    predictor: str | Path,
+    *,
+    upgrade: bool = False,
+    keep: bool = False,
+) -> Operation[JsonObject]:
+    """`POST /predictors/{name}/check`: the service resolves `gf.yaml` and answers its `gf.lock`.
+
+    The manifest's snapshot is uploaded first and the check names it. The
+    reply carries `lock`, `model`, `inferred`, `changes` against the previous
+    lock, the normalized `manifest`, the resolved `context` and, with `keep`,
+    the `snapshot` its rows were stored as. A model digest other than the
+    previous lock's is refused unless `upgrade`.
+    """
+    checked = yield Work(checked_manifest, (predictor,))
+    return (yield from _checked(client, checked, upgrade=upgrade, keep=keep))
 
 
 def predictor_evaluate(
@@ -1653,7 +1705,8 @@ def predictor_evaluate(
     """`POST /predictors/{name}/evaluations`: starts a hosted evaluation of a manifest.
 
     The manifest's snapshot is uploaded first. `models` are the models to
-    score beside the manifest's own; the manifest's alone when None.
+    score; the manifest's own when None. The reply is the evaluation,
+    queued; sending the request again answers the same evaluation.
     """
     checked = yield Work(checked_manifest, (predictor,))
     resource = checked.manifest.name
@@ -1667,29 +1720,38 @@ def predictor_evaluate(
         "predictor",
         resource,
         payload,
-        retry=ONCE,
+        retry=WRITE,
     )
-    if type(value) is not dict or type(value.get("evaluation")) is not str:
+    return _evaluation(value)
+
+
+def _evaluation(value: Any) -> JsonObject:
+    """An evaluation view, its number and state checked."""
+    if (
+        type(value) is not dict
+        or type(value.get("evaluation")) is not int
+        or type(value.get("state")) is not str
+    ):
         raise ServiceError("ProtocolError", "invalid evaluation response", 502)
     return value
 
 
-def predictor_evaluation(predictor: str, evaluation: str) -> Operation[JsonObject]:
-    """`GET /predictors/{name}/evaluations/{id}`: an evaluation's state and scores so far."""
+def predictor_evaluation(predictor: str, evaluation: int) -> Operation[JsonObject]:
+    """`GET /predictors/{name}/evaluations/{number}`: an evaluation's state and scores so far."""
+    if type(evaluation) is not int or evaluation < 1:
+        raise InvalidInput("an evaluation is a number from 1", param="evaluation")
     value = yield Call(
         "GET",
-        _predictor(predictor, f"/evaluations/{name(evaluation)}"),
+        _predictor(predictor, f"/evaluations/{evaluation}"),
         "predictor",
         predictor,
     )
-    if type(value) is not dict or type(value.get("state")) is not str:
-        raise ServiceError("ProtocolError", "invalid evaluation response", 502)
-    return value
+    return _evaluation(value)
 
 
 def predictor_evaluation_wait(
     predictor: str,
-    evaluation: str,
+    evaluation: int,
     *,
     timeout: float | None,
     poll_interval: float,

@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "General Forecast API client: score rows with a predictor from Node 20+ or a browser",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/generalforecast/generalforecast-sdk-python.git",
+    "directory": "clients/typescript"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

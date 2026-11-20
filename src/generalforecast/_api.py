@@ -325,14 +325,16 @@ class ErrorCode(StrEnum):
     `credits_exhausted` (an enforced workspace has used its credits, which also refuses
     predictions); `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not
     turned on for the project); `CapacityExceeded` 429 `run_limit_reached` (the project
-    has as many runs queued or running as it may), `quota_exceeded` (the project's
-    training data would pass its quota) and `snapshot_quota_exceeded`. Those three 429s
-    carry `limit` and `actual`, and lift only when the caller ends a run or deletes
-    data, so clients do not retry them; a 429 `rate_limited` passes on its own and may
-    be retried. A run's create is refused with `Conflict` 409 `run_active` (another run
-    of the fine-tune is still queued or running) or `base_mismatch` (the fine-tune's
-    versions train from another base), and with `ValidationError` 422
-    `base_is_fine_tune` (a fine-tune sent as the base).
+    has as many runs, Playground runs or evaluations queued or running as it may),
+    `quota_exceeded` (the project's training data would pass its quota) and
+    `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`, and lift
+    only when the caller ends a run or deletes data, so clients do not retry them; a
+    429 `rate_limited` passes on its own and may be retried. A run's create is refused
+    with `Conflict` 409 `run_active` (another run of the fine-tune is still queued or
+    running) or `base_mismatch` (the fine-tune's versions train from another base), and
+    with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the base). An
+    evaluation refuses a model with `ValidationError` 422 `model_not_hostable` (another
+    task's model, or one the service does not host).
     """
 
     ValidationError = "ValidationError"
@@ -4036,14 +4038,19 @@ class PredictorCheck(Payload):
     """A gf.yaml as written, its uploaded snapshot, and the lock it replaces."""
 
     manifest: str
-    snapshot: str | None
-    previous: dict[str, Any] | None
+    snapshot: str | None = None
+    previous: dict[str, Any] | None = None
+    upgrade: bool | None = None
+    keep: bool | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("manifest", "manifest", True, _text),
-        Field("snapshot", "snapshot", True, _union(_text, _null)),
-        Field("previous", "previous", True, _union(_mapping(_any), _null)),
+        Field("snapshot", "snapshot", False, _union(_text, _null)),
+        Field("previous", "previous", False, _union(_mapping(_any), _null)),
+        Field("upgrade", "upgrade", False, _boolean),
+        Field("keep", "keep", False, _boolean),
     )
+    DEFAULTS: ClassVar[dict[str, Any]] = {"upgrade": False, "keep": False}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -4066,6 +4073,38 @@ class PredictorCheckRequest(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class CheckedContext(Payload):
+    """The context the lock resolved."""
+
+    kind: Literal["snapshot", "request", "live"]
+    rows: int | None
+    query_rows: int | None
+    digest: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("kind", "kind", True, _literal("snapshot", "request", "live")),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("query_rows", "query_rows", True, _union(_integer, _null)),
+        Field("digest", "digest", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class KeptSnapshot(Payload):
+    """A snapshot context's resolved rows, stored for `gf push`."""
+
+    name: str
+    digest: str
+    rows: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _text),
+        Field("digest", "digest", True, _text),
+        Field("rows", "rows", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class PredictorCheckResult(Payload):
     """The PredictorCheckResult schema."""
 
@@ -4073,12 +4112,18 @@ class PredictorCheckResult(Payload):
     model: str
     inferred: dict[str, Any]
     changes: tuple[tuple[Any, ...], ...]
+    manifest: dict[str, Any]
+    context: CheckedContext
+    snapshot: KeptSnapshot | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("lock", "lock", True, _record(Lock)),
         Field("model", "model", True, _text),
         Field("inferred", "inferred", True, _mapping(_any)),
         Field("changes", "changes", True, _items(_items(_any))),
+        Field("manifest", "manifest", True, _mapping(_any)),
+        Field("context", "context", True, _record(CheckedContext)),
+        Field("snapshot", "snapshot", True, _union(_record(KeptSnapshot), _null)),
     )
 
 
@@ -4106,13 +4151,13 @@ class EvaluationCreate(Payload):
     """The EvaluationCreate schema."""
 
     manifest: str
-    snapshot: str | None
+    snapshot: str
     models: tuple[str, ...] | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("manifest", "manifest", True, _text),
-        Field("snapshot", "snapshot", True, _union(_text, _null)),
-        Field("models", "models", False, _items(_text)),
+        Field("snapshot", "snapshot", True, _text),
+        Field("models", "models", False, _union(_items(_text), _null)),
     )
 
 
@@ -4135,45 +4180,32 @@ class EvaluationCreateRequest(Payload):
     )
 
 
-EvaluationState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+EvaluationState = Literal["queued", "running", "finished", "failed", "cancelled"]
 _decode_EvaluationState: Decoder = _literal(
     "queued",
     "running",
-    "succeeded",
+    "finished",
     "failed",
     "cancelled",
 )
 
 
 @dataclass(frozen=True, kw_only=True)
-class EvaluationStarted(Payload):
-    """The EvaluationStarted schema."""
+class EvaluationInterval(Payload):
+    """The EvaluationInterval schema."""
 
-    evaluation: str
-    state: EvaluationState
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("evaluation", "evaluation", True, _text),
-        Field("state", "state", True, _decode_EvaluationState),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationStartedReply(Payload):
-    """The EvaluationStartedReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: EvaluationStarted
+    metric: str
+    low: float
+    high: float
+    level: float
+    resamples: int
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(EvaluationStarted)),
+        Field("metric", "metric", True, _text),
+        Field("low", "low", True, _number),
+        Field("high", "high", True, _number),
+        Field("level", "level", True, _number),
+        Field("resamples", "resamples", True, _integer),
     )
 
 
@@ -4184,21 +4216,36 @@ class EvaluationModel(Payload):
     model: str
     state: EvaluationState
     metrics: dict[str, float | None]
-    interval: dict[str, Any] | None
+    interval: EvaluationInterval | None
     scored: int
     total: int
     seconds: float | None
-    error: str | None
+    error: Error | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("model", "model", True, _text),
         Field("state", "state", True, _decode_EvaluationState),
         Field("metrics", "metrics", True, _mapping(_union(_number, _null))),
-        Field("interval", "interval", True, _union(_mapping(_any), _null)),
+        Field("interval", "interval", True, _union(_record(EvaluationInterval), _null)),
         Field("scored", "scored", True, _integer),
         Field("total", "total", True, _integer),
         Field("seconds", "seconds", True, _union(_number, _null)),
-        Field("error", "error", True, _union(_text, _null)),
+        Field("error", "error", True, _union(_record(Error), _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvaluationBilled(Payload):
+    """What the evaluation was billed so far, on the prediction meters."""
+
+    predictions: int
+    rows: int
+    seconds: float
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("predictions", "predictions", True, _integer),
+        Field("rows", "rows", True, _integer),
+        Field("seconds", "seconds", True, _number),
     )
 
 
@@ -4206,23 +4253,29 @@ class EvaluationModel(Payload):
 class Evaluation(Payload):
     """The Evaluation schema."""
 
-    evaluation: str
+    evaluation: int
     state: EvaluationState
     held: int | None
+    repeats: int
+    context: int | None
     task: str | None
     metric: str | None
     models: tuple[EvaluationModel, ...]
+    billed: EvaluationBilled
     created: float
     started: float | None
     finished: float | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("evaluation", "evaluation", True, _text),
+        Field("evaluation", "evaluation", True, _integer),
         Field("state", "state", True, _decode_EvaluationState),
         Field("held", "held", True, _union(_integer, _null)),
+        Field("repeats", "repeats", True, _integer),
+        Field("context", "context", True, _union(_integer, _null)),
         Field("task", "task", True, _union(_text, _null)),
         Field("metric", "metric", True, _union(_text, _null)),
         Field("models", "models", True, _items(_record(EvaluationModel))),
+        Field("billed", "billed", True, _record(EvaluationBilled)),
         Field("created", "created", True, _number),
         Field("started", "started", True, _union(_number, _null)),
         Field("finished", "finished", True, _union(_number, _null)),
@@ -7773,7 +7826,7 @@ ROUTES: tuple[Route, ...] = (
         "POST",
         "/v1/projects/{project}/predictors/{name}/evaluations",
         EvaluationCreateRequest,
-        EvaluationStartedReply,
+        EvaluationReply,
         "application/json",
     ),
     Route(

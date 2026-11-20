@@ -324,6 +324,11 @@ def parser() -> _Parser:
         action="store_true",
         help="Fail unless gf.lock is current, printing only the verdict",
     )
+    p.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="Accept a model digest other than gf.lock pins",
+    )
 
     p = command("eval")
     directory(p)

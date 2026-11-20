@@ -37,7 +37,11 @@ gf predict churn --queries new_customers.csv
 ```
 
 `gf check` uploads the manifest's snapshot and writes the `gf.lock` the service
-answers with; `gf push` sends that lock and the snapshot as a new revision.
+answers with (`--upgrade` accepts a newer model digest). `gf eval` needs a
+snapshot context with a `holdout` or `until`, which `gf init` writes. `gf push`
+has the service check the directory again, keep the snapshot's resolved rows
+and register them with the lock as a new revision; a lock that no longer
+matches is refused until `gf check` runs again.
 `gf status`, `gf promote` and `gf rollback` move environments between
 revisions.
 

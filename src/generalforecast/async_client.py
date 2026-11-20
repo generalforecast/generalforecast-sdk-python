@@ -1041,14 +1041,25 @@ class Predictors(Collection):
             )
         )
 
-    async def check(self, predictor: str | Path) -> JsonObject:
+    async def check(
+        self, predictor: str | Path, *, upgrade: bool = False, keep: bool = False
+    ) -> JsonObject:
         """Resolves a predictor directory's `gf.yaml` on the service.
 
         Uploads the manifest's snapshot, if it names one, and returns the
         service's answer: `lock` (the `gf.lock` to write), `model`,
-        `inferred` and `changes` against the directory's previous lock.
+        `inferred`, `changes` against the directory's previous lock, the
+        normalized `manifest` and the resolved `context`.
+
+        Args:
+            predictor: The predictor directory.
+            upgrade: Accept a model digest other than the previous lock pins.
+            keep: Store a snapshot context's resolved rows for a push; the
+                answer's `snapshot` names them. Without it nothing is written.
         """
-        return await self.client._run(ops.predictor_check(self.client, predictor))
+        return await self.client._run(
+            ops.predictor_check(self.client, predictor, upgrade=upgrade, keep=keep)
+        )
 
     async def evaluate(
         self,
@@ -1061,10 +1072,13 @@ class Predictors(Collection):
     ) -> JsonObject:
         """Scores a predictor directory's manifest on its held-out rows, on the service.
 
-        Uploads the manifest's snapshot and starts an evaluation of the
-        manifest's model and any `models` beside it. With `wait`, polls
-        until the evaluation ends and returns its final state, with each
-        model's `metrics`; otherwise returns `evaluation` and `state` at once.
+        Uploads the manifest's snapshot and starts an evaluation of
+        `models`, or of the manifest's model when None. The manifest's
+        context must be a snapshot with a `holdout` or `until`, and its
+        task classification or regression. With `wait`, polls until the
+        evaluation is `finished`, `failed` or `cancelled` and returns it,
+        with each model's `metrics`; otherwise returns it queued at once.
+        Its `evaluation` is its number, counted per predictor.
         """
         started = await self.client._run(
             ops.predictor_evaluate(self.client, predictor, models=models)
@@ -1082,7 +1096,7 @@ class Predictors(Collection):
             )
         )
 
-    async def evaluation(self, predictor: str, evaluation: str) -> JsonObject:
+    async def evaluation(self, predictor: str, evaluation: int) -> JsonObject:
         """An evaluation's state and each model's scores so far."""
         return await self.client._run(ops.predictor_evaluation(predictor, evaluation))
 

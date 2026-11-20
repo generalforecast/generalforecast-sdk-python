@@ -150,6 +150,9 @@ def wire():
                 response = (
                     success(request, result)
                     if status == 200
+                    # A refusal is its code, or the whole error object.
+                    else {"error": result}
+                    if isinstance(result, dict)
                     else {
                         "error": {
                             "code": result,

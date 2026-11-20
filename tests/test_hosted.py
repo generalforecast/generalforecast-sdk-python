@@ -48,7 +48,48 @@ LOCK = {
     },
     "model": {"files": {}},
 }
+NORMALIZED = {
+    "name": "churn",
+    "model": MODEL_ID,
+    "target": "y",
+    "id": "id",
+    "context": {"snapshot": "rows.csv"},
+}
+CONTEXT = {
+    "kind": "snapshot",
+    "rows": 6,
+    "query_rows": 0,
+    "digest": "sha256:" + "c" * 64,
+}
+KEPT = {"name": "churn-" + "c" * 12, "digest": "sha256:" + "c" * 64, "rows": 6}
+HELD = "  holdout: {fraction: 0.34, seed: 0}\n"
 OUTSIDE = "local serving is not part of gf"
+
+
+def checked(lock=LOCK, *, changes=(), snapshot=None, inferred=None):
+    """A check's answer: the lock, what was inferred and, when kept, the stored rows."""
+    return {
+        "lock": lock,
+        "model": MODEL_ID,
+        "inferred": {"task": "classification", "inputs": ["x"], "id": "id"}
+        if inferred is None
+        else inferred,
+        "changes": [list(change) for change in changes],
+        "manifest": NORMALIZED,
+        "context": CONTEXT,
+        "snapshot": snapshot,
+    }
+
+
+def asked(snapshot, previous=None, *, upgrade=False, keep=False, manifest=MANIFEST):
+    """A check's payload."""
+    return {
+        "manifest": manifest,
+        "snapshot": snapshot,
+        "previous": previous,
+        "upgrade": upgrade,
+        "keep": keep,
+    }
 
 
 @pytest.fixture
@@ -59,6 +100,13 @@ def churn(tmp_path):
     (root / "rows.csv").write_text("\n".join(rows) + "\n")
     (root / "gf.yaml").write_text(MANIFEST)
     return root
+
+
+@pytest.fixture
+def held(churn):
+    """The churn directory with a context that holds a third of its rows out."""
+    (churn / "gf.yaml").write_text(MANIFEST + HELD)
+    return churn
 
 
 @pytest.fixture
@@ -91,19 +139,9 @@ def test_check_uploads_the_snapshot_and_writes_the_lock_the_service_answers(
     wire, hosted, churn, monkeypatch
 ):
     name, _ = uploaded(churn)
-    answer = {
-        "lock": LOCK,
-        "model": MODEL_ID,
-        "inferred": {"task": "classification", "inputs": ["x"], "id": "id"},
-        "changes": [],
-    }
+    answer = checked()
     wire.expect("POST", "/snapshots")
-    wire.expect(
-        "POST",
-        "/predictors/churn/check",
-        answer,
-        payload={"manifest": MANIFEST, "snapshot": name, "previous": None},
-    )
+    wire.expect("POST", "/predictors/churn/check", answer, payload=asked(name))
     code, stdout, stderr = run("check", str(churn), monkeypatch=monkeypatch, env=hosted)
     assert code == 0 and stdout == "", stderr
     assert json.loads((churn / "gf.lock").read_text()) == LOCK
@@ -116,16 +154,60 @@ def test_check_uploads_the_snapshot_and_writes_the_lock_the_service_answers(
 
     # Checked again with the lock in place, --locked verifies it unchanged.
     wire.expect("POST", "/snapshots")
-    wire.expect(
-        "POST",
-        "/predictors/churn/check",
-        answer,
-        payload={"manifest": MANIFEST, "snapshot": name, "previous": LOCK},
-    )
+    wire.expect("POST", "/predictors/churn/check", answer, payload=asked(name, LOCK))
     code, _, stderr = run(
         "check", "--locked", str(churn), monkeypatch=monkeypatch, env=hosted
     )
     assert code == 0 and "Verified gf.lock" in stderr
+
+
+def test_check_upgrade_asks_the_service_to_accept_a_new_model_digest(
+    wire, hosted, churn, monkeypatch
+):
+    (churn / "gf.lock").write_text(json.dumps(LOCK))
+    name, _ = uploaded(churn)
+    upgraded = {
+        **LOCK,
+        "digest": "sha256:" + "f" * 64,
+        "predictor": {**LOCK["predictor"], "model_digest": "sha256:" + "9" * 64},
+    }
+    change = ["~", "model_digest", "sha256:" + "a" * 64, "sha256:" + "9" * 64]
+    wire.expect("POST", "/snapshots")
+    wire.expect(
+        "POST",
+        "/predictors/churn/check",
+        checked(upgraded, changes=[change]),
+        payload=asked(name, LOCK, upgrade=True),
+    )
+    code, stdout, stderr = run(
+        "--json", "check", "--upgrade", str(churn), monkeypatch=monkeypatch, env=hosted
+    )
+    assert code == 0, stderr
+    result = json.loads(stdout)
+    assert len(result["changes"]) == 1 and result["context"] == CONTEXT
+    assert json.loads((churn / "gf.lock").read_text()) == upgraded
+
+
+def test_a_check_the_service_refuses_shows_gfs_message_and_field(
+    wire, hosted, churn, monkeypatch
+):
+    name, _ = uploaded(churn)
+    wire.expect("POST", "/snapshots")
+    wire.expect(
+        "POST",
+        "/predictors/churn/check",
+        {
+            "code": "ValidationError",
+            "message": "gf.yaml names predictor churn2, not churn",
+            "param": "name",
+        },
+        payload=asked(name),
+        status=422,
+    )
+    code, _, stderr = run("check", str(churn), monkeypatch=monkeypatch, env=hosted)
+    assert code == 1
+    assert "gf.yaml names predictor churn2, not churn" in stderr
+    assert not (churn / "gf.lock").exists()
 
 
 def test_a_changed_lock_fails_check_locked_and_lists_the_change(
@@ -138,13 +220,8 @@ def test_a_changed_lock_fails_check_locked_and_lists_the_change(
     wire.expect(
         "POST",
         "/predictors/churn/check",
-        {
-            "lock": moved,
-            "model": MODEL_ID,
-            "inferred": {},
-            "changes": [["~", "target", "y", "z"]],
-        },
-        payload={"manifest": MANIFEST, "snapshot": name, "previous": LOCK},
+        checked(moved, changes=[("~", "target", "y", "z")], inferred={}),
+        payload=asked(name, LOCK),
     )
     code, _, stderr = run(
         "--json", "check", "--locked", str(churn), monkeypatch=monkeypatch, env=hosted
@@ -154,13 +231,15 @@ def test_a_changed_lock_fails_check_locked_and_lists_the_change(
     assert json.loads((churn / "gf.lock").read_text()) == LOCK
 
 
-def evaluation(state, scored, metrics=None):
+def evaluation(state, scored, metrics=None, *, number=1):
     return {
-        "evaluation": "ev-1",
+        "evaluation": number,
         "state": state,
         "held": 2,
+        "repeats": 1,
+        "context": 4,
         "task": "classification",
-        "metric": "accuracy",
+        "metric": "auroc",
         "models": [
             {
                 "model": MODEL_ID,
@@ -173,6 +252,7 @@ def evaluation(state, scored, metrics=None):
                 "error": None,
             }
         ],
+        "billed": {"predictions": 1 if scored else 0, "rows": 6, "seconds": 0.4},
         "created": 1795035000.0,
         "started": 1795035001.0,
         "finished": None,
@@ -180,47 +260,54 @@ def evaluation(state, scored, metrics=None):
 
 
 def test_eval_starts_a_hosted_evaluation_and_polls_it_to_its_scores(
-    wire, hosted, churn, monkeypatch
+    wire, hosted, held, monkeypatch
 ):
-    name, _ = uploaded(churn)
+    name, _ = uploaded(held)
     wire.expect("POST", "/snapshots")
     wire.expect(
         "POST",
         "/predictors/churn/evaluations",
-        {"evaluation": "ev-1", "state": "queued"},
-        payload={"manifest": MANIFEST, "snapshot": name},
+        evaluation("queued", 0, number=3),
+        payload={"manifest": MANIFEST + HELD, "snapshot": name},
     )
-    wire.expect("GET", "/predictors/churn/evaluations/ev-1", evaluation("running", 1))
-    done = evaluation("succeeded", 2, {"accuracy": 0.5, "log_loss": 0.69})
-    wire.expect("GET", "/predictors/churn/evaluations/ev-1", done)
-    code, stdout, stderr = run("eval", str(churn), monkeypatch=monkeypatch, env=hosted)
+    wire.expect("GET", "/predictors/churn/evaluations/3", evaluation("running", 1))
+    done = evaluation("finished", 2, {"auroc": 0.75, "log loss": 0.69}, number=3)
+    wire.expect("GET", "/predictors/churn/evaluations/3", done)
+    code, stdout, stderr = run("eval", str(held), monkeypatch=monkeypatch, env=hosted)
     assert code == 0, stderr
     assert "Evaluated churn  2 held-out rows" in stderr
-    assert "accuracy" in stdout and "0.500" in stdout and "0.690" in stdout
+    assert "auroc" in stdout and "0.750" in stdout and "0.690" in stdout
+    assert [path for path, _ in wire.requests][-1] == (
+        "/v1/projects/test/predictors/churn/evaluations/3"
+    )
 
 
-def test_a_failed_evaluation_is_an_error_naming_the_model(
-    wire, hosted, churn, monkeypatch
+def test_eval_with_another_model_scores_the_manifests_model_beside_it(
+    wire, hosted, held, monkeypatch
 ):
     wire.expect("POST", "/snapshots")
-    name, _ = uploaded(churn)
+    name, _ = uploaded(held)
     wire.expect(
         "POST",
         "/predictors/churn/evaluations",
-        {"evaluation": "ev-1", "state": "queued"},
+        evaluation("queued", 0),
         payload={
-            "manifest": MANIFEST,
+            "manifest": MANIFEST + HELD,
             "snapshot": name,
-            "models": ["general-forecast/x"],
+            "models": [MODEL_ID, "general-forecast/x"],
         },
     )
     failed = evaluation("failed", 0)
-    failed["models"][0]["error"] = "the target has one class"
-    wire.expect("GET", "/predictors/churn/evaluations/ev-1", failed)
+    failed["models"][0]["state"] = "failed"
+    failed["models"][0]["error"] = {
+        "code": "ValidationError",
+        "message": "the target has one class",
+    }
+    wire.expect("GET", "/predictors/churn/evaluations/1", failed)
     code, _, stderr = run(
         "--json",
         "eval",
-        str(churn),
+        str(held),
         "--model",
         "general-forecast/x",
         monkeypatch=monkeypatch,
@@ -228,33 +315,101 @@ def test_a_failed_evaluation_is_an_error_naming_the_model(
     )
     assert code == 1
     error = json.loads(stderr)["error"]
-    assert error["message"] == "evaluation ev-1 failed"
+    assert error["message"] == "evaluation 1 failed"
     assert error["because"] == f"{MODEL_ID}: the target has one class"
 
 
-def test_the_sdk_evaluates_and_waits(wire, churn):
-    name, _ = uploaded(churn)
+def test_eval_refuses_a_manifest_that_holds_no_rows_out_before_uploading(
+    wire, hosted, churn, monkeypatch
+):
+    code, stdout, stderr = run("eval", str(churn), monkeypatch=monkeypatch, env=hosted)
+    assert code == 1 and stdout == ""
+    assert stderr.startswith(
+        "error: gf eval scores held-out rows, and gf.yaml holds none out\n"
+    )
+    assert "add `holdout` or `until` to the context in gf.yaml" in stderr
+    assert wire.requests == []
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "hint"),
+    [
+        (
+            429,
+            {
+                "code": "CapacityExceeded",
+                "message": "project test has 1 run going, its limit",
+                "reason": "run_limit_reached",
+                "limit": 1,
+                "actual": 1,
+            },
+            "run `gf eval` again once the other ends",
+        ),
+        (
+            422,
+            {
+                "code": "ValidationError",
+                "message": "general-forecast/x is not a hosted classification model",
+                "reason": "model_not_hostable",
+                "param": "models",
+            },
+            "run `gf model list` for the models the service hosts",
+        ),
+        (
+            422,
+            {
+                "code": "ValidationError",
+                "message": "no held-out row has a label",
+                "param": "holdout",
+            },
+            "give the context in gf.yaml a `holdout` or `until`",
+        ),
+    ],
+)
+def test_an_evaluation_the_service_refuses_says_what_to_do(
+    wire, hosted, held, monkeypatch, status, error, hint
+):
+    name, _ = uploaded(held)
     wire.expect("POST", "/snapshots")
     wire.expect(
         "POST",
         "/predictors/churn/evaluations",
-        {"evaluation": "ev-1", "state": "queued"},
-        payload={"manifest": MANIFEST, "snapshot": name},
+        error,
+        payload={"manifest": MANIFEST + HELD, "snapshot": name},
+        status=status,
     )
-    done = evaluation("succeeded", 2, {"accuracy": 1.0})
-    wire.expect("GET", "/predictors/churn/evaluations/ev-1", done)
-    with client(wire) as hosted:
-        result = hosted.predictors.evaluate(churn, poll_interval=0)
-    assert result["state"] == "succeeded"
-    assert result["models"][0]["metrics"] == {"accuracy": 1.0}
+    code, _, stderr = run("eval", str(held), monkeypatch=monkeypatch, env=hosted)
+    assert code == 1
+    assert "the service refused the evaluation of predictor churn" in stderr
+    assert error["message"] in stderr and hint in stderr
+    # A standing limit is not retried: one request, one refusal.
+    assert len(wire.requests) == 2
 
 
-def test_push_sends_the_lock_the_service_wrote_and_the_snapshot(wire, churn):
-    (churn / "gf.lock").write_text(json.dumps(LOCK))
-    _, digest = uploaded(churn)
-    wire.expect("GET", "/predictors/churn", "NotFound", status=404)
-    wire.expect("POST", "/predictors", {"name": "churn"}, payload={"name": "churn"})
+def test_the_sdk_evaluates_and_waits(wire, held):
+    name, _ = uploaded(held)
     wire.expect("POST", "/snapshots")
+    wire.expect(
+        "POST",
+        "/predictors/churn/evaluations",
+        evaluation("queued", 0),
+        payload={"manifest": MANIFEST + HELD, "snapshot": name},
+    )
+    done = evaluation("finished", 2, {"auroc": 1.0})
+    wire.expect("GET", "/predictors/churn/evaluations/1", done)
+    with client(wire) as hosted:
+        result = hosted.predictors.evaluate(held, poll_interval=0)
+        assert result["state"] == "finished"
+        assert result["models"][0]["metrics"] == {"auroc": 1.0}
+        with pytest.raises(gf.InvalidInput, match="number from 1"):
+            hosted.predictors.evaluation("churn", "ev-1")
+
+
+def push_answers(wire, *, read=True, ready=False):
+    """What a first push to staging meets once its check kept the snapshot's rows."""
+    if read:
+        wire.expect("GET", "/predictors/churn", "NotFound", status=404)
+    wire.expect("POST", "/predictors", {"name": "churn"}, payload={"name": "churn"})
     revision = {
         "predictor": "churn",
         "number": 1,
@@ -263,18 +418,11 @@ def test_push_sends_the_lock_the_service_wrote_and_the_snapshot(wire, churn):
         "created_at": 1795035000.0,
         "status": "pending",
     }
-    manifest = {
-        "name": "churn",
-        "model": MODEL_ID,
-        "target": "y",
-        "id": "id",
-        "context": {"snapshot": "rows.csv"},
-    }
     wire.expect(
         "POST",
         "/predictors/churn/revisions",
         revision,
-        payload={"lock": LOCK, "snapshot": digest, "manifest": manifest},
+        payload={"lock": LOCK, "snapshot": KEPT["digest"], "manifest": NORMALIZED},
     )
     environment = {
         "predictor": "churn",
@@ -283,7 +431,10 @@ def test_push_sends_the_lock_the_service_wrote_and_the_snapshot(wire, churn):
         "generation": 0,
         "status": "pending",
     }
-    wire.expect("GET", "/predictors/churn/environments/staging", "NotFound", status=404)
+    if read:
+        wire.expect(
+            "GET", "/predictors/churn/environments/staging", "NotFound", status=404
+        )
     wire.expect(
         "POST",
         "/predictors/churn/environments",
@@ -293,12 +444,78 @@ def test_push_sends_the_lock_the_service_wrote_and_the_snapshot(wire, churn):
     wire.expect(
         "POST",
         "/predictors/churn/environments/staging/promote",
-        {**environment, "revision": 1, "generation": 1},
+        {
+            **environment,
+            "revision": 1,
+            "generation": 1,
+            "status": "ready" if ready else "pending",
+        },
         payload={"revision": 1, "expected_generation": 0},
     )
+
+
+def test_push_checks_with_keep_and_registers_the_rows_the_service_kept(wire, churn):
+    (churn / "gf.lock").write_text(json.dumps(LOCK))
+    name, _ = uploaded(churn)
+    wire.expect("POST", "/snapshots")
+    wire.expect(
+        "POST",
+        "/predictors/churn/check",
+        checked(snapshot=KEPT),
+        payload=asked(name, LOCK, keep=True),
+    )
+    push_answers(wire)
     with client(wire) as hosted:
         pushed = hosted.predictors.push(churn, env="staging")
-    assert pushed.number == 1
+    assert pushed.number == 1 and not wire.expected and not wire.errors
+
+
+def test_the_cli_pushes_the_same_way(wire, hosted, churn, monkeypatch):
+    (churn / "gf.lock").write_text(json.dumps(LOCK))
+    name, _ = uploaded(churn)
+    wire.expect("GET", "/predictors/churn", "NotFound", status=404)
+    wire.expect("POST", "/snapshots")
+    wire.expect(
+        "POST",
+        "/predictors/churn/check",
+        checked(snapshot=KEPT),
+        payload=asked(name, LOCK, keep=True),
+    )
+    push_answers(wire, read=False, ready=True)
+    code, _, stderr = run(
+        "push",
+        "--yes",
+        "--env",
+        "staging",
+        str(churn),
+        monkeypatch=monkeypatch,
+        env=hosted,
+    )
+    assert code == 0, (stderr, wire.errors)
+    assert "Uploading churn revision 1  snapshot, 6 rows" in stderr
+    assert "Deployed churn revision 1 to staging" in stderr
+    assert not wire.expected
+
+
+def test_push_refuses_a_lock_the_service_no_longer_resolves(wire, churn):
+    (churn / "gf.lock").write_text(json.dumps(LOCK))
+    name, _ = uploaded(churn)
+    moved = {**LOCK, "digest": "sha256:" + "e" * 64}
+    wire.expect("POST", "/snapshots")
+    wire.expect(
+        "POST",
+        "/predictors/churn/check",
+        checked(moved, snapshot=KEPT),
+        payload=asked(name, LOCK, keep=True),
+    )
+    with client(wire) as hosted, pytest.raises(gf.Error) as raised:
+        hosted.predictors.push(churn, env="staging")
+    assert raised.value.code == "LockRequired"
+    assert raised.value.hint == "run `gf check` again"
+    assert [path.rsplit("/", 1)[-1] for path, _ in wire.requests] == [
+        "snapshots",
+        "check",
+    ]
 
 
 def test_push_without_a_lock_says_to_check_first(churn):

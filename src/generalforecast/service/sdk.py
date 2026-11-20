@@ -445,19 +445,52 @@ def environment_name(value: str | None, default: str) -> str:
 
 
 @dataclass(frozen=True)
-class Pushed:
-    """What `push` sends for a checked predictor: its lock, manifest and snapshot rows.
+class Checked:
+    """What `check`, `evaluate` and `push` send for a predictor directory.
 
     Attributes:
-        lock: The `gf.lock` the service wrote at `gf check`.
-        manifest: The `gf.yaml` document the lock was written for.
-        snapshot: The snapshot file's rows, for a snapshot context; None for
-            a request or live context.
+        manifest: The `gf.yaml` as written.
+        snapshot: The snapshot file's rows, for a snapshot context.
+        previous: The `gf.lock` already beside the manifest, if any, so the
+            service can say what changed.
+    """
+
+    manifest: Any
+    snapshot: pa.Table | None
+    previous: dict[str, Any] | None
+
+
+def checked_manifest(predictor: "str | Path") -> Checked:
+    """Reads a predictor directory for `check` or `evaluate`: its manifest, snapshot and lock.
+
+    A previous lock that cannot be read is left out: the check writes a new one.
+    """
+    from generalforecast import manifest as manifests
+    from generalforecast import tables
+    from generalforecast.errors import Error
+
+    root = Path(predictor)
+    found = manifests.load(root)
+    try:
+        previous = manifests.read_lock(root)
+    except Error:
+        previous = None
+    snapshot = None
+    if found.snapshot is not None:
+        snapshot = tables.read_frame(root, found.snapshot)
+    return Checked(found, snapshot, previous)
+
+
+@dataclass(frozen=True)
+class Pushed:
+    """A checked predictor directory: what `check` sends and the lock `gf check` wrote.
+
+    `push` checks `checked` again with `keep` and registers what the service
+    answers, provided it resolves to `lock`.
     """
 
     lock: PredictorLock
-    manifest: dict[str, Any]
-    snapshot: pa.Table | None = None
+    checked: Checked
 
     @property
     def name(self) -> str:
@@ -506,44 +539,7 @@ def pushed(predictor: "str | Path") -> Pushed:
             snapshot = tables.read_frame(root, found.snapshot)
         except Error as error:
             raise ServiceError("MissingFile", error.message, 422) from None
-    return Pushed(lock, dict(found.document), snapshot)
-
-
-@dataclass(frozen=True)
-class Checked:
-    """What `check` and `evaluate` send for a predictor directory.
-
-    Attributes:
-        manifest: The `gf.yaml` as written.
-        snapshot: The snapshot file's rows, for a snapshot context.
-        previous: The `gf.lock` already beside the manifest, if any, so the
-            service can say what changed.
-    """
-
-    manifest: Any
-    snapshot: pa.Table | None
-    previous: dict[str, Any] | None
-
-
-def checked_manifest(predictor: "str | Path") -> Checked:
-    """Reads a predictor directory for `check` or `evaluate`: its manifest, snapshot and lock.
-
-    A previous lock that cannot be read is left out: the check writes a new one.
-    """
-    from generalforecast import manifest as manifests
-    from generalforecast import tables
-    from generalforecast.errors import Error
-
-    root = Path(predictor)
-    found = manifests.load(root)
-    try:
-        previous = manifests.read_lock(root)
-    except Error:
-        previous = None
-    snapshot = None
-    if found.snapshot is not None:
-        snapshot = tables.read_frame(root, found.snapshot)
-    return Checked(found, snapshot, previous)
+    return Pushed(lock, Checked(found, snapshot, document))
 
 
 def append_payload(data: Any, *, id: str, write_id: str) -> JsonObject:

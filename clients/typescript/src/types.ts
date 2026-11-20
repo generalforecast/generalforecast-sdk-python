@@ -71,15 +71,17 @@ export interface Envelope {
  * `plan_required` (fine-tuning needs a Pro or Enterprise plan) and `credits_exhausted`
  * (an enforced workspace has used its credits, which also refuses predictions);
  * `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not turned on for the
- * project); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs
- * queued or running as it may), `quota_exceeded` (the project's training data would
- * pass its quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and
- * `actual`, and lift only when the caller ends a run or deletes data, so clients do not
- * retry them; a 429 `rate_limited` passes on its own and may be retried. A run's create
- * is refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
- * queued or running) or `base_mismatch` (the fine-tune's versions train from another
- * base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
- * base).
+ * project); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs,
+ * Playground runs or evaluations queued or running as it may), `quota_exceeded` (the
+ * project's training data would pass its quota) and `snapshot_quota_exceeded`. Those
+ * three 429s carry `limit` and `actual`, and lift only when the caller ends a run or
+ * deletes data, so clients do not retry them; a 429 `rate_limited` passes on its own
+ * and may be retried. A run's create is refused with `Conflict` 409 `run_active`
+ * (another run of the fine-tune is still queued or running) or `base_mismatch` (the
+ * fine-tune's versions train from another base), and with `ValidationError` 422
+ * `base_is_fine_tune` (a fine-tune sent as the base). An evaluation refuses a model
+ * with `ValidationError` 422 `model_not_hostable` (another task's model, or one the
+ * service does not host).
  */
 export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -1578,12 +1580,29 @@ export interface RevisionRegisterRequest extends Envelope {
 /** a gf.yaml as written, its uploaded snapshot, and the lock it replaces */
 export interface PredictorCheck {
   manifest: string;
-  snapshot: string | null;
-  previous: Record<string, unknown> | null;
+  snapshot?: string | null;
+  previous?: Record<string, unknown> | null;
+  upgrade?: boolean;
+  keep?: boolean;
 }
 
 export interface PredictorCheckRequest extends Envelope {
   payload: PredictorCheck;
+}
+
+/** the context the lock resolved */
+export interface CheckedContext {
+  kind: "snapshot" | "request" | "live";
+  rows: number | null;
+  query_rows: number | null;
+  digest: string | null;
+}
+
+/** a snapshot context's resolved rows, stored for `gf push` */
+export interface KeptSnapshot {
+  name: string;
+  digest: string;
+  rows: number;
 }
 
 export interface PredictorCheckResult {
@@ -1591,6 +1610,9 @@ export interface PredictorCheckResult {
   model: string;
   inferred: Record<string, unknown>;
   changes: unknown[][];
+  manifest: Record<string, unknown>;
+  context: CheckedContext;
+  snapshot: KeptSnapshot | null;
 }
 
 export interface PredictorCheckReply extends Envelope {
@@ -1599,23 +1621,23 @@ export interface PredictorCheckReply extends Envelope {
 
 export interface EvaluationCreate {
   manifest: string;
-  snapshot: string | null;
-  models?: string[];
+  snapshot: string;
+  models?: string[] | null;
 }
 
 export interface EvaluationCreateRequest extends Envelope {
   payload: EvaluationCreate;
 }
 
-export type EvaluationState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+/** `queued` and `running` go on; `finished`, `failed` and `cancelled` are final */
+export type EvaluationState = "queued" | "running" | "finished" | "failed" | "cancelled";
 
-export interface EvaluationStarted {
-  evaluation: string;
-  state: EvaluationState;
-}
-
-export interface EvaluationStartedReply extends Envelope {
-  result: EvaluationStarted;
+export interface EvaluationInterval {
+  metric: string;
+  low: number;
+  high: number;
+  level: number;
+  resamples: number;
 }
 
 /** one model's scoring of the held-out rows */
@@ -1623,20 +1645,30 @@ export interface EvaluationModel {
   model: string;
   state: EvaluationState;
   metrics: Record<string, number | null>;
-  interval: Record<string, unknown> | null;
+  interval: EvaluationInterval | null;
   scored: number;
   total: number;
   seconds: number | null;
-  error: string | null;
+  error: ApiError | null;
+}
+
+/** what the evaluation was billed so far, on the prediction meters */
+export interface EvaluationBilled {
+  predictions: number;
+  rows: number;
+  seconds: number;
 }
 
 export interface Evaluation {
-  evaluation: string;
+  evaluation: number;
   state: EvaluationState;
   held: number | null;
+  repeats: number;
+  context: number | null;
   task: string | null;
   metric: string | null;
   models: EvaluationModel[];
+  billed: EvaluationBilled;
   created: number;
   started: number | null;
   finished: number | null;
@@ -2751,7 +2783,7 @@ export const ROUTES = {
   "secrets.rotate": { method: "POST", path: "/v1/projects/{project}/secrets/{secret}/rotate", request: "SecretRotateRequest", reply: "SecretReply", body: "application/json" },
   "secrets.delete": { method: "POST", path: "/v1/projects/{project}/secrets/{secret}/delete", request: "SecretRefRequest", reply: "SecretDeletedReply", body: "application/json" },
   "predictors.check": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/check", request: "PredictorCheckRequest", reply: "PredictorCheckReply", body: "application/json" },
-  "evaluations.create": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/evaluations", request: "EvaluationCreateRequest", reply: "EvaluationStartedReply", body: "application/json" },
+  "evaluations.create": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/evaluations", request: "EvaluationCreateRequest", reply: "EvaluationReply", body: "application/json" },
   "evaluations.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/evaluations/{evaluation}", request: "null", reply: "EvaluationReply", body: null },
   "revisions.list": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/revisions", request: "null", reply: "RevisionListReply", body: null },
   "revisions.register": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/revisions", request: "RevisionRegisterRequest", reply: "RevisionReply", body: "application/json" },

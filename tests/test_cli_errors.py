@@ -413,6 +413,15 @@ class Service:
         error.request_id = REQUEST
         raise error
 
+    @property
+    def predictors(self):
+        return self
+
+    def check(self, root, *, upgrade=False, keep=False):
+        """A check uploads the snapshot first, as the SDK's operation does."""
+        with errors.during("the snapshot upload", framed=True):
+            self.upload_snapshot(None)
+
 
 @pytest.fixture
 def pushable(monkeypatch, tmp_path):

@@ -15,12 +15,13 @@ use the hosted predictor routes. Each command returns its result for
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import os
 import re
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -671,7 +672,9 @@ class PredictorCommands:
         with out.working(log=False) as work:
             work.show("Checking", found.name)
             with during(f"the check of predictor {found.name}"):
-                answer = self.client.predictors.check(root)
+                answer = self.client.predictors.check(
+                    root, upgrade=bool(getattr(args, "upgrade", False))
+                )
         lock = answer["lock"]
         current = previous is not None and previous.get("digest") == lock.get("digest")
         if args.frozen:
@@ -719,6 +722,7 @@ class PredictorCommands:
             "model": model,
             "inferred": inferred,
             "changes": [list(change) for change in changes],
+            "context": answer.get("context"),
             "lock": lock,
         }
 
@@ -732,19 +736,24 @@ class PredictorCommands:
         found = _manifests().load(root)
         if args.wait is not None and args.wait <= 0:
             raise InvalidInput("--wait must be more than 0", param="wait")
+        if found.context_kind != "snapshot" or not (
+            "holdout" in found.context or "until" in found.context
+        ):
+            raise InvalidInput(
+                f"gf eval scores held-out rows, and {MANIFEST} holds none out",
+                because="an evaluation needs a snapshot context with `holdout` or `until`",
+                hint=f"add `holdout` or `until` to the context in {MANIFEST}",
+                param="context",
+            )
+        models = _evaluated(found, _previous_lock(root), list(args.model))
         started = time.perf_counter()
         with out.working(log=False) as work:
             work.show("Uploading", found.name)
-            with during(f"the evaluation of predictor {found.name}"):
-                begun = self.client.predictors.evaluate(
-                    root, models=list(args.model) or None, wait=False
-                )
-            evaluation = begun["evaluation"]
+            with during(f"the evaluation of predictor {found.name}"), _eval_refusal():
+                state = self.client.predictors.evaluate(root, models=models, wait=False)
+            evaluation = state["evaluation"]
             deadline = None if args.wait is None else time.monotonic() + args.wait
-            state = begun
             while True:
-                with during(f"the request for evaluation {evaluation}"):
-                    state = self.client.predictors.evaluation(found.name, evaluation)
                 line = _evaluation_line(state)
                 work.show("Evaluating", lambda seconds, line=line: line)
                 if state["state"] not in EVALUATION_RUNNING:
@@ -756,15 +765,24 @@ class PredictorCommands:
                         hint="pass a longer --wait, or run `gf eval` again later",
                     )
                 time.sleep(EVAL_POLL_SECONDS)
-        models = [m for m in state.get("models") or [] if isinstance(m, dict)]
-        if state["state"] != "succeeded":
-            failed = [m for m in models if m.get("error")]
+                with during(f"the request for evaluation {evaluation}"):
+                    state = self.client.predictors.evaluation(found.name, evaluation)
+        scored = [m for m in state.get("models") or [] if isinstance(m, dict)]
+        failed = [m for m in scored if m.get("error") or m.get("state") == "failed"]
+        if state["state"] != "finished":
             raise Error(
                 "Internal",
                 f"evaluation {evaluation} {state['state']}",
-                because="; ".join(f"{m.get('model')}: {m.get('error')}" for m in failed)
+                because="; ".join(
+                    f"{m.get('model')}: {_error_message(m.get('error'))}"
+                    for m in failed
+                )
                 or None,
                 hint="fix the manifest and run `gf eval` again",
+            )
+        for model in failed:
+            out.warning(
+                f"{model.get('model')} failed: {_error_message(model.get('error'))}"
             )
         held = state.get("held")
         out.status(
@@ -783,8 +801,11 @@ class PredictorCommands:
             "task": state.get("task"),
             "metric": state.get("metric"),
             "rows": held,
-            "metrics": {str(m.get("model")): m.get("metrics") or {} for m in models},
-            "models": models,
+            "repeats": state.get("repeats"),
+            "context": state.get("context"),
+            "metrics": {str(m.get("model")): m.get("metrics") or {} for m in scored},
+            "models": scored,
+            "billed": state.get("billed"),
         }
 
     def predict(self) -> dict:
@@ -877,6 +898,7 @@ class PredictorCommands:
 
     def push(self) -> dict:
         """Uploads the locked predictor as a revision and points an environment at it."""
+        from generalforecast._operations import registered
         from generalforecast.contracts import Environment, PromoteRequest, Revision
         from generalforecast.service.contracts import ServiceError
         from generalforecast.service.sdk import pushed
@@ -891,8 +913,7 @@ class PredictorCommands:
                 hint="run `gf check` first",
             )
         checked = pushed(root)
-        lock = checked.lock.to_dict()
-        predictor = lock["predictor"]
+        predictor = checked.lock.to_dict()["predictor"]
         name, env = spec.name, args.env
         try:
             with during(f"the request for predictor {name}"):
@@ -943,31 +964,19 @@ class PredictorCommands:
         # The plan is what a confirmation answers, so it shows whenever one is asked.
         out.table(plan, indent=2, force=not args.yes)
         self.confirm("Push?", declined="Nothing was pushed.")
-        snapshot = None
-        if checked.snapshot is not None:
-            from generalforecast.commands import upload_snapshot
-
+        rows = checked.checked.snapshot
+        if rows is not None:
             out.status(
                 "Uploading",
-                f"{name} revision {number}  snapshot, {term.count(checked.snapshot.num_rows)} rows, {_bytes(checked.snapshot.nbytes)}",
+                f"{name} revision {number}  snapshot, {term.count(rows.num_rows)} rows, {_bytes(rows.nbytes)}",
             )
-            # gf writes the upload's bytes itself, so a service that finds
-            # them malformed and this gf disagree about their form.
-            with during("the snapshot upload", framed=True):
-                snapshot = upload_snapshot(self.client, checked.snapshot, prefix=name)[
-                    "digest"
-                ]
-            if (
-                checked.lock.data_digest is not None
-                and snapshot != checked.lock.data_digest
-            ):
-                raise Error(
-                    "InvalidInput",
-                    "the uploaded snapshot differs from gf.lock",
-                    hint="run `gf check` again",
-                )
         else:
             out.status("Uploading", f"{name} revision {number}  {context.get('kind')}")
+        # The service checks the directory again and keeps the snapshot's
+        # resolved rows, which the revision then names by their digest.
+        with during(f"the check of predictor {name}"):
+            answer = self.client.predictors.check(root, keep=True)
+        payload = registered(answer, checked.lock)
         started = time.perf_counter()
         if not exists:
             with during(f"the registration of predictor {name}"):
@@ -976,12 +985,7 @@ class PredictorCommands:
                 )
         with during(f"revision {number} of {name}"):
             revision = Revision.from_dict(
-                self.call(
-                    "POST",
-                    name,
-                    "/revisions",
-                    {"lock": lock, "snapshot": snapshot, "manifest": checked.manifest},
-                )
+                self.call("POST", name, "/revisions", payload)
             )
         if current is None:
             with during(f"the new environment {env} of {name}"):
@@ -1311,6 +1315,57 @@ def _evaluation_line(state: dict) -> str:
             part += f" {metric} {value:.4g}" if isinstance(value, float) else ""
         parts.append(part)
     return f"{state.get('state', '')}  " + ", ".join(parts)
+
+
+def _evaluated(
+    found: Any, previous: dict[str, Any] | None, extra: list[str]
+) -> list[str] | None:
+    """The models `gf eval --model` scores: the manifest's own, then each named one.
+
+    None without `--model`, when the service scores the manifest's model.
+    The manifest's model is the one it names, or else the one its lock pins.
+    """
+    if not extra:
+        return None
+    own = found.model
+    if own is None and isinstance(previous, dict):
+        locked = previous.get("predictor")
+        own = locked.get("model") if isinstance(locked, dict) else None
+    return list(dict.fromkeys(([own] if isinstance(own, str) else []) + extra))
+
+
+def _error_message(error: Any) -> str:
+    """A model's failure as the evaluation reports it: an error object or text."""
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("code") or "failed")
+    return str(error or "failed")
+
+
+@contextlib.contextmanager
+def _eval_refusal() -> Iterator[None]:
+    """Says what to do about the refusals only an evaluation meets."""
+    from generalforecast.account import wire_code
+
+    try:
+        yield
+    except Error as error:
+        if error.hint is None:
+            code, reason = wire_code(error)
+            if reason == "run_limit_reached":
+                error.hint = (
+                    "the project runs one evaluation or Playground run at a time; "
+                    "run `gf eval` again once the other ends"
+                )
+            elif reason == "model_not_hostable":
+                error.hint = "run `gf model list` for the models the service hosts"
+            elif code == "ValidationError" and error.param in ("context", "holdout"):
+                error.hint = (
+                    "gf eval scores a snapshot context's labelled held-out rows: "
+                    f"give the context in {MANIFEST} a `holdout` or `until`"
+                )
+            elif code == "ValidationError" and error.param == "model":
+                error.hint = "gf eval scores classification and regression predictors"
+        raise
 
 
 def _refuse_directory(reference: str) -> None:

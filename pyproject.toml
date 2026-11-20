@@ -35,7 +35,8 @@ gf = "generalforecast.cli:main"
 [project.urls]
 Homepage = "https://generalforecast.com"
 Documentation = "https://docs.generalforecast.com"
-Repository = "https://github.com/generalforecast/generalforecast"
+Repository = "https://github.com/generalforecast/generalforecast-sdk-python"
+Issues = "https://github.com/generalforecast/generalforecast-sdk-python/issues"
 
 [dependency-groups]
 dev = ["pytest>=8.3", "ruff==0.16.10"]
