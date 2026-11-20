@@ -8,7 +8,7 @@ import pytest
 
 import generalforecast as gf
 from generalforecast import _operations as ops
-from generalforecast.batches import query_batches
+from generalforecast.batches import MAX_BODY_BYTES, body_bytes, query_batches
 from generalforecast.catalog import ModelInfo
 from generalforecast.contracts import MAX_QUERIES
 from generalforecast.service.contracts import ServiceError
@@ -219,3 +219,17 @@ def test_parts_from_different_revisions_are_a_conflict():
             answer,
         )
     assert raised.value.code == "Conflict"
+
+
+def test_parts_also_stay_under_the_request_body_bound():
+    wide = pa.table({"x": list(range(3000)), "note": ["n" * 400 for _ in range(3000)]})
+    result, calls = drive(
+        ops.predictor_predict(
+            client(), "churn", wide, context=None, as_of=None, env=None
+        ),
+        scored,
+    )
+    assert len(calls) > 1
+    assert all(body_bytes(call.payload) <= MAX_BODY_BYTES for call in calls)
+    assert sum(len(call.payload["queries"]) for call in calls) == 3000
+    assert result.table.column("label").to_pylist() == list(range(3000))

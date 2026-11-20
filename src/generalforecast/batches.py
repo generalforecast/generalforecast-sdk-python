@@ -1,14 +1,16 @@
-"""Query rows in calls of at most `contracts.MAX_QUERIES`, and their results as one.
+"""Query rows in calls the service takes, and their results as one.
 
-A call carries at most `MAX_QUERIES` query rows, so more go as several calls
-under one request id, `<id>-1`, `<id>-2` and so on, and their results come
-back as if from one call, in the order the rows were given. A forecaster's
-series stay whole within one call, since a series' horizon is forecast at once.
+A call carries at most `MAX_QUERIES` query rows in a body of at most
+`MAX_BODY_BYTES`, so more go as several calls under one request id,
+`<id>-1`, `<id>-2` and so on, and their results come back as if from one
+call, in the order the rows were given. A forecaster's series stay whole
+within one call, since a series' horizon is forecast at once.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -41,6 +43,46 @@ def query_batches(table: pa.Table, series: Sequence[str], cap: int) -> list[np.n
             batches.append([])
         batches[-1].extend(rows)
     return [np.asarray(sorted(rows), dtype=np.int64) for rows in batches if rows]
+
+
+# The most a prediction's request body may be, as the service bounds it; a
+# part's payload keeps this much under it for the envelope around it.
+MAX_BODY_BYTES = 1_048_576
+ENVELOPE_BYTES = 4096
+
+
+def body_bytes(payload: Any) -> int:
+    """About how many bytes a payload sends: its JSON, as loosely as it may be written."""
+    return len(json.dumps(payload, default=str).encode())
+
+
+def fitted(
+    batches: list[np.ndarray],
+    table: pa.Table,
+    series: Sequence[str],
+    payload: Callable[[pa.Table], Any],
+) -> list[np.ndarray]:
+    """The batches split in halves until each one's payload fits a request body.
+
+    A batch that cannot halve, one row or one series, goes as it is, for
+    the service to refuse if it must.
+    """
+    budget = MAX_BODY_BYTES - ENVELOPE_BYTES
+    fitting: list[np.ndarray] = []
+    pending = list(reversed(batches))
+    while pending:
+        rows = pending.pop()
+        if body_bytes(payload(table.take(pa.array(rows)))) <= budget:
+            fitting.append(rows)
+            continue
+        halves = query_batches(
+            table.take(pa.array(rows)), series, max(1, len(rows) // 2)
+        )
+        if len(halves) < 2:
+            fitting.append(rows)
+            continue
+        pending.extend(reversed([rows[half] for half in halves]))
+    return fitting
 
 
 def part_id(request_id: str, part: int) -> str:

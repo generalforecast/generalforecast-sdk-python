@@ -518,18 +518,33 @@ def _in_parts(
     resource: str,
     params: Mapping[str, Any] | None,
 ) -> Generator[Step, Any, PredictionResult]:
-    """Scores `queries` in calls of at most `MAX_QUERIES` rows and stitches the results.
+    """Scores `queries` in calls the service takes and stitches the results.
 
+    A call carries at most `MAX_QUERIES` rows in a body the service takes.
     One call goes under `request_id` as given. Several go under
     `<request_id>-1`, `<request_id>-2` and so on, one id for the whole, and
     an error a part answers with names the query rows it carried.
     """
     import pyarrow as pa
 
-    from generalforecast.batches import described, part_id, query_batches, stitched
+    from generalforecast.batches import (
+        described,
+        fitted,
+        part_id,
+        query_batches,
+        stitched,
+    )
     from generalforecast.contracts import MAX_QUERIES
 
-    if queries.num_rows <= MAX_QUERIES:
+    def sized(part: pa.Table) -> Any:
+        work = yield_payload(part)
+        return work.function(*work.args, **dict(work.kwargs))
+
+    batches = yield Work(
+        fitted,
+        (query_batches(queries, series, MAX_QUERIES), queries, series, sized),
+    )
+    if len(batches) <= 1:
         payload = yield yield_payload(None)
         result = yield Call(
             "POST",
@@ -543,7 +558,6 @@ def _in_parts(
         )
         return inference_result(result)
     base = request_id if request_id is not None else new_request_id()
-    batches = query_batches(queries, series, MAX_QUERIES)
     results, order = [], []
     for part, rows in enumerate(batches, start=1):
         payload = yield yield_payload(queries.take(pa.array(rows)))
