@@ -20,7 +20,7 @@ TASKS = ("classification", "regression", "forecast")
 DEFAULTS: Mapping[str, str] = {
     "classification": f"{ORGANIZATION}/kumo-tabular-medium-classifier",
     "regression": f"{ORGANIZATION}/kumo-tabular-medium-regressor",
-    "forecast": f"{ORGANIZATION}/timesfm-3",
+    "forecast": f"{ORGANIZATION}/chronos-2",
 }
 
 

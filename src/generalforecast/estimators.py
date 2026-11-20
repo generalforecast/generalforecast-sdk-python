@@ -350,7 +350,7 @@ class Forecaster(_Base):
 
     def __init__(
         self,
-        model: str = "general-forecast/timesfm-3",
+        model: str = "general-forecast/chronos-2",
         *,
         target: str = "target",
         time: str = "time",

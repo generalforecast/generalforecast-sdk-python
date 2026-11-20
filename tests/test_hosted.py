@@ -670,7 +670,7 @@ def test_the_catalog_reads_ids_tasks_and_limits():
     with pytest.raises(gf.NotFound):
         catalog.canonical("general-forecast/unknown")
     assert catalog.default("classification") == MODEL_ID
-    assert catalog.default("forecast") == "general-forecast/timesfm-3"
+    assert catalog.default("forecast") == "general-forecast/chronos-2"
 
 
 def test_init_writes_a_manifest_from_the_table_and_the_hosted_catalog(
@@ -732,7 +732,7 @@ def test_the_forecaster_forecasts_each_series_on_the_service():
             "units": [float(i) for i in range(10)],
         }
     )
-    forecaster = {**MODEL, "name": "general-forecast/timesfm-3", "task": "forecast"}
+    forecaster = {**MODEL, "name": "general-forecast/chronos-2", "task": "forecast"}
     levels = {"0.1": 1.0, "0.5": 2.0, "0.9": 3.0}
     hosted = Recorded(
         forecaster, lambda queries: [{"quantiles": levels}] * len(queries)
@@ -751,7 +751,7 @@ def test_the_forecaster_forecasts_each_series_on_the_service():
     assert model.forecast().tolist() == [[1.0, 2.0, 3.0]] * 4
     assert model.predict(grid).tolist() == [2.0] * 4
     sent_model, target, context, queries, options = hosted.sent[0]
-    assert sent_model == "general-forecast/timesfm-3" and target == "units"
+    assert sent_model == "general-forecast/chronos-2" and target == "units"
     assert context.num_rows == 10 and queries.num_rows == 4
     assert options["series"] == ["sku"] and options["horizon"] == 2
     assert options["quantiles"] == [0.1, 0.5, 0.9]
