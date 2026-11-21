@@ -84,8 +84,8 @@ def table(data: Any, *, what: str = "data") -> pa.Table:
     Takes a pandas or Polars frame, an Arrow table or record batch, a path
     to a .csv, .tsv, .parquet, .arrow, .feather or .jsonl file, a mapping
     of columns, or a list of row mappings. Schema metadata is dropped and
-    dictionary columns decoded and large strings made plain, so the same
-    rows always hash alike.
+    dictionary columns decoded and large strings made plain; `normalized`
+    goes on to the table the service holds.
 
     Raises:
         InvalidInput: For anything that is not rows, or rows Arrow cannot hold.
@@ -156,9 +156,112 @@ def read_stream(body: bytes) -> pa.Table:
     return pa.ipc.open_stream(body).read_all()
 
 
-def digest(body: bytes) -> str:
-    """The content digest a snapshot is named by."""
-    return "sha256:" + hashlib.sha256(body).hexdigest()
+# The Arrow type each kind of column is held as, as the engine normalizes a
+# table before it hashes it (`gf_engine.tabular.to_arrow`).
+HELD_TYPES = (
+    (pa.types.is_boolean, pa.bool_()),
+    (pa.types.is_integer, pa.int64()),
+    (pa.types.is_floating, pa.float64()),
+    (
+        lambda kind: pa.types.is_string(kind) or pa.types.is_large_string(kind),
+        pa.string(),
+    ),
+    (
+        lambda kind: pa.types.is_binary(kind) or pa.types.is_large_binary(kind),
+        pa.binary(),
+    ),
+    (pa.types.is_date, pa.date32()),
+    (pa.types.is_timestamp, pa.timestamp("us", tz="UTC")),
+)
+DIGEST_BATCH_ROWS = 1_000_000
+"""The rows of each record batch in the stream a table's digest hashes, as the engine writes it."""
+
+
+def _held_column(name: str, column: pa.ChunkedArray) -> pa.ChunkedArray:
+    """A column as the service holds it (`normalized`)."""
+    import pyarrow.compute as pc
+
+    if pa.types.is_dictionary(column.type):
+        column = column.cast(column.type.value_type)
+    if pa.types.is_null(column.type):
+        # A column with no value at all is text, every cell empty, as the
+        # engine reads a file's.
+        column = column.cast(pa.string())
+    kind = next((held for test, held in HELD_TYPES if test(column.type)), None)
+    if kind is None:
+        raise InvalidInput(
+            f"the column `{name}` is {column.type}, which the service does not hold",
+            hint="cast it to a number, text, boolean, date or timestamp column",
+            param=name,
+        )
+    try:
+        column = pc.cast(column, kind, safe=True)
+    except pa.ArrowInvalid as error:
+        raise InvalidInput(
+            f"the column `{name}` cannot be held as {kind}: {error}",
+            hint="timestamps are held to the microsecond, whole numbers in 64 bits",
+            param=name,
+        ) from None
+    if kind == pa.float64():
+        # Compute functions by name: pyarrow generates them, so its stubs name none.
+        if pc.call_function("any", [pc.call_function("is_inf", [column])]).as_py():
+            raise InvalidInput(
+                f"the column `{name}` holds an infinity, which the service does not take",
+                param=name,
+            )
+        nan = pc.call_function("is_nan", [column])
+        column = pc.call_function("if_else", [nan, pa.nulls(1, kind)[0], column])
+    return column
+
+
+def normalized(data: pa.Table) -> pa.Table:
+    """A table as the service holds and hashes it, as the engine normalizes one.
+
+    Each column becomes a 64-bit integer, a double with NaN as null, a
+    boolean, text, bytes, a date, or a UTC timestamp in microseconds;
+    dictionaries are decoded and a column with no value is text. Every
+    field is nullable and carries no metadata.
+
+    Raises:
+        InvalidInput: For a column of another type, an infinity, or a value
+            its type cannot hold, such as a nanosecond.
+    """
+    columns = [_held_column(name, data.column(name)) for name in data.column_names]
+    return pa.table(columns, names=data.column_names).combine_chunks()
+
+
+class _Hashing:
+    """A write-only file that hashes what it is given and keeps none of it."""
+
+    def __init__(self) -> None:
+        self.hash = hashlib.sha256()
+        self.closed = False
+
+    def write(self, data: Any) -> int:
+        view = memoryview(data)
+        self.hash.update(view)
+        return view.nbytes
+
+    def flush(self) -> None:
+        """Nothing is buffered."""
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def table_digest(data: pa.Table) -> str:
+    """The digest the service names a table by, the engine's `table_digest`.
+
+    It hashes the normalized table's Arrow IPC stream, bytes under null
+    cells included, so a caller hashes the table as the service reads it
+    from the bytes sent: `read_parquet` of an upload, `read_stream` of a
+    snapshot.
+    """
+    table = normalized(data)
+    sink = _Hashing()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table, max_chunksize=DIGEST_BATCH_ROWS)
+    return "sha256:" + sink.hash.hexdigest()
 
 
 def parquet(data: pa.Table) -> bytes:
@@ -168,6 +271,13 @@ def parquet(data: pa.Table) -> bytes:
     sink = io.BytesIO()
     pq.write_table(data, sink, compression="zstd")
     return sink.getvalue()
+
+
+def read_parquet(body: bytes) -> pa.Table:
+    """The table Parquet bytes hold."""
+    import pyarrow.parquet as pq
+
+    return pq.read_table(io.BytesIO(body))
 
 
 def file_name(data: Any) -> str | None:

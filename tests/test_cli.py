@@ -6,6 +6,7 @@
 import inspect
 import io
 import json
+import re
 import sys
 
 import pandas as pd
@@ -334,6 +335,12 @@ def test_login_with_a_piped_key_keeps_it_and_logout_forgets_it(monkeypatch, fake
         "a pasted key is forgotten, not revoked"
     )
     assert "no login was kept" in gf_cli(monkeypatch, "logout")[2]
+
+
+def test_whoami_shows_a_key_that_never_expires_without_a_date(monkeypatch, fake):
+    code, out, _ = gf_cli(monkeypatch, "whoami")
+    assert code == 0
+    assert re.search(r"Key\s+notebook-maya-mbp$", out, re.MULTILINE), out
 
 
 def fake_token():

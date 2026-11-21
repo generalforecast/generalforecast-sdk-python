@@ -3014,6 +3014,19 @@ export interface ReceivedReply extends Envelope {
   result: Received;
 }
 
+/**
+ * the bytes of a snapshot's upload the plane holds so far, of the `bytes` it declared
+ */
+export interface SnapshotReceived {
+  name: Name;
+  received: number;
+  bytes: number;
+}
+
+export interface SnapshotReceivedReply extends Envelope {
+  result: SnapshotReceived;
+}
+
 export interface DeletedReply extends Envelope {
   result: Deleted;
 }
@@ -3199,6 +3212,7 @@ export const ROUTES = {
   "snapshots.get": { method: "GET", path: "/v1/projects/{project}/snapshots/{snapshot}", request: "null", reply: "SnapshotReply", body: null },
   "snapshots.update": { method: "POST", path: "/v1/projects/{project}/snapshots/{snapshot}/update", request: "SnapshotUpdateRequest", reply: "SnapshotReply", body: "application/json" },
   "snapshots.delete": { method: "POST", path: "/v1/projects/{project}/snapshots/{snapshot}/delete", request: "EmptyRequest", reply: "SnapshotReply", body: "application/json" },
+  "snapshots.bytes": { method: "POST", path: "/v1/projects/{project}/snapshots/{snapshot}/bytes", request: "null", reply: "SnapshotReceivedReply", body: "application/octet-stream" },
   "runs.list": { method: "GET", path: "/v1/projects/{project}/runs", request: "null", reply: "RunListReply", body: null },
   "runs.create": { method: "POST", path: "/v1/projects/{project}/runs", request: "RunCreateRequest", reply: "RunReply", body: "application/json" },
   "runs.get": { method: "GET", path: "/v1/projects/{project}/runs/{run}", request: "null", reply: "RunReply", body: null },

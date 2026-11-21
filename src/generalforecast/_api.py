@@ -8006,6 +8006,43 @@ class ReceivedReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SnapshotReceived(Payload):
+    """The SnapshotReceived schema.
+
+    the bytes of a snapshot's upload the plane holds so far, of the `bytes` it declared
+    """
+
+    name: Name
+    received: int
+    bytes: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("received", "received", True, _integer),
+        Field("bytes", "bytes", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SnapshotReceivedReply(Payload):
+    """The SnapshotReceivedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SnapshotReceived
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SnapshotReceived)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class DeletedReply(Payload):
     """The DeletedReply schema."""
 
@@ -9098,6 +9135,14 @@ ROUTES: tuple[Route, ...] = (
         EmptyRequest,
         SnapshotReply,
         "application/json",
+    ),
+    Route(
+        "snapshots.bytes",
+        "POST",
+        "/v1/projects/{project}/snapshots/{snapshot}/bytes",
+        None,
+        SnapshotReceivedReply,
+        "application/octet-stream",
     ),
     Route("runs.list", "GET", "/v1/projects/{project}/runs", None, RunListReply, None),
     Route(

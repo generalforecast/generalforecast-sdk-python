@@ -770,13 +770,12 @@ class Runs(_Sync):
     def list(
         self,
         *,
-        name: str | None = None,
         state: str | None = None,
         data_digest: str | None = None,
         tag: str | None = None,
     ) -> builtins.list[FineTuneRun]:
         """The project's runs, only those matching what is given."""
-        params = {"name": name, "state": state, "data_digest": data_digest, "tag": tag}
+        params = {"state": state, "data_digest": data_digest, "tag": tag}
         return self._run(_ops.run_list(params))
 
     def wait(
@@ -1403,13 +1402,12 @@ class AsyncRuns(_Async):
     async def list(
         self,
         *,
-        name: str | None = None,
         state: str | None = None,
         data_digest: str | None = None,
         tag: str | None = None,
     ) -> builtins.list[FineTuneRun]:
         """See `Runs.list`."""
-        params = {"name": name, "state": state, "data_digest": data_digest, "tag": tag}
+        params = {"state": state, "data_digest": data_digest, "tag": tag}
         return await self._run(_ops.run_list(params))
 
     async def wait(

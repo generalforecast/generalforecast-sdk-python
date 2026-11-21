@@ -19,7 +19,10 @@ Choices the spec leaves open, made here:
   that snapshot (200) or not (404); the same PUT with the Arrow stream
   stores it.
 - A context upload declares the table's `digest` beside `format` and
-  `bytes`, so an unchanged table is answered without its bytes.
+  `bytes`, the engine's `table_digest` of the Parquet it sends as the plane
+  reads it, so an unchanged table is answered without its bytes.
+- A 429 is retried unless its reason is a standing limit
+  (`STANDING_LIMITS`), which the contract says clients do not retry.
 """
 
 from __future__ import annotations
@@ -52,7 +55,16 @@ DEFAULT_URL = "https://app.generalforecast.com"
 ARROW = "application/vnd.apache.arrow.stream"
 OCTETS = "application/octet-stream"
 RETRY_STATUSES = frozenset({429, 502, 503, 504})
+# The reasons of a 429 for a limit that lifts only when the caller ends a run
+# or deletes data (the contract's `ErrorCode`): sending the request again
+# cannot pass, so it is not retried.
+STANDING_LIMITS = frozenset(
+    {"run_limit_reached", "quota_exceeded", "snapshot_quota_exceeded"}
+)
 MAX_RETRY_AFTER = 60.0
+# The most rows one page of a context's or a run's rows holds (the contract's
+# `limit` maximum).
+PAGE_ROWS = 1000
 MAX_REPLY_BYTES = 512 * 1024 * 1024
 
 LOG = logging.getLogger("generalforecast.http")
@@ -176,7 +188,11 @@ def contexts_bytes(name: str, version: int, offset: int, chunk: bytes) -> Reques
 
 
 def upload_chunk(url: str, chunk: bytes, offset: int, total: int) -> Request:
-    """Sends one chunk to a signed resumable upload URL, without a credential."""
+    """Sends one chunk to a signed resumable upload URL, without a credential.
+
+    The session answers 308 while it waits for more, its `Range` saying
+    which bytes it holds, and 200 or 201 once it holds them all.
+    """
     end = offset + len(chunk) - 1
     return Request(
         "PUT",
@@ -228,13 +244,13 @@ def contexts_list() -> Request:
 def contexts_rows(
     name: str, *, limit: int, version: int | None, after: str | None = None
 ) -> Request:
-    """Reads a page of a context's rows."""
+    """Reads a page of a context's rows, at most `PAGE_ROWS` of them."""
     return Request(
         "GET",
         f"/contexts/{_segment(name)}/rows",
         "context",
         name,
-        params=_query(limit=limit, version=version, after=after),
+        params=_query(limit=min(limit, PAGE_ROWS), version=version, after=after),
     )
 
 
@@ -342,15 +358,15 @@ def experiments_cancel(name: str, run: int) -> Request:
 
 
 def experiments_rows(
-    name: str, run: int, *, model: str | None, after: str | None, limit: int = 10_000
+    name: str, run: int, *, model: str | None, after: str | None
 ) -> Request:
-    """Reads a page of a run's held-out predictions."""
+    """Reads a page of a run's held-out predictions, `PAGE_ROWS` of them."""
     return Request(
         "GET",
         f"/experiments/{_segment(name)}/runs/{run}/rows",
         "experiment",
         name,
-        params=_query(model=model, after=after, limit=limit),
+        params=_query(model=model, after=after, limit=PAGE_ROWS),
     )
 
 
@@ -503,7 +519,7 @@ def prediction_get(location: str) -> Request:
 def estimate(payload: Mapping[str, Any]) -> Request:
     """Prices calls without making them (3.4)."""
     return Request(
-        "POST", "/estimate", "model", "estimate", payload=payload, retry=True
+        "POST", "/estimate", "estimate", "estimate", payload=payload, retry=True
     )
 
 
@@ -511,6 +527,21 @@ def snapshots_open(payload: Mapping[str, Any]) -> Request:
     """Opens a resumable Parquet upload of a training snapshot (3.8b)."""
     return Request(
         "POST", "/snapshots", "snapshot", payload["name"], payload=payload, retry=True
+    )
+
+
+def snapshots_bytes(name: str, chunk: bytes, offset: int, total: int) -> Request:
+    """Sends one chunk of a snapshot's upload when the service gave no signed URL."""
+    end = offset + len(chunk) - 1
+    return Request(
+        "POST",
+        f"/snapshots/{_segment(name)}/bytes",
+        "snapshot",
+        name,
+        body=chunk,
+        content_type=OCTETS,
+        headers={"Content-Range": f"bytes {offset}-{end}/{total}"},
+        retry=True,
     )
 
 
@@ -580,7 +611,7 @@ def runs_create(payload: Mapping[str, Any]) -> Request:
 
 
 def runs_list(params: Mapping[str, Any]) -> Request:
-    """Lists runs by name, state, data digest or tag."""
+    """Lists runs by state, data digest or tag."""
     return Request("GET", "/runs", "run", "runs", params=_query(**params))
 
 
@@ -651,7 +682,7 @@ def keys_list() -> Request:
 
 def keys_create(payload: Mapping[str, Any]) -> Request:
     """Creates a key; its token is in this reply only."""
-    return Request("POST", "/keys", "api-key", payload["name"], payload=payload)
+    return Request("POST", "/keys", "api-key", "new", payload=payload)
 
 
 def keys_action(key: str, verb: str) -> Request:
@@ -749,6 +780,18 @@ class Connection:
     trust_env: bool = True
     user_agent: str = "generalforecast-python"
 
+    def chosen(self) -> str:
+        """The project a scoped route's path and every envelope name.
+
+        Raises:
+            InvalidInput: When no project was chosen.
+        """
+        if not self.project:
+            raise InvalidInput(
+                "no project chosen", hint="pass project= or set GF_PROJECT"
+            )
+        return self.project
+
     def prepare(
         self, request: Request, rid: str
     ) -> tuple[str, str, dict[str, str], bytes | None, dict[str, Any] | None]:
@@ -771,12 +814,7 @@ class Connection:
             url = request.url
             authorize = False
         elif request.scoped:
-            if not self.project:
-                raise InvalidInput(
-                    "no project chosen",
-                    hint="pass project= or set GF_PROJECT",
-                )
-            url = f"{self.url}/v1/projects/{_segment(self.project)}{request.path}"
+            url = f"{self.url}/v1/projects/{_segment(self.chosen())}{request.path}"
             authorize = True
         else:
             url = self.url + request.path
@@ -804,10 +842,10 @@ class Connection:
         return request.method, url, headers, body, dict(request.params) or None
 
     def envelope(self, request: Request, rid: str) -> dict[str, Any]:
-        """The `gf/v1` envelope around a request's payload."""
+        """The `gf/v1` envelope around a request's payload, which names the project."""
         return {
             "api_version": API_VERSION,
-            "project": self.project,
+            "project": self.chosen(),
             "request_id": rid,
             "resource": {"kind": request.kind, "name": request.name},
             "payload": request.payload if request.payload is not None else {},
@@ -859,6 +897,22 @@ def interpret(
     if isinstance(value, Mapping) and "result" in value and "api_version" in value:
         return Reply(status, value["result"], headers, value.get("request_id") or rid)
     return Reply(status, value, headers, rid)
+
+
+def transient(status: int, content: bytes) -> bool:
+    """Whether a failed reply may pass when its request is sent again.
+
+    A 502, 503 or 504 may; a 429 may unless its reason is a standing limit.
+    """
+    if status not in RETRY_STATUSES:
+        return False
+    if status != 429:
+        return True
+    try:
+        error = json.loads(content).get("error")
+    except (ValueError, AttributeError):
+        return True
+    return not isinstance(error, Mapping) or error.get("reason") not in STANDING_LIMITS
 
 
 def _retry_after(headers: Mapping[str, str], attempt: int) -> float:
@@ -923,7 +977,9 @@ class Transport:
                     continue
                 raise _unreachable(error, url, rid) from None
             LOG.debug("%s %s %s %s", method, url, response.status_code, rid)
-            if response.status_code in RETRY_STATUSES and attempt + 1 < attempts:
+            if attempt + 1 < attempts and transient(
+                response.status_code, response.content
+            ):
                 self.sleep(_retry_after(response.headers, attempt))
                 continue
             if response.status_code in request.accept:
@@ -975,7 +1031,9 @@ class AsyncTransport:
                     await self.sleep(_retry_after({}, attempt))
                     continue
                 raise _unreachable(error, url, rid) from None
-            if response.status_code in RETRY_STATUSES and attempt + 1 < attempts:
+            if attempt + 1 < attempts and transient(
+                response.status_code, response.content
+            ):
                 await self.sleep(_retry_after(response.headers, attempt))
                 continue
             if response.status_code in request.accept:

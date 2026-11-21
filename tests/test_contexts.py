@@ -42,15 +42,35 @@ def test_create_uploads_in_chunks_and_waits_until_ready(fake, signed):
     assert offsets[:2] == [0, 512]
 
 
-def test_the_same_rows_again_are_unchanged_and_send_no_bytes(fake):
-    gf.contexts.create("adult", data=adult())
+def dated(rows=200):
+    """Rows with a date, a category and missing numbers, which the service normalizes before it hashes them."""
+    return adult(rows).assign(
+        signed=pd.date_range("2026-01-01", periods=rows, freq="h"),
+        workclass=lambda f: f["workclass"].astype("category"),
+        hours=[None if i % 5 == 0 else 40.0 for i in range(rows)],
+    )
+
+
+@pytest.mark.parametrize("rows", [adult, dated], ids=["plain", "dates"])
+def test_the_same_rows_again_are_unchanged_and_send_no_bytes(fake, rows):
+    gf.contexts.create("adult", data=rows())
     sent = len(fake.calls_to("PUT", r"/uploads/.*"))
-    again = gf.contexts.upload("adult", adult())
+    again = gf.contexts.upload("adult", rows())
     assert again.unchanged and again.version == 1
     assert repr(again).endswith("unchanged")
     assert len(fake.calls_to("PUT", r"/uploads/.*")) == sent
-    changed = gf.contexts.upload(again, adult(300))
+    changed = gf.contexts.upload(again, rows(300))
     assert changed.version == 2 and not changed.unchanged
+
+
+def test_a_chunk_is_sent_again_from_where_the_session_holds_bytes(fake):
+    # The session keeps all but 100 bytes of each chunk; its 308's Range says so.
+    fake.chunk_bytes, fake.chunk_loss = 512, 100
+    ctx = gf.contexts.create("adult", data=adult())
+    assert ctx.state == "ready" and ctx.rows == 200
+    chunks = fake.calls_to("PUT", r"/uploads/contexts/adult")
+    starts = [int(c.headers["content-range"].split()[1].split("-")[0]) for c in chunks]
+    assert starts[:3] == [0, 412, 824]
 
 
 def test_upload_creates_a_context_it_does_not_find(fake):

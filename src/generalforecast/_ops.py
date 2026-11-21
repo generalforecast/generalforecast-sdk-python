@@ -31,6 +31,7 @@ from generalforecast.errors import (
     InvalidInput,
     NotFound,
     Timeout,
+    Unavailable,
     failed,
 )
 from generalforecast.types import (
@@ -353,12 +354,13 @@ def _types(columns: Mapping[str, str], what: str) -> dict[str, str]:
     return out
 
 
-def _upload_spec(rows: Any, body: bytes, digest: str, data: Any) -> dict[str, Any]:
+def _upload_spec(rows: Any, body: bytes, data: Any) -> dict[str, Any]:
+    """An upload's announcement; its digest is the service's, so unchanged rows send no bytes."""
     return {
         "format": "parquet",
         "bytes": len(body),
         "file": _data.file_name(data),
-        "digest": digest,
+        "digest": _data.table_digest(_data.read_parquet(body)),
         "rows": rows.num_rows,
     }
 
@@ -455,13 +457,12 @@ def context_create(
         )
     if targets:
         raise InvalidInput("targets= is for live contexts fed through the API")
-    rows = _data.table(data)
+    rows = _data.normalized(_data.table(data))
     body = _data.parquet(rows)
-    digest = _data.digest(_data.stream(rows))
     payload = {
         "name": name,
         "kind": "snapshot",
-        "data": _upload_spec(rows, body, digest, data),
+        "data": _upload_spec(rows, body, data),
         "id": id,
         "time": time,
     }
@@ -481,28 +482,64 @@ def _upload(
     if found.unchanged or not isinstance(upload, Mapping):
         return found
     version = int(upload.get("version") or found.version or 1)
-    url = upload.get("url")
-    chunk = int(upload.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
-    total = len(body)
     yield Say(
         f"Uploading {_data.file_name(data) or name}  {rows.num_rows:,} rows, "
-        f"{rows.num_columns:,} columns, {_data.size(total)}"
+        f"{rows.num_columns:,} columns, {_data.size(len(body))}"
     )
-    offset = 0
+    yield from _chunks(
+        name,
+        body,
+        upload,
+        lambda offset, piece: _http.contexts_bytes(name, version, offset, piece),
+    )
+    return replace(found, state="uploading" if found.state == "ready" else found.state)
+
+
+def _held(reply: _http.Reply, total: int) -> int:
+    """The bytes of an upload the service holds once it answered a chunk.
+
+    A resumable session's 308 says them in its `Range`, `bytes=0-<last>`, and
+    holds none without one; the plane's bytes route answers `received`; a
+    session's 200 or 201 holds them all.
+    """
+    if reply.status == 308:
+        found = re.fullmatch(r"bytes=0-(\d+)", reply.headers.get("range", "").strip())
+        return int(found[1]) + 1 if found else 0
+    received = (reply.result or {}).get("received")
+    return received if isinstance(received, int) else total
+
+
+def _chunks(
+    name: str,
+    body: bytes,
+    upload: Mapping[str, Any],
+    plane: Callable[[int, bytes], _http.Request],
+) -> Op:
+    """Sends an upload's bytes in its `chunk_bytes` chunks, each from where the service holds them to.
+
+    The chunks go to the upload's signed `url`, or to the plane's bytes
+    route (`plane`) when the service gave none.
+
+    Raises:
+        Unavailable: When a chunk added nothing to what the service holds.
+    """
+    url = upload.get("url")
+    chunk = int(upload.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
+    total, offset = len(body), 0
     while offset < total:
         piece = body[offset : offset + chunk]
-        if url:
-            yield _http.upload_chunk(url, piece, offset, total)
-            offset += len(piece)
-        else:
-            reply = yield _http.contexts_bytes(name, version, offset, piece)
-            received = (reply.result or {}).get("received")
-            offset = (
-                int(received)
-                if isinstance(received, int) and received > offset
-                else offset + len(piece)
+        reply = yield (
+            _http.upload_chunk(url, piece, offset, total)
+            if url
+            else plane(offset, piece)
+        )
+        held = _held(reply, total)
+        if held <= offset:
+            raise Unavailable(
+                f"the upload of {name} stopped at byte {offset:,} of {total:,}",
+                hint="try again",
             )
-    return replace(found, state="uploading" if found.state == "ready" else found.state)
+        offset = held
 
 
 def _settle(
@@ -546,10 +583,9 @@ def context_upload(
     rows, as version 1, so one call serves a first run and every later one.
     """
     name = name_of(context, "context")
-    rows = _data.table(data)
+    rows = _data.normalized(_data.table(data))
     body = _data.parquet(rows)
-    digest = _data.digest(_data.stream(rows))
-    spec = _upload_spec(rows, body, digest, data)
+    spec = _upload_spec(rows, body, data)
     try:
         reply = yield _http.contexts_version(name, {"data": spec})
     except NotFound:
@@ -1322,10 +1358,10 @@ def snapshot(state: State, data: Any, *, what: str = "context") -> Op:
 
     Refuses a table past the snapshot ceiling at once, before any request.
     """
-    rows = _data.table(data, what=what)
+    rows = _data.normalized(_data.table(data, what=what))
     body = _data.stream(rows)
     _data.check_snapshot(body, rows.num_rows, what=what)
-    digest = _data.digest(body)
+    digest = _data.table_digest(_data.read_stream(body))
     if digest in state.snapshots:
         return digest, rows.num_rows
     try:
@@ -1624,7 +1660,7 @@ def snapshot_create(
             "a snapshot's training metadata names target= and task= together",
             param="target" if "target" not in meta else "task",
         )
-    rows = _data.table(data)
+    rows = _data.normalized(_data.table(data))
     body = _data.stream(rows)
     if rows.num_rows <= STREAM_ROWS and len(body) <= STREAM_BYTES:
         yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(body))}")
@@ -1652,16 +1688,13 @@ def snapshot_create(
         payload["tags"] = list(tags)
     reply = yield _http.snapshots_open(payload)
     opened = reply.result or {}
-    url = opened.get("url")
-    if not isinstance(url, str) or not url:
-        raise InvalidInput(
-            "the service opened a snapshot upload without its upload URL"
-        )
-    chunk = int(opened.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
     yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(parquet))}")
-    for offset in range(0, len(parquet), chunk):
-        piece = parquet[offset : offset + chunk]
-        yield _http.upload_chunk(url, piece, offset, len(parquet))
+    yield from _chunks(
+        name,
+        parquet,
+        opened,
+        lambda offset, piece: _http.snapshots_bytes(name, piece, offset, len(parquet)),
+    )
     found = load(Snapshot, opened)
     attempt = 0
     while found.state not in UPLOAD_DONE:
@@ -2073,14 +2106,11 @@ def run_get(run: Any) -> Op:
 
 
 def run_list(params: Mapping[str, Any]) -> Op:
-    """Lists runs; `name` keeps one fine-tune's."""
+    """Lists runs, only those in a state, over a data digest or carrying a tag when given."""
     if params.get("state") is not None and params["state"] not in FINE_TUNE_STATES_WIRE:
         raise InvalidInput(f"`{params['state']}` is not a run state", param="state")
     reply = yield _http.runs_list(params)
-    found = loads(FineTuneRun, (reply.result or {}).get("runs"))
-    if params.get("name"):
-        found = [r for r in found if r.name == params["name"]]
-    return found
+    return loads(FineTuneRun, (reply.result or {}).get("runs"))
 
 
 FINE_TUNE_STATES_WIRE = (

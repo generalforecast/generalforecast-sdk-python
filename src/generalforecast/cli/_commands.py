@@ -457,7 +457,6 @@ COMMANDS_LIST = [
                       to=None, metavar="FILE"),
                  Flag("dry-run", "Print the resolved run instead of starting it", YES, to=None))),
     _command("fine-tunes runs list", "List fine-tuning runs", _views.runs_list, flags=(
-        _flag("name", "Only this fine-tune's runs", metavar="N"),
         _flag("state", "Only runs in this state", metavar="S"), _flag("tag", "Only runs with this tag", metavar="T"))),
     _command("fine-tunes runs get", "Show a run", _views.runs_get, RUN),
     _command("fine-tunes runs wait", "Wait for a run to end", _views.run_ended_line, RUN,

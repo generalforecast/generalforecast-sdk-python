@@ -4553,7 +4553,9 @@ paths:
         A JSON payload opens a resumable upload of a Parquet table of up to
         8 GiB, with its size and training metadata. `url` is a resumable
         session to `PUT` the bytes to, in `chunk_bytes` chunks with
-        `Content-Range`. Once every declared byte is stored, the plane
+        `Content-Range`; a plane without object storage answers `url: null`
+        and takes the same chunks at `snapshots.bytes`. Once every declared
+        byte is stored, the plane
         verifies the upload on its own: it reads the Parquet footer, checks
         the named columns exist and hashes the rows, and the snapshot
         becomes `ready`, or `rejected` with an `error`. An upload left open
@@ -5244,6 +5246,45 @@ paths:
                       error: null
                       expires: null
                       created: 1761200000.0
+  /v1/projects/{project}/snapshots/{snapshot}/bytes:
+    post:
+      operationId: snapshots.bytes
+      tags: [hosted]
+      summary: "send a chunk of a snapshot's upload, when it has no signed URL"
+      description: |
+        A plane without object storage opens an upload with `url: null` and
+        takes its chunks here, in order, each with `Content-Range: bytes
+        <first>-<last>/<total>`, where `total` is the upload's declared
+        `bytes`. The reply says how many bytes the plane holds; once it
+        holds them all, it verifies the upload as it does one sent to a
+        signed URL.
+      parameters:
+      - $ref: "#/components/parameters/project"
+      - $ref: "#/components/parameters/snapshot"
+      - name: Content-Range
+        in: header
+        required: true
+        schema: {type: string, pattern: "^bytes \\d+-\\d+/\\d+$"}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        "200":
+          description: the bytes held so far
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotReceivedReply"
+              examples:
+                received:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-5e2c1e9a2b4d6f8031a5c7e9b2d4f6a8
+                    resource: {kind: snapshot, name: credit-2026-01}
+                    result: {name: credit-2026-01, received: 8388608, bytes: 52428800}
   /v1/projects/{project}/runs:
     get:
       operationId: runs.list
@@ -10385,7 +10426,7 @@ components:
           type: number
           description: when the snapshot was created, in seconds since the epoch
         url:
-          description: a resumable session to `PUT` the bytes to, or null to send them to the plane
+          description: a resumable session to `PUT` the bytes to, or null to send them to the plane's `snapshots.bytes`
           anyOf:
           - type: string
           - type: 'null'
@@ -13780,6 +13821,25 @@ components:
         properties:
           result:
             $ref: "#/components/schemas/Received"
+
+    SnapshotReceived:
+      type: object
+      description: the bytes of a snapshot's upload the plane holds so far, of the `bytes` it declared
+      required: [name, received, bytes]
+      additionalProperties: false
+      properties:
+        name: {$ref: "#/components/schemas/Name"}
+        received: {type: integer, minimum: 0}
+        bytes: {type: integer, minimum: 1}
+
+    SnapshotReceivedReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/SnapshotReceived"
 
     DeletedReply:
       allOf:

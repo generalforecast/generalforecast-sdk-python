@@ -149,3 +149,32 @@ def test_scikit_learn_clones_tags_and_cross_validates_without_sending_rows_twice
         "three folds already held, and the refit on every row"
     )
     client.close()
+
+
+def _forecast() -> np.ndarray:
+    history = pd.DataFrame(
+        {"week": pd.date_range("2026-01-05", periods=20, freq="7D").repeat(2),
+         "sku": ["a", "b"] * 20, "units": np.arange(40.0)}
+    )  # fmt: skip
+    future = history.drop(columns="units").tail(4)
+    return gf.Forecaster(target="units", time="week", series=["sku"], horizon=4,
+                         verbose=False).fit(history).predict(future)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "predict",
+    [
+        lambda: gf.models.predict(
+            "tabicl-v2", context=adult().assign(income=income()), queries=adult(3),
+            target="income",
+        ),
+        lambda: gf.Classifier("tabicl-v2", verbose=False).fit(adult(), income()).predict(adult(3)),
+        _forecast,
+    ],
+    ids=["models.predict", "Classifier", "Forecaster"],
+)  # fmt: skip
+def test_every_predict_waits_for_a_prediction_accepted_for_later(fake, predict):
+    # The hosted plane answers 202 with where to poll while a model warms up.
+    fake.accept_predictions = 1
+    assert len(predict()) > 0
+    assert fake.calls_to("GET", r".*/predictions/pred-.*")
