@@ -112,8 +112,10 @@ def test_regressor_and_forecaster(fake):
     assert fc.predict(future).tolist() == [0.5] * 8
     assert fc.forecast(future).shape == (8, 3)
     sent = fake.calls_to("POST", r".*/predict")[-1].payload
-    assert (sent["task"], sent["series"], sent["horizon"], sent.get("frequency")) == (
-        "forecast",
+    # The task picks the catalog model; the route itself takes no task.
+    assert "task" not in sent
+    assert (sent["model"], sent["series"], sent["horizon"], sent.get("frequency")) == (
+        "general-forecast/chronos-2",
         ["sku"],
         4,
         None,

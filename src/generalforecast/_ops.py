@@ -1365,10 +1365,13 @@ def model_predict(
         digest, rows = context.digest, context.rows or 0
     else:
         digest, rows = yield from snapshot(state, context)
+    # The route takes no task: the service picks a short name's task from the
+    # target column. A task the caller names picks the catalog model instead.
+    if task:
+        model = (yield from model_get(model, task)).id
     payload = {
         "model": model,
         "target": target,
-        **({"task": _task(task)} if task else {}),
         "context": {"snapshot": digest},
         **spec_json(fields, partial=False),
     }
