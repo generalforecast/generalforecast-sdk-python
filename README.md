@@ -157,7 +157,7 @@ clf = gf.Classifier("tabicl-v2").fit(X_train, y_train)
 clf        # Classifier(model='tabicl-v2')  # 26,048 context rows uploaded; nothing trained
 clf.estimate(X_test)      # Estimate(calls=66, rows=6513, credits=13, usd=0.013)
 clf.predict(X_test)
-# Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 13.0 credits ($0.013) in 9.4s
+# Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 66 calls, 13.0 credits ($0.013) in 9.4s
 clf.usage_                # every call since fit; clf.last_usage_ is the last one's
 ```
 

@@ -54,12 +54,12 @@ def test_fit_uploads_once_and_each_predict_prints_and_adds_its_usage(fake, capsy
     line = capsys.readouterr().err.strip().splitlines()[-1]
     assert re.fullmatch(
         r"Predicted 250 rows with tabicl-v2-classifier from 120 context rows: "
-        r"0\.5 credits \(\$0\.0005\) in [\d.]+s",
+        r"3 calls, 0\.5 credits \(\$0\.0005\) in [\d.]+s",
         line,
     ), line
-    assert clf.last_usage_ == gf.types.Estimate(1, 250, 0.5, 0.0005)
+    assert clf.last_usage_ == gf.types.Estimate(3, 250, 0.5, 0.0005)
     clf.predict_proba(adult(10))
-    assert clf.usage_.calls == 2 and clf.usage_.rows == 260
+    assert clf.usage_.calls == 4 and clf.usage_.rows == 260
     assert clf.last_usage_.rows == 10
     capsys.readouterr()
     # The same rows again send nothing; the service already holds them.
