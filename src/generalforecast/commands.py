@@ -222,6 +222,8 @@ def _api(args: argparse.Namespace, out: term.Output) -> dict:
         sdk = getattr(client, collection)
         if spec.name == "list":
             return {collection: sdk.list()}
+        if spec.name == "prepare":
+            return sdk.prepare(args.kind)
         return _wire(getattr(sdk, spec.name)(payload))
 
 

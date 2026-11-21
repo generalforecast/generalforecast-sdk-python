@@ -395,8 +395,30 @@ def _logs(args: argparse.Namespace, result: dict, out: term.Output) -> None:
 def _admin(args: argparse.Namespace, result: dict, out: term.Output) -> None:
     if args.noun == "logs":
         _logs(args, result, out)
+    elif args.noun == "source" and args.action == "prepare":
+        _prepared(result, out)
     elif args.noun not in ADMIN_PREDICTOR_NOUNS:
         generic(result, out)
+
+
+def _prepared(result: dict, out: term.Output) -> None:
+    """The identity a data source is granted: the account, its unique id and each role."""
+    identity = result.get("identity") or {}
+    pairs = [
+        ("service account", _scalar(identity.get("email"))),
+        ("unique id", _scalar(identity.get("unique_id"))),
+    ]
+    pairs += [
+        ("role", f"{_scalar(grant.get('role'))} on the {_scalar(grant.get('on'))}")
+        for grant in result.get("grants") or []
+    ]
+    oidc = result.get("oidc")
+    if isinstance(oidc, dict):
+        pairs += [
+            ("issuer", _scalar(oidc.get("issuer"))),
+            ("subject", _scalar(oidc.get("subject"))),
+        ]
+    out.fields(pairs, indent=0)
 
 
 _HANDLERS: dict[str, Callable[[argparse.Namespace, dict, term.Output], None]] = {

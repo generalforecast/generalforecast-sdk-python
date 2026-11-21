@@ -60,6 +60,7 @@ from generalforecast.command_specs import (
     GROUPS,
     MODEL_ACTIONS,
     READY_SECONDS,
+    SOURCE_KINDS,
     TAGLINE,
 )
 from generalforecast.errors import Error
@@ -503,6 +504,14 @@ def parser() -> _Parser:
                 if spec.destructive:
                     a.add_argument(
                         "--yes", action="store_true", help="Go ahead without asking"
+                    )
+                if noun == "source" and spec.name == "prepare":
+                    a.add_argument(
+                        "--kind",
+                        required=True,
+                        choices=SOURCE_KINDS,
+                        metavar="<KIND>",
+                        help="bigquery, gcs or snowflake",
                     )
                 if noun == "audit":
                     a.add_argument(

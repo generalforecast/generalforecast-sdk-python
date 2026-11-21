@@ -498,6 +498,21 @@ class Sources(Collection):
         """Pins server-relative bytes; this does not upload a client-side path."""
         return self.client._run(ops.source_pin(spec))
 
+    def prepare(self, kind: str) -> JsonObject:
+        """The workspace's identity to grant a data source of `kind`.
+
+        Needs `sources:manage`, which only workspace admins hold. The
+        answer's `identity` is the workspace's Google service account
+        (`email`, `unique_id` and the IAM `principal`), the same for every
+        kind; `grants` are the roles to grant it, each `on` a `dataset` or
+        a `bucket`. A Snowflake source grants no role: `oidc` names the
+        issuer and subject Snowflake trusts.
+
+        Args:
+            kind: `bigquery`, `gcs` or `snowflake`.
+        """
+        return self.client._run(ops.source_prepare(kind))
+
 
 class Snapshots(Collection):
     """Named, immutable tables: uploaded in chunks, streamed as Arrow, or generated in synthetic batches.
@@ -1018,7 +1033,6 @@ class Predictors(Collection):
         predictor: str | Path,
         *,
         upgrade: bool = False,
-        keep: bool = False,
         deploy: bool = False,
     ) -> JsonObject:
         """Resolves a predictor directory's `gf.yaml` on the service.
@@ -1031,17 +1045,13 @@ class Predictors(Collection):
         Args:
             predictor: The predictor directory.
             upgrade: Accept a model digest other than the previous lock pins.
-            keep: Store a snapshot context's resolved rows; the answer's
-                `snapshot` names them. Without it nothing is written.
             deploy: Store a snapshot context's every labeled row, those the
                 holdout or `until` held out included, as a push deploys
                 them; the answer's `deployed` names the lock, manifest and
-                snapshot for them. Not with `keep`.
+                snapshot for them. Without it nothing is written.
         """
         return self.client._run(
-            ops.predictor_check(
-                self.client, predictor, upgrade=upgrade, keep=keep, deploy=deploy
-            )
+            ops.predictor_check(self.client, predictor, upgrade=upgrade, deploy=deploy)
         )
 
     def evaluate(

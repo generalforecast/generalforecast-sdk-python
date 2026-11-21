@@ -419,7 +419,7 @@ class Service:
     def predictors(self):
         return self
 
-    def check(self, root, *, upgrade=False, keep=False, deploy=False):
+    def check(self, root, *, upgrade=False, deploy=False):
         """A check uploads the snapshot first, as the SDK's operation does."""
         with errors.during("the snapshot upload", framed=True):
             self.upload_snapshot(None)

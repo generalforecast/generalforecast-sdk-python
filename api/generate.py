@@ -714,9 +714,23 @@ class PythonEmitter:
             for value in schema["enum"]:
                 lines.append(f"    {value} = {quote(value)}")
             return lines
+        parts = schema.get("anyOf") or schema.get("oneOf")
         if "enum" in schema:
             options = [literal(value) for value in schema["enum"]]
             lines = assign(f"{name} = ", Bracketed("Literal", options, "[", "]"), 0)
+        elif parts and len(f"{name} = {self.annotation(schema)}") > WIDTH:
+            # A long union, one member a line, as black lays it out.
+            lines = [f"{name} = ("]
+            for index, part in enumerate(parts):
+                head = "    " if index == 0 else "    | "
+                if "enum" in part:
+                    options = [literal(value) for value in part["enum"]]
+                    lines.extend(
+                        assign(head, Bracketed("Literal", options, "[", "]"), 4)
+                    )
+                else:
+                    lines.append(head + self.annotation(part))
+            lines.append(")")
         else:
             lines = [f"{name} = {self.annotation(schema)}"]
         lines.extend(assign(f"_decode_{name}: Decoder = ", self.decoder(schema), 0))
