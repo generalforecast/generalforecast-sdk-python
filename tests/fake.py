@@ -570,7 +570,9 @@ def _resolved(fake: Fake, spec: dict[str, Any]) -> dict[str, Any]:
     if ctx is None:
         raise Refusal(404, "NotFound", f"no context named `{name}`")
     return {"model": found["name"], "short": found["short"],
-            "model_digest": found["artifact"]["digest"], "task": spec.get("task") or found["task"],
+            "model_digest": found["artifact"]["digest"],
+            "base_digest": (found.get("derived") or {}).get("base_digest"),
+            "task": spec.get("task") or found["task"],
             "context": name, "context_version": int(pinned) if pinned else ctx["version"],
             "context_digest": ctx["digest"],
             "context_rows": ctx["rows"] if ctx["kind"] == "snapshot" else None,
@@ -594,8 +596,9 @@ def _deploy(
                        "revision": current, "environment": _shown(existing["environments"][env])})  # fmt: skip
         action, number = "updated", len(existing["_revisions"]) + 1
         changes = _changes(current, spec, resolved)
-    revision = {"predictor": name, "number": number, "spec": spec, "resolved": resolved,
-                "origin": origin(), "created": NOW}  # fmt: skip
+    revision = {"predictor": name, "number": number, "status": "pending" if dry_run else "building",
+                "lock_digest": digest(json.dumps({"spec": spec, "resolved": resolved}, sort_keys=True)),
+                "spec": spec, "resolved": resolved, "origin": origin(), "created": NOW}  # fmt: skip
     environment = {"name": env, "revision": number, "state": "starting", "generation": number,
                    "calls_today": 0, "p50_seconds": None, "updated": NOW,
                    "url": fake.link(f"predictors/{name}"), "_polls": fake.polls_until_done,
@@ -707,6 +710,12 @@ def predictors_environment(fake: Fake, call: Call, name: str, env: str) -> Any:
         environment["_polls"] -= 1
         if not environment["_polls"]:
             environment["state"] = environment.get("_final", "ready")
+            revisions = fake.predictors[name]["_revisions"]
+            revision = revisions[environment["revision"] - 1]
+            if revision["status"] == "building":
+                revision["status"] = (
+                    "ready" if environment["state"] == "ready" else "failed"
+                )
             if environment["state"] == "failed":
                 environment["error"] = {
                     "message": "the replica exited loading the model",

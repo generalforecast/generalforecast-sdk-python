@@ -3819,6 +3819,7 @@ class Resolved(Payload):
     model: ModelField
     short: str | None
     model_digest: Digest
+    base_digest: Digest | None
     task: Task
     context: Name
     context_version: int | None
@@ -3831,6 +3832,7 @@ class Resolved(Payload):
         Field("model", "model", True, _decode_ModelField),
         Field("short", "short", True, _union(_text, _null)),
         Field("model_digest", "model_digest", True, _decode_Digest),
+        Field("base_digest", "base_digest", True, _union(_decode_Digest, _null)),
         Field("task", "task", True, _decode_Task),
         Field("context", "context", True, _decode_Name),
         Field("context_version", "context_version", True, _union(_integer, _null)),
@@ -3850,6 +3852,8 @@ class Revision(Payload):
 
     predictor: Name
     number: int
+    status: Literal["pending", "building", "ready", "failed", "stopped"]
+    lock_digest: Digest
     spec: Spec
     resolved: Resolved
     origin: Origin
@@ -3858,6 +3862,13 @@ class Revision(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("predictor", "predictor", True, _decode_Name),
         Field("number", "number", True, _integer),
+        Field(
+            "status",
+            "status",
+            True,
+            _literal("pending", "building", "ready", "failed", "stopped"),
+        ),
+        Field("lock_digest", "lock_digest", True, _decode_Digest),
         Field("spec", "spec", True, _record(Spec)),
         Field("resolved", "resolved", True, _record(Resolved)),
         Field("origin", "origin", True, _record(Origin)),

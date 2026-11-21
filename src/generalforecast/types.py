@@ -866,11 +866,16 @@ class Environment:
 
 @dataclass(frozen=True)
 class Resolved:
-    """A spec as the service resolved it: full model id and digest, context version, task, inputs."""
+    """A spec as the service resolved it: full model id and digest, context version, task, inputs.
+
+    `base_digest` is, for a derived model (a project's fine-tune), the
+    digest of the base it was trained from; None for a catalog model.
+    """
 
     model: str = ""
     short: str = ""
     model_digest: str | None = None
+    base_digest: str | None = None
     task: Task | None = None
     context: str = ""
     context_version: int | None = None
@@ -882,9 +887,16 @@ class Resolved:
 
 @dataclass(frozen=True)
 class Revision:
-    """One revision of a predictor: its spec and what it resolved to."""
+    """One revision of a predictor: its spec and what it resolved to.
+
+    `status` is where its build stands (`ready` once it can serve; whether
+    an environment serves it is the environment's `state`), and
+    `lock_digest` the digest of the lock the service keeps beside it.
+    """
 
     number: int
+    status: Literal["pending", "building", "ready", "failed", "stopped"] | None = None
+    lock_digest: str | None = None
     spec: Predictor | None = None
     resolved: Resolved | None = None
     origin: Origin | None = None

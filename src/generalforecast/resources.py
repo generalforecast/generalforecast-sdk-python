@@ -133,6 +133,7 @@ class Contexts(_Sync):
         time: str | None = None,
         freshness: str | timedelta = "15m",
         wait: bool = True,
+        poll: float | None = None,
     ) -> Context:
         """Creates a context from exactly one origin.
 
@@ -159,22 +160,30 @@ class Contexts(_Sync):
                 time=time,
                 freshness=freshness,
                 wait=wait,
+                poll=poll,
             )
         )
 
     def upload(
-        self, context: str | Context, data: DataLike, *, wait: bool = True
+        self,
+        context: str | Context,
+        data: DataLike,
+        *,
+        wait: bool = True,
+        poll: float | None = None,
     ) -> Context:
         """Uploads a new version, creating the context when it has none yet.
 
         Rows whose digest matches the latest version add none (`unchanged`),
         so CI and scripts can call it on every run.
         """
-        return self._run(_ops.context_upload(context, data, wait=wait))
+        return self._run(_ops.context_upload(context, data, wait=wait, poll=poll))
 
-    def refresh(self, context: str | Context, *, wait: bool = True) -> Context:
+    def refresh(
+        self, context: str | Context, *, wait: bool = True, poll: float | None = None
+    ) -> Context:
         """Imports a new version from the context's source, when its rows changed."""
-        return self._run(_ops.context_refresh(context, wait=wait))
+        return self._run(_ops.context_refresh(context, wait=wait, poll=poll))
 
     def append(
         self,
@@ -822,25 +831,33 @@ class AsyncContexts(_Async):
         time: str | None = None,
         freshness: str | timedelta = "15m",
         wait: bool = True,
+        poll: float | None = None,
     ) -> Context:
         """See `Contexts.create`."""
         return await self._run(
             _ops.context_create(
                 name, data=data, source=source, table=table, sql=sql, live=live,
                 columns=columns, targets=targets, id=id, time=time, freshness=freshness,
-                wait=wait,
+                wait=wait, poll=poll,
             )
         )  # fmt: skip
 
     async def upload(
-        self, context: str | Context, data: DataLike, *, wait: bool = True
+        self,
+        context: str | Context,
+        data: DataLike,
+        *,
+        wait: bool = True,
+        poll: float | None = None,
     ) -> Context:
         """See `Contexts.upload`."""
-        return await self._run(_ops.context_upload(context, data, wait=wait))
+        return await self._run(_ops.context_upload(context, data, wait=wait, poll=poll))
 
-    async def refresh(self, context: str | Context, *, wait: bool = True) -> Context:
+    async def refresh(
+        self, context: str | Context, *, wait: bool = True, poll: float | None = None
+    ) -> Context:
         """See `Contexts.refresh`."""
-        return await self._run(_ops.context_refresh(context, wait=wait))
+        return await self._run(_ops.context_refresh(context, wait=wait, poll=poll))
 
     async def append(
         self,
