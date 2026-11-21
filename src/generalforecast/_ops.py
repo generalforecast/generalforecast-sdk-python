@@ -178,7 +178,7 @@ def _checked_name(name: str, what: str) -> str:
     if not isinstance(name, str) or not NAME.match(name):
         raise InvalidInput(
             f"`{name}` is not a {what} name",
-            hint="use lowercase letters, digits and hyphens, at most 64",
+            hint="start with a letter, then lowercase letters, digits and hyphens, at most 64",
             param="name",
         )
     return name
@@ -694,33 +694,31 @@ def _task(task: str | None) -> str | None:
 
 
 def setup(values: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]:
-    """An experiment's setup payload from `create`'s or `update`'s arguments."""
+    """An experiment's setup payload from `create`'s or `update`'s arguments.
+
+    A field left out, or None, is not sent: an update changes only the
+    fields given, and the contract has no way to clear one. `context` pins
+    its version when it names one (`"adult@2"`).
+    """
     out: dict[str, Any] = {}
     for key, value in values.items():
-        if value is UNSET:
+        if value is UNSET or (value is None and key != "holdout"):
             continue
         if key == "context":
             name, version = split_ref(value)
             out["context"] = name
             if version is not None:
                 out["version"] = version
-            elif partial:
-                out["version"] = None
             continue
         if key == "holdout":
-            holdout = holdout_json(value, None if partial else values.get("time"))
-            if holdout is not None or partial:
-                out["holdout"] = holdout
-            continue
-        if key in ("inputs", "exclude"):
+            value = holdout_json(value, None if partial else values.get("time"))
+        elif key in ("inputs", "exclude"):
             value = _names(value, key)
-        elif key == "types" and value is not None:
+        elif key == "types":
             value = _types(value, "types")
         elif key == "task":
             value = _task(value)
-        if value is None and not partial:
-            continue
-        if key == "exclude" and value == [] and not partial:
+        if value is None or (key == "exclude" and value == [] and not partial):
             continue
         out[key] = value
     return out
@@ -1119,9 +1117,7 @@ def predictions_of(reply: _http.Reply) -> Predictions:
         table=table,
         gpu_seconds=float(gpu) if gpu is not None else None,
         timing=load(Timing, timing) if isinstance(timing, Mapping) else None,
-        context=load(ContextUse, context)
-        if isinstance(context, Mapping) and "used" in context
-        else None,
+        context=load(ContextUse, context) if isinstance(context, Mapping) else None,
         notes=tuple(str(n) for n in result.get("notes") or ()),
         calls=int(used("calls", 1)),
     )
@@ -1216,7 +1212,7 @@ def predictor_logs(predictor: Any, env: str, params: Mapping[str, Any]) -> Op:
     reply = yield _http.predictors_logs(name_of(predictor, "predictor"), env, query)
     result = reply.result or {}
     return Logs(
-        tuple(loads(LogEntry, result.get("entries"))),
+        tuple(loads(LogEntry, result.get("logs"))),
         result.get("next"),
         result.get("previous"),
     )
@@ -1470,11 +1466,12 @@ def key_action(key: Any, verb: str) -> Op:
     """Rotates, revokes or deletes a key."""
     found = yield from key_id(key)
     reply = yield _http.keys_action(found, verb)
-    result = reply.result or {}
     if verb == "rotate":
-        return _new_key(result)
+        return _new_key(reply.result or {})
     if verb == "revoke":
-        return load(Key, result)
+        # The reply says only that it is revoked; the key reads as the list shows it.
+        keys = yield from key_list()
+        return next((k for k in keys if k.id == found), Key(found, state="revoked"))
     return None
 
 
@@ -1530,6 +1527,13 @@ def snapshot_create(
             reply = yield _http.snapshots_tag(name, [*found.tags, *tags])
             found = load(Snapshot, reply.result)
         return found
+    if "target" not in meta:
+        raise InvalidInput(
+            f"a snapshot past {STREAM_ROWS:,} rows or {_data.size(STREAM_BYTES)} names its "
+            "target= and task=",
+            hint="the resumable upload a large snapshot takes needs its training metadata",
+            param="target",
+        )
     parquet = _data.parquet(rows)
     payload: dict[str, Any] = {
         "name": name,
@@ -1542,14 +1546,15 @@ def snapshot_create(
     reply = yield _http.snapshots_open(payload)
     opened = reply.result or {}
     url = opened.get("url")
+    if not isinstance(url, str) or not url:
+        raise InvalidInput(
+            "the service opened a snapshot upload without its upload URL"
+        )
     chunk = int(opened.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
     yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(parquet))}")
     for offset in range(0, len(parquet), chunk):
         piece = parquet[offset : offset + chunk]
-        if url:
-            yield _http.upload_chunk(url, piece, offset, len(parquet))
-        else:
-            yield _http.snapshots_bytes(name, piece, offset, len(parquet))
+        yield _http.upload_chunk(url, piece, offset, len(parquet))
     found = load(Snapshot, opened)
     attempt = 0
     while found.state not in UPLOAD_DONE:

@@ -58,7 +58,11 @@ def test_a_large_snapshot_uploads_in_chunks(fake, monkeypatch):
     assert snap.state == "ready" and snap.rows == 40
     opened = fake.calls_to("POST", r".*/snapshots")[0].payload
     assert opened["format"] == "parquet" and opened["metadata"]["target"] == "defaulted"
-    assert len(fake.calls_to("POST", r".*/snapshots/big/bytes")) > 1
+    # The bytes go to the upload URL the service gave, without the credential.
+    chunks = fake.calls_to("PUT", r"/uploads/snapshots/big")
+    assert len(chunks) > 1 and all("authorization" not in c.headers for c in chunks)
+    with pytest.raises(gf.InvalidInput):
+        gf.fine_tunes.snapshots.create("bigger", data=credit())
     assert gf.fine_tunes.snapshots.get(snap).name == "big"
     assert [s.name for s in gf.fine_tunes.snapshots.list(tag="x")] == ["big"]
     assert gf.fine_tunes.snapshots.tag("big", ["a", "b"]).tags == ("a", "b")
