@@ -360,7 +360,7 @@ def _upload_spec(rows: Any, body: bytes, data: Any) -> dict[str, Any]:
         "format": "parquet",
         "bytes": len(body),
         "file": _data.file_name(data),
-        "digest": _data.table_digest(_data.read_parquet(body)),
+        "digest": _data.table_digest(rows),
         "rows": rows.num_rows,
     }
 
@@ -1361,7 +1361,7 @@ def snapshot(state: State, data: Any, *, what: str = "context") -> Op:
     rows = _data.normalized(_data.table(data, what=what))
     body = _data.stream(rows)
     _data.check_snapshot(body, rows.num_rows, what=what)
-    digest = _data.table_digest(_data.read_stream(body))
+    digest = _data.table_digest(rows)
     if digest in state.snapshots:
         return digest, rows.num_rows
     try:

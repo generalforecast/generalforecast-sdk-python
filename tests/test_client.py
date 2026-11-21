@@ -88,11 +88,10 @@ def test_transient_failures_of_safe_requests_are_retried(fake):
     fake.fail["contexts_list"] = 2
     assert gf.contexts.list() == []
     assert len(fake.calls_to("GET", r".*/contexts")) == 3
-    # The plane sends a 503 as ModelNotReady; a create is not sent again.
     fake.fail["keys_create"] = 1
-    with pytest.raises(gf.ModelNotReady) as error:
+    with pytest.raises(gf.Unavailable) as error:
         gf.keys.create("ci")
-    assert error.value.status == 503
+    assert not error.value.recoverable
     assert len(fake.calls_to("POST", r".*/keys")) == 1
 
 
@@ -187,7 +186,7 @@ def test_a_failed_revoke_on_logout_is_raised_once_the_login_is_forgotten(fake, e
     env.delenv("GF_API_KEY")
     gf.login()
     fake.fail["auth_logout"] = 1
-    with pytest.raises(gf.ModelNotReady):
+    with pytest.raises(gf.Unavailable):
         gf.logout()
     assert _auth.SESSION is None
 

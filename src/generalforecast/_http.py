@@ -19,8 +19,8 @@ Choices the spec leaves open, made here:
   that snapshot (200) or not (404); the same PUT with the Arrow stream
   stores it.
 - A context upload declares the table's `digest` beside `format` and
-  `bytes`, the engine's `table_digest` of the Parquet it sends as the plane
-  reads it, so an unchanged table is answered without its bytes.
+  `bytes`, the engine's `table_digest` of the table, so an unchanged table
+  is answered without its bytes.
 - A 429 is retried unless its reason is a standing limit
   (`STANDING_LIMITS`), which the contract says clients do not retry.
 """

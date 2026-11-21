@@ -221,7 +221,7 @@ class Fake:
                 key = handler.__name__
                 if self.fail.get(key):
                     self.fail[key] -= 1
-                    raise Refusal(503, "ModelNotReady", "the service is busy")
+                    raise Refusal(503, "Unavailable", "the service is busy")
                 if self.throttle.get(key):
                     reason = self.throttle[key].pop(0)
                     standing = (
@@ -1671,6 +1671,8 @@ def serve(fake: Fake) -> Callable[[], None]:
                 fake.errors.append(
                     f"{self.command} {parts.path} is not a route of api/openapi.yaml"
                 )
+            if status == 503:  # the contract: every 503 carries Retry-After
+                extra = {**extra, "Retry-After": "0"}
             raw, kind = json.dumps(data).encode(), "application/json"
             if status == 200 and call.table is not None and _accepts_arrow(headers):
                 raw, kind = _arrow_answer(data), ARROW

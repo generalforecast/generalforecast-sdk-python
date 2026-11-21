@@ -89,10 +89,6 @@ def test_the_sdk_reads_a_model_and_a_prediction_as_the_contract_writes_them():
 
 
 # Request examples the contract gives as what a route refuses.
-REFUSED = {("predictors.predict", "declared"), ("predictors.predict", "context"),
-           ("snapshots.create_synthetic", "unknown_field"), ("snapshots.update", "digest")}  # fmt: skip
-
-
 def test_the_contracts_examples_keep_to_its_schemas():
     broken = []
     for op in contract.operations():
@@ -112,7 +108,8 @@ def test_the_contracts_examples_keep_to_its_schemas():
             .get("application/json", {})
         )
         for name, example in content.get("examples", {}).items():
-            if (op.id, name) not in REFUSED and contract.request_problems(
+            # An example the contract marks `x-gf-invalid` shows a refusal.
+            if not example.get("x-gf-invalid") and contract.request_problems(
                 op, example["value"]
             ):
                 broken.append((op.id, name))

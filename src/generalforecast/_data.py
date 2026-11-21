@@ -214,20 +214,58 @@ def _held_column(name: str, column: pa.ChunkedArray) -> pa.ChunkedArray:
     return column
 
 
+def _zero(kind: pa.DataType) -> pa.Scalar:
+    """The zero of a held column's type: all-zero bytes, or an empty string."""
+    if pa.types.is_string(kind) or pa.types.is_binary(kind):
+        buffers = [None, pa.py_buffer(bytes(8)), pa.py_buffer(b"")]
+    else:
+        buffers = [None, pa.py_buffer(bytes(max(1, kind.bit_width // 8)))]
+    return pa.Array.from_buffers(kind, 1, buffers)[0]
+
+
+def _zero_under_nulls(column: pa.ChunkedArray) -> pa.ChunkedArray:
+    """A column whose cells under its nulls hold its type's zero, the engine's `_logical`.
+
+    Arrow keeps whatever bytes lie under a null (a NaN made null stays NaN
+    in a stream, Parquet reads back a zero), so with the zero there the
+    same values hash alike whichever format carried them.
+    """
+    import pyarrow.compute as pc
+
+    if column.null_count == 0:
+        return column
+    chunks = []
+    for chunk in column.chunks:
+        valid = pc.call_function("is_valid", [chunk])
+        filled = pc.fill_null(chunk, _zero(chunk.type))
+        buffers = [valid.buffers()[1], *filled.buffers()[1:]]
+        chunks.append(
+            pa.Array.from_buffers(
+                chunk.type, len(chunk), buffers, null_count=chunk.null_count
+            )
+        )
+    return pa.chunked_array(chunks, type=column.type)
+
+
 def normalized(data: pa.Table) -> pa.Table:
     """A table as the service holds and hashes it, as the engine normalizes one.
 
     Each column becomes a 64-bit integer, a double with NaN as null, a
     boolean, text, bytes, a date, or a UTC timestamp in microseconds;
     dictionaries are decoded and a column with no value is text. Every
-    field is nullable and carries no metadata.
+    field is nullable and carries no metadata, and every cell under a null
+    holds its type's zero.
 
     Raises:
         InvalidInput: For a column of another type, an infinity, or a value
             its type cannot hold, such as a nanosecond.
     """
     columns = [_held_column(name, data.column(name)) for name in data.column_names]
-    return pa.table(columns, names=data.column_names).combine_chunks()
+    table = pa.table(columns, names=data.column_names).combine_chunks()
+    return pa.table(
+        [_zero_under_nulls(column) for column in table.columns],
+        names=table.column_names,
+    )
 
 
 class _Hashing:
@@ -252,10 +290,9 @@ class _Hashing:
 def table_digest(data: pa.Table) -> str:
     """The digest the service names a table by, the engine's `table_digest`.
 
-    It hashes the normalized table's Arrow IPC stream, bytes under null
-    cells included, so a caller hashes the table as the service reads it
-    from the bytes sent: `read_parquet` of an upload, `read_stream` of a
-    snapshot.
+    It hashes the normalized table's Arrow IPC stream. Every cell under a
+    null holds its type's zero, so a table has one digest whether it is
+    sent as Parquet or as an Arrow stream.
     """
     table = normalized(data)
     sink = _Hashing()

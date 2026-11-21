@@ -64,25 +64,32 @@ export interface Envelope {
 
 /**
  * ValidationError 422, NotFound 404, Unauthorized 401, CapacityExceeded 422,
- * ModelNotReady 503, Internal 500, Conflict 409 (a compare-and-swap on a stale
+ * ModelNotReady 503 (a model, or the runtime or pool serving it, is still loading,
+ * starting or compiling), Internal 500, Conflict 409 (a compare-and-swap on a stale
  * generation), Unsupported 501 (an operation this server does not offer, such as a
  * hosted route on gf serve), PaymentRequired 402 (the workspace's plan or credit does
  * not cover the request), AmbiguousReference 422 (a short model name whose task nothing
- * decides: pass `task`, or the full id). Hosted fine-tuning's gates, with their
- * `reason`: `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
- * Enterprise plan) and `credits_exhausted` (an enforced workspace has used its credits,
- * which also refuses predictions); `Unauthorized` 403 `fine_tuning_unavailable`
- * (fine-tuning is not turned on for the project); `CapacityExceeded` 429
- * `run_limit_reached` (the project has as many runs queued or running as it may),
- * `quota_exceeded` (the project's training data would pass its quota) and
- * `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`, and lift only
- * when the caller ends a run or deletes data, so clients do not retry them; a 429
- * `rate_limited` passes on its own and may be retried. A run's create is refused with
- * `Conflict` 409 `run_active` (another run of the fine-tune is still queued or running)
- * or `base_mismatch` (the fine-tune's versions train from another base), and with
- * `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the base).
+ * decides: pass `task`, or the full id), Unavailable 503 or 504 (a service the request
+ * needs, such as a database, storage or a control plane, is down for now or did not
+ * answer in time). Every 503 carries `Retry-After`, and a client may retry it, as it
+ * may a 504. A code the server raises that is not in this enum is sent as the enum code
+ * it folds into, with the code itself, in snake case, as `reason`:
+ * `CredentialUnavailable` 503 is `Unavailable` with reason `credential_unavailable`.
+ * Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
+ * `plan_required` (fine-tuning needs a Pro or Enterprise plan) and `credits_exhausted`
+ * (an enforced workspace has used its credits, which also refuses predictions);
+ * `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not turned on for the
+ * project); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs
+ * queued or running as it may), `quota_exceeded` (the project's training data would
+ * pass its quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and
+ * `actual`, and lift only when the caller ends a run or deletes data, so clients do not
+ * retry them; a 429 `rate_limited` passes on its own and may be retried. A run's create
+ * is refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
+ * queued or running) or `base_mismatch` (the fine-tune's versions train from another
+ * base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
+ * base).
  */
-export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired", "AmbiguousReference"] as const;
+export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired", "AmbiguousReference", "Unavailable"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /**
@@ -116,7 +123,8 @@ export type Kind = "int" | "float" | "0/1" | "category" | "text" | "timestamp" |
 
 /**
  * inputs by rule rather than by list: `exclude` removes columns from the inferred set,
- * `types` overrides inferred types; forecast predictors use `past` and `future` instead
+ * `types` overrides inferred types; a forecaster's `past` and `future` are inputs
+ * whatever else is, and its other inputs are past covariates
  */
 export interface Inputs {
   exclude?: string[];
@@ -154,11 +162,11 @@ export interface SnapshotReference {
  * the ad hoc predictor: a predictor's fields, with `context` as rows or by reference to
  * a snapshot the service holds (`{"snapshot": "<digest>"}`, uploaded with `PUT
  * /snapshots?digest=`), and `queries` as rows, or as the Arrow stream the request is.
- * `task` decides a short model name's entry; `exclude`, `types`, `past` and `future`
- * take a predictor spec's forms beside `inputs`'
+ * `exclude`, `types`, `past` and `future` take a predictor spec's forms beside
+ * `inputs`, or sit in `inputs` as `Inputs`, once. The target column decides a short
+ * model name's entry; there is no `task`
  */
 export interface Manifest {
-  task?: Task;
   exclude?: string[];
   types?: Record<string, ColumnType>;
   past?: string[];
@@ -226,11 +234,15 @@ export interface ManifestRequest extends Envelope {
  */
 export type AsOfRequest = string | number;
 
-/** a predictor's payload: the queries, and `as_of` for a live context */
+/**
+ * a predictor's payload: the queries, `as_of` for a live context, and `context` for a
+ * predictor whose lock takes its context with each request, which only gf serve serves.
+ * The environment is the route's `?env=`.
+ */
 export interface Queries {
   queries: Row[];
   as_of?: AsOfRequest;
-  env?: Name;
+  context?: Row[];
 }
 
 export interface QueriesRequest extends Envelope {
