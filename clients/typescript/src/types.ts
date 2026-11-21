@@ -632,6 +632,16 @@ export interface ProjectCreateRequest extends Envelope {
  */
 export type Permission = "predictors:read" | "predictors:write" | "predictors:predict" | "contexts:read" | "contexts:write" | "contexts:history" | "sources:read" | "sources:write" | "sources:manage" | "models:read" | "snapshots:read" | "snapshots:write" | "runs:read" | "runs:write" | "keys:read" | "keys:write" | "secrets:read" | "secrets:write" | "members:read" | "members:write" | "sso:read" | "sso:write" | "audit:read" | "operators:read" | "operators:write" | "projects:read" | string;
 
+/**
+ * the signed-in account behind a key: `issuer` and `subject` name it, and stay the same
+ * when its email changes
+ */
+export interface KeyOwner {
+  issuer: string;
+  subject: string;
+  email: string | null;
+}
+
 /** `token` is present only in the create and rotate replies */
 export interface Key {
   id: string;
@@ -645,6 +655,10 @@ export interface Key {
   prefix?: string | null;
   last_used_at?: number | null;
   ephemeral?: boolean;
+  owner?: KeyOwner | null;
+  service?: boolean;
+  legacy?: boolean;
+  machine?: string | null;
   token?: string;
   replaces?: string;
 }
@@ -2948,6 +2962,7 @@ export interface EstimateQuery {
   task?: Task;
   context_rows: number;
   queries: number;
+  inputs?: number;
 }
 
 export interface SourceCreate {

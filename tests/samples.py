@@ -294,16 +294,19 @@ CLI_KEY, CI_KEY, OLD_KEY = (
 def _keys(fake: Fake) -> None:
     from generalforecast.types import STANDARD_PERMISSIONS
 
-    for key_id, name, prefix, expires, used, revoked in (
-        (CLI_KEY, "cli-maya-mbp", "gf_19ab", 1803029524.0, 1795255470.0, None),
-        (CI_KEY, "ci-deploy", "gf_8f2c", None, 1795255320.0, None),
-        (OLD_KEY, "old-laptop", "gf_02cd", 1780272000.0, None, 1780272000.0),
+    maya = service.OWNER
+    raj = {**maya, "subject": "108234567890123456790", "email": "raj@acme.com"}
+    for key_id, name, prefix, expires, used, revoked, owner, machine in (
+        (CLI_KEY, "cli-maya-mbp", "gf_19ab", 1803029524.0, 1795255470.0, None, maya, "maya-mbp"),
+        (CI_KEY, "ci-deploy", "gf_8f2c", None, 1795255320.0, None, raj, None),
+        (OLD_KEY, "old-laptop", "gf_02cd", 1780272000.0, None, 1780272000.0, None, None),
     ):  # fmt: skip
         fake.keys[key_id] = {"id": key_id, "project": fake.project, "name": name,
                              "permissions": list(STANDARD_PERMISSIONS), "created_at": 1785542400.0,
                              "expires_at": expires, "revoked_at": revoked,
                              "state": "revoked" if revoked else "active", "prefix": prefix,
-                             "last_used_at": used}  # fmt: skip
+                             "last_used_at": used, "owner": owner, "service": False,
+                             "legacy": owner is None, "machine": machine}  # fmt: skip
 
 
 def _all_contexts(fake: Fake) -> None:

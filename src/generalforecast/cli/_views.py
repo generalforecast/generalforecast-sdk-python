@@ -760,8 +760,15 @@ def permissions(key: Key) -> str:
     return plural(len(key.permissions), "permission")
 
 
+def owner(key: Key) -> str:
+    """`maya@acme.com`, or `service` or `legacy` for a key no account owns."""
+    if key.owner is not None and key.owner.email:
+        return key.owner.email
+    return "service" if key.service else "legacy" if key.legacy else ""
+
+
 def keys_list(call: Call, keys: list[Key]) -> None:
-    """Name, id, permissions, expiry and last use."""
+    """Name, id, permissions, expiry, last use and owner; drops Owner, Last used, Permissions."""
     rows = [
         [
             k.name,
@@ -769,11 +776,14 @@ def keys_list(call: Call, keys: list[Key]) -> None:
             permissions(k),
             k.state if k.state != "active" else day(k.expires) or "never",
             when(k.last_used) or "never",
+            owner(k),
         ]
         for k in keys
     ]
     call.out.table(
-        ["Name", "Id", "Permissions", "Expires", "Last used"], rows, drop=(4, 2)
+        ["Name", "Id", "Permissions", "Expires", "Last used", "Owner"],
+        rows,
+        drop=(5, 4, 2),
     )
 
 

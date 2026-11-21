@@ -3364,7 +3364,7 @@ paths:
                   project: acme
                   request_id: r-e6b6d9f422b20f239389a868d23e548d
                   resource: {kind: estimate, name: estimate}
-                  payload: {model: tabpfn-3.5, task: classification, context_rows: 412000, queries: 412000}
+                  payload: {model: tabpfn-3.5, task: classification, context_rows: 412000, queries: 412000, inputs: 48}
       responses:
         "200":
           description: "calls, rows, credits and dollars"
@@ -4131,8 +4131,8 @@ paths:
                     resource: {kind: api-key, name: keys}
                     result:
                       keys:
-                        - {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_0123, last_used_at: 1761390000.0}
-                        - {id: key-2b3c4d5e6f708192a3b4, project: acme, name: sources-admin, permissions: [sources:manage, sources:read], created_at: 1761300000.0, expires_at: null, revoked_at: null, state: active, prefix: gf_Q7xk}
+                        - {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_0123, last_used_at: 1761390000.0, owner: {issuer: "https://accounts.google.com", subject: "108234567890123456789", email: ada@acme.com}, service: false, legacy: false, machine: ada-laptop}
+                        - {id: key-2b3c4d5e6f708192a3b4, project: acme, name: sources-admin, permissions: [sources:manage, sources:read], created_at: 1761300000.0, expires_at: null, revoked_at: null, state: active, prefix: gf_Q7xk, service: true, legacy: false}
     post:
       operationId: keys.create
       tags: [hosted]
@@ -8869,8 +8869,26 @@ components:
         prefix: {type: [string, "null"], description: "the token's first seven characters, `gf_` and four more; null for a key made before prefixes were kept"}
         last_used_at: {type: [number, "null"], description: "Unix seconds of the key's last use, kept at most once an hour; null for a key never used"}
         ephemeral: {type: boolean, description: "a notebook login's short-lived key, listed only with `?ephemeral=true`"}
+        owner:
+          description: "the account that made the key; null for a service key and a legacy one"
+          oneOf:
+          - $ref: "#/components/schemas/KeyOwner"
+          - type: "null"
+        service: {type: boolean, description: "made by the plane for its own use, as its engine key is; a service key has no owner"}
+        legacy: {type: boolean, description: "made before keys recorded their owners, by an account no longer traced; it expires within the upgrade's grace period"}
+        machine: {type: [string, "null"], description: "the machine a `gf login` on it made the key for; null for a key made otherwise"}
         token: {type: string, pattern: "^gf_[A-Za-z0-9_-]{32,}$"}
         replaces: {type: string, pattern: "^key-[0-9a-f]{20,24}$"}
+
+    KeyOwner:
+      type: object
+      description: "the signed-in account behind a key: `issuer` and `subject` name it, and stay the same when its email changes"
+      required: [issuer, subject, email]
+      additionalProperties: false
+      properties:
+        issuer: {type: string}
+        subject: {type: string}
+        email: {type: [string, "null"]}
 
     KeyReply:
       allOf:
@@ -13616,6 +13634,10 @@ components:
           $ref: "#/components/schemas/Task"
         context_rows: {type: integer, minimum: 1}
         queries: {type: integer, minimum: 1}
+        inputs:
+          type: integer
+          minimum: 1
+          description: "the context's input columns; a context's cells, its rows by its inputs, place it against the large-context line. Left out, a context is taken to have 32"
 
     Source:
       type: object

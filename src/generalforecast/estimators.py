@@ -63,6 +63,7 @@ class _Base:
     _estimator_type: str | None = None
     context_: str
     context_rows_: int
+    context_inputs_: int
     usage_: Estimate
     last_usage_: Estimate
 
@@ -147,6 +148,8 @@ class _Base:
         digest, count = client._run(_ops.snapshot(client._state, rows))
         self.context_ = digest
         self.context_rows_ = count
+        # Every column but the target is an input, as the service counts a context's cells.
+        self.context_inputs_ = rows.num_columns - 1
         self.usage_ = Estimate()
 
     def _predict(self, queries: pa.Table, target: str, **fields: Any) -> Predictions:
@@ -176,7 +179,13 @@ class _Base:
         """What predicting `queries` rows would cost, the large-context line included."""
         self._require_fitted()
         return self._hosted()._run(
-            _ops.predict_estimate(self.model, self._task, self.context_rows_, queries)
+            _ops.predict_estimate(
+                self.model,
+                self._task,
+                self.context_rows_,
+                queries,
+                self.context_inputs_,
+            )
         )
 
 

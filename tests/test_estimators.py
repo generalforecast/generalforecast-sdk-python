@@ -81,6 +81,7 @@ def test_estimate_prices_a_predict_and_names_the_large_context_line(fake):
     assert priced.large_context == gf.types.LargeContext(1.5, 3.0, 0.003)
     assert fake.calls_to("POST", r".*/estimate")[-1].payload == {
         "model": "tabicl-v2", "task": "regression", "context_rows": 40000, "queries": 100,
+        "inputs": 3,
     }  # fmt: skip
     assert len(fake.calls_to("POST", r".*/predict")) == 0
 
@@ -118,7 +119,8 @@ def test_regressor_and_forecaster(fake):
         None,
     )
     assert fc.estimate(future).rows == 8
-    assert fake.calls_to("POST", r".*/estimate")[-1].payload["task"] == "forecast"
+    sent = fake.calls_to("POST", r".*/estimate")[-1].payload
+    assert (sent["task"], sent["inputs"]) == ("forecast", 2)
 
 
 def test_scikit_learn_clones_tags_and_cross_validates_without_sending_rows_twice(fake):
