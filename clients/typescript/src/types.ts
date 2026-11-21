@@ -181,9 +181,12 @@ export interface Manifest {
 
 /**
  * what a call is billed: its scored rows, and past the large-context line
- * (`large_context_cells` in the price book) the GPU seconds of its own execution
+ * (`large_context_cells` in the price book) the GPU seconds of its own execution.
+ * `calls` is how many model calls the engine made, each as many queries as the model
+ * takes at once, as `/estimate` counts them
  */
 export interface Usage {
+  calls?: number;
   rows: number;
   credits: number;
   usd: number;
@@ -630,6 +633,9 @@ export interface Key {
   created_at: number;
   expires_at: number | null;
   revoked_at: number | null;
+  state?: "active" | "expired" | "revoked";
+  prefix?: string | null;
+  last_used_at?: number | null;
   ephemeral?: boolean;
   token?: string;
   replaces?: string;
@@ -1435,8 +1441,17 @@ export interface SyntheticCounts {
   rejected: number;
 }
 
-/** a batch as `snapshots.synthetic` reads it */
-export interface SyntheticBatch extends SyntheticBatchCreated {
+/**
+ * a batch as `snapshots.synthetic` reads it: its create's answer, and the seed,
+ * options, tables and counts. Its fields are listed whole, as `SyntheticBatchCreated`
+ * allows no other fields.
+ */
+export interface SyntheticBatch {
+  name: SyntheticBatchName;
+  tag: RunTag;
+  count: number;
+  snapshots: Name[];
+  state: SyntheticBatchState;
   seed: number;
   options: SyntheticBatchCreate;
   tables: SyntheticTable[];
@@ -1486,6 +1501,7 @@ export interface Resolved {
   context: Name;
   context_version: number | null;
   context_digest: Digest | null;
+  context_rows?: number | null;
   inputs: string[];
   types: Record<string, ColumnType>;
 }
@@ -1512,6 +1528,17 @@ export interface RevisionListReply extends Envelope {
   result: RevisionList;
 }
 
+/**
+ * why an environment's revision failed to start: the failure in words, the request
+ * whose deploy or promote started it, and the revision the environment still serves
+ * (null when it served none)
+ */
+export interface EnvironmentFailure {
+  message: string;
+  request_id: string | null;
+  serving_revision: number | null;
+}
+
 /** a pointer to a revision; `generation` guards promote and rollback */
 export interface Environment {
   name: Name;
@@ -1522,7 +1549,7 @@ export interface Environment {
   p50_seconds?: number | null;
   updated?: string;
   url: string;
-  error?: string | null;
+  error?: EnvironmentFailure | null;
 }
 
 export interface EnvironmentReply extends Envelope {
@@ -1809,6 +1836,7 @@ export interface AuthStatus {
   email?: string | null;
   machine?: string | null;
   workspace?: WorkspaceIdentity | null;
+  url?: string;
 }
 
 export interface AuthStatusReply extends Envelope {
@@ -1950,7 +1978,17 @@ export interface WorkspaceSummary {
   projects: Name[];
 }
 
-export interface WorkspaceDetails extends WorkspaceSummary {
+/**
+ * a workspace as `workspaces.get` reads it: its summary, its organization and when it
+ * was made. Its fields are listed whole, as `WorkspaceSummary` allows no other fields.
+ */
+export interface WorkspaceDetails {
+  workspace: Name;
+  display_name: string;
+  role: WorkspaceRole | null;
+  admin: boolean;
+  default_project: Name | null;
+  projects: Name[];
   organization: Name;
   created_at: number;
 }
@@ -2589,6 +2627,7 @@ export interface Context {
   created: string;
   updated: string;
   url: string;
+  file?: string | null;
   upload?: ContextUploadTarget;
   unchanged?: boolean;
 }

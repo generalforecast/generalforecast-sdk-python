@@ -567,15 +567,19 @@ class Usage(Payload):
     """The Usage schema.
 
     what a call is billed: its scored rows, and past the large-context line
-    (`large_context_cells` in the price book) the GPU seconds of its own execution
+    (`large_context_cells` in the price book) the GPU seconds of its own execution.
+    `calls` is how many model calls the engine made, each as many queries as the model
+    takes at once, as `/estimate` counts them
     """
 
     rows: int
     credits: float
     usd: float
+    calls: int | None = None
     gpu_seconds: float | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("calls", "calls", False, _integer),
         Field("rows", "rows", True, _integer),
         Field("credits", "credits", True, _number),
         Field("usd", "usd", True, _number),
@@ -1635,6 +1639,9 @@ class Key(Payload):
     created_at: float
     expires_at: float | None
     revoked_at: float | None
+    state: Literal["active", "expired", "revoked"] | None = None
+    prefix: str | None = None
+    last_used_at: float | None = None
     ephemeral: bool | None = None
     token: str | None = None
     replaces: str | None = None
@@ -1647,6 +1654,9 @@ class Key(Payload):
         Field("created_at", "created_at", True, _number),
         Field("expires_at", "expires_at", True, _union(_number, _null)),
         Field("revoked_at", "revoked_at", True, _union(_number, _null)),
+        Field("state", "state", False, _literal("active", "expired", "revoked")),
+        Field("prefix", "prefix", False, _union(_text, _null)),
+        Field("last_used_at", "last_used_at", False, _union(_number, _null)),
         Field("ephemeral", "ephemeral", False, _boolean),
         Field("token", "token", False, _pattern("^gf_[A-Za-z0-9_-]{32,}$")),
         Field("replaces", "replaces", False, _pattern("^key-[0-9a-f]{20,24}$")),
@@ -3668,7 +3678,12 @@ class SyntheticCounts(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class SyntheticBatch(Payload):
-    """A batch as `snapshots.synthetic` reads it."""
+    """The SyntheticBatch schema.
+
+    a batch as `snapshots.synthetic` reads it: its create's answer, and the seed,
+    options, tables and counts. Its fields are listed whole, as `SyntheticBatchCreated`
+    allows no other fields.
+    """
 
     name: SyntheticBatchName
     tag: RunTag
@@ -3799,6 +3814,7 @@ class Resolved(Payload):
     context_digest: Digest | None
     inputs: tuple[str, ...]
     types: dict[str, ColumnType]
+    context_rows: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("model", "model", True, _decode_ModelField),
@@ -3808,6 +3824,7 @@ class Resolved(Payload):
         Field("context", "context", True, _decode_Name),
         Field("context_version", "context_version", True, _union(_integer, _null)),
         Field("context_digest", "context_digest", True, _union(_decode_Digest, _null)),
+        Field("context_rows", "context_rows", False, _union(_integer, _null)),
         Field("inputs", "inputs", True, _items(_text)),
         Field("types", "types", True, _mapping(_decode_ColumnType)),
     )
@@ -3887,6 +3904,26 @@ class RevisionListReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class EnvironmentFailure(Payload):
+    """The EnvironmentFailure schema.
+
+    why an environment's revision failed to start: the failure in words, the request
+    whose deploy or promote started it, and the revision the environment still serves
+    (null when it served none)
+    """
+
+    message: str
+    request_id: str | None
+    serving_revision: int | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("message", "message", True, _text),
+        Field("request_id", "request_id", True, _union(_text, _null)),
+        Field("serving_revision", "serving_revision", True, _union(_integer, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class Environment(Payload):
     """A pointer to a revision; `generation` guards promote and rollback."""
 
@@ -3898,7 +3935,7 @@ class Environment(Payload):
     calls_today: int | None = None
     p50_seconds: float | None = None
     updated: str | None = None
-    error: str | None = None
+    error: EnvironmentFailure | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Name),
@@ -3914,7 +3951,7 @@ class Environment(Payload):
         Field("p50_seconds", "p50_seconds", False, _union(_number, _null)),
         Field("updated", "updated", False, _text),
         Field("url", "url", True, _text),
-        Field("error", "error", False, _union(_text, _null)),
+        Field("error", "error", False, _union(_record(EnvironmentFailure), _null)),
     )
 
 
@@ -4704,6 +4741,7 @@ class AuthStatus(Payload):
     email: str | None = None
     machine: str | None = None
     workspace: WorkspaceIdentity | None = None
+    url: str | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("authenticated", "authenticated", True, _literal(True)),
@@ -4738,6 +4776,7 @@ class AuthStatus(Payload):
             False,
             _union(_record(WorkspaceIdentity), _null),
         ),
+        Field("url", "url", False, _text),
     )
 
 
@@ -5141,7 +5180,12 @@ class WorkspaceSummary(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceDetails(Payload):
-    """The WorkspaceDetails schema."""
+    """The WorkspaceDetails schema.
+
+    a workspace as `workspaces.get` reads it: its summary, its organization and when it
+    was made. Its fields are listed whole, as `WorkspaceSummary` allows no other
+    fields.
+    """
 
     workspace: Name
     display_name: str
@@ -7019,6 +7063,7 @@ class Context(Payload):
     updated: str
     url: str
     targets: tuple[str, ...] | None = None
+    file: str | None = None
     upload: ContextUploadTarget | None = None
     unchanged: bool | None = None
 
@@ -7049,6 +7094,7 @@ class Context(Payload):
         Field("created", "created", True, _text),
         Field("updated", "updated", True, _text),
         Field("url", "url", True, _text),
+        Field("file", "file", False, _union(_text, _null)),
         Field("upload", "upload", False, _record(ContextUploadTarget)),
         Field("unchanged", "unchanged", False, _boolean),
     )

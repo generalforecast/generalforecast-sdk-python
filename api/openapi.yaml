@@ -162,6 +162,7 @@ paths:
                       predictions:
                         - {id: 1041, label: 0, probabilities: {"0": 0.91, "1": 0.09}}
                         - {id: 1042, label: 1, probabilities: {"0": 0.22, "1": 0.78}}
+                      usage: {calls: 1, rows: 2, credits: 0.004, usd: 0.000004}
         "404":
           description: no predictor of that name in the project
           content:
@@ -330,6 +331,7 @@ paths:
                       context: {source: request, name: null, version: null, digest: null, rows: 4, as_of: null}
                       predictions:
                         - {id: 1041, label: 0, probabilities: {"0": 0.83, "1": 0.17}}
+                      usage: {calls: 1, rows: 1, credits: 0.002, usd: 0.000002}
                 forecast:
                   value:
                     api_version: gf/v1
@@ -343,6 +345,7 @@ paths:
                       predictions:
                         - {value: 18.2, quantiles: {"0.1": 16.1, "0.5": 18.2, "0.9": 20.4}}
                         - {value: 19.0, quantiles: {"0.1": 16.0, "0.5": 19.0, "0.9": 22.1}}
+                      usage: {calls: 1, rows: 2, credits: 0.004, usd: 0.000004}
         "422":
           description: the fields or the rows are invalid
           content:
@@ -422,6 +425,7 @@ paths:
                       predictions:
                         - {id: 1041, label: 0, probabilities: {"0": 0.91, "1": 0.09}}
                         - {id: 1042, label: 1, probabilities: {"0": 0.22, "1": 0.78}}
+                      usage: {calls: 1, rows: 2, credits: 0.004, usd: 0.000004}
         "202":
           $ref: "#/components/responses/Accepted"
         "404":
@@ -492,6 +496,22 @@ paths:
                     request_id: r-c4d5e6f708192a3b4c5d6e7f8091a2b3
                     resource: {kind: predictor, name: churn}
                     result: {name: production, revision: 7, state: ready, generation: 9, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
+                failed:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-e9f0a1b2c3d4e5f60718293a4b5c6d7e
+                    resource: {kind: predictor, name: churn}
+                    result:
+                      name: production
+                      revision: 8
+                      state: failed
+                      generation: 10
+                      url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
+                      error:
+                        message: "revision 8 did not start: its model ran out of memory loading the context"
+                        request_id: r-8f2c41d07b3e4a5c9d1e2f3a4b5c6d7e
+                        serving_revision: 7
 
   /v1/projects/{project}/predictors/{name}/environments/{environment}/promote:
     post:
@@ -853,6 +873,7 @@ paths:
                         created: "2026-11-21T09:12:04Z"
                         updated: "2026-11-21T09:12:04Z"
                         url: "https://app.generalforecast.com/?project=acme#/data/contexts/adult"
+                        file: adult.csv
                       - name: events
                         kind: live
                         state: ready
@@ -1002,6 +1023,7 @@ paths:
                       created: "2026-11-21T09:12:04Z"
                       updated: "2026-11-21T09:12:04Z"
                       url: "https://app.generalforecast.com/?project=acme#/data/contexts/adult"
+                      file: adult.csv
                       upload: {version: 1, url: null, chunk_bytes: 8388608}
                 imported:
                   value:
@@ -1178,6 +1200,7 @@ paths:
                       created: "2026-11-21T09:12:04Z"
                       updated: "2026-11-21T09:12:04Z"
                       url: "https://app.generalforecast.com/?project=acme#/data/contexts/adult"
+                      file: adult.csv
         "404":
           description: no context of that name
           content:
@@ -1312,6 +1335,7 @@ paths:
                       created: "2026-11-21T09:12:04Z"
                       updated: "2026-11-21T09:12:04Z"
                       url: "https://app.generalforecast.com/?project=acme#/data/contexts/adult"
+                      file: adult.csv
                       upload: {version: 2, url: null, chunk_bytes: 8388608}
                 unchanged:
                   value:
@@ -1347,6 +1371,7 @@ paths:
                       created: "2026-11-21T09:12:04Z"
                       updated: "2026-11-21T09:12:04Z"
                       url: "https://app.generalforecast.com/?project=acme#/data/contexts/adult"
+                      file: adult.csv
                       unchanged: true
   /v1/projects/{project}/contexts/{name}/versions/{version}/bytes:
     post:
@@ -2663,6 +2688,7 @@ paths:
                           context: customers
                           context_version: 8
                           context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                          context_rows: 48210
                           inputs: [tenure_m, plan]
                           types: {tenure_m: number, plan: category}
                         revision: 5
@@ -2781,6 +2807,7 @@ paths:
                           context: adult
                           context_version: 1
                           context_digest: "sha256:5fb6a4c6f24bd5fb3623f97e3c62186e12e28e5b5fb6a4c6f24bd5fb3623f97e"
+                          context_rows: 32561
                           inputs: [age, workclass]
                           types: {age: number, workclass: category}
                         origin:
@@ -2883,6 +2910,7 @@ paths:
                         context: customers
                         context_version: 8
                         context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                        context_rows: 48210
                         inputs: [tenure_m, plan]
                         types: {tenure_m: number, plan: category}
                       revision: 5
@@ -2989,6 +3017,7 @@ paths:
                           context: customers
                           context_version: 8
                           context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                          context_rows: 48210
                           inputs: [tenure_m, plan]
                           types: {tenure_m: number, plan: category}
                         origin:
@@ -3079,6 +3108,7 @@ paths:
                           context: customers
                           context_version: 8
                           context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                          context_rows: 48210
                           inputs: [tenure_m, plan]
                           types: {tenure_m: number, plan: category}
                         origin:
@@ -3116,6 +3146,7 @@ paths:
                           context: customers
                           context_version: 8
                           context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                          context_rows: 48210
                           inputs: [tenure_m, plan]
                           types: {tenure_m: number, plan: category}
                         origin:
@@ -3154,6 +3185,7 @@ paths:
                           context: customers
                           context_version: 8
                           context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                          context_rows: 48210
                           inputs: [tenure_m, plan]
                           types: {tenure_m: number, plan: category}
                         origin:
@@ -3198,6 +3230,7 @@ paths:
                           context: customers
                           context_version: 8
                           context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                          context_rows: 48210
                           inputs: [tenure_m, plan]
                           types: {tenure_m: number, plan: category}
                         origin:
@@ -3241,6 +3274,7 @@ paths:
                         context: customers
                         context_version: 8
                         context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1"
+                        context_rows: 48210
                         inputs: [tenure_m, plan]
                         types: {tenure_m: number, plan: category}
                       origin:
@@ -4069,8 +4103,8 @@ paths:
                     resource: {kind: api-key, name: keys}
                     result:
                       keys:
-                        - {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null}
-                        - {id: key-2b3c4d5e6f708192a3b4, project: acme, name: sources-admin, permissions: [sources:manage, sources:read], created_at: 1761300000.0, expires_at: null, revoked_at: null}
+                        - {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_0123, last_used_at: 1761390000.0}
+                        - {id: key-2b3c4d5e6f708192a3b4, project: acme, name: sources-admin, permissions: [sources:manage, sources:read], created_at: 1761300000.0, expires_at: null, revoked_at: null, state: active, prefix: gf_Q7xk}
     post:
       operationId: keys.create
       tags: [hosted]
@@ -4105,7 +4139,7 @@ paths:
                     project: acme
                     request_id: r-f708192a3b4c5d6e7f8091a2b3c4d5e6
                     resource: {kind: api-key, name: new}
-                    result: {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null, token: gf_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG}
+                    result: {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_0123, token: gf_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG}
 
   /v1/projects/{project}/keys/{key}/revoke:
     post:
@@ -4181,7 +4215,7 @@ paths:
                     project: acme
                     request_id: r-192a3b4c5d6e7f8091a2b3c4d5e6f708
                     resource: {kind: api-key, name: key-0f1e2d3c4b5a69788796}
-                    result: {id: key-1a2b3c4d5e6f70819293, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761400000.0, expires_at: 1763892000.0, revoked_at: null, token: gf_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq, replaces: key-0f1e2d3c4b5a69788796}
+                    result: {id: key-1a2b3c4d5e6f70819293, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761400000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_ABCD, token: gf_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq, replaces: key-0f1e2d3c4b5a69788796}
 
   /v1/projects/{project}/secrets:
     get:
@@ -6318,6 +6352,7 @@ paths:
                       email: tejas@example.com
                       machine: tejas-mbp
                       workspace: {id: acme-inc, display_name: Acme Inc}
+                      url: "https://app.generalforecast.com/?project=acme"
 
   /v1/auth/logout:
     post:
@@ -8089,10 +8124,12 @@ components:
       description: |
         what a call is billed: its scored rows, and past the large-context
         line (`large_context_cells` in the price book) the GPU seconds of its
-        own execution
+        own execution. `calls` is how many model calls the engine made, each
+        as many queries as the model takes at once, as `/estimate` counts them
       required: [rows, credits, usd]
       additionalProperties: false
       properties:
+        calls: {type: integer, minimum: 0}
         rows: {type: integer, minimum: 0}
         credits: {type: number, minimum: 0}
         usd: {type: number, minimum: 0}
@@ -8788,6 +8825,12 @@ components:
         created_at: {type: number}
         expires_at: {type: [number, "null"], description: Unix seconds; null for a key that never expires}
         revoked_at: {type: [number, "null"]}
+        state:
+          type: string
+          enum: [active, expired, revoked]
+          description: "revoked once `revoked_at` is set, else expired once `expires_at` has passed"
+        prefix: {type: [string, "null"], description: "the token's first seven characters, `gf_` and four more; null for a key made before prefixes were kept"}
+        last_used_at: {type: [number, "null"], description: "Unix seconds of the key's last use, kept at most once an hour; null for a key never used"}
         ephemeral: {type: boolean, description: "a notebook login's short-lived key, listed only with `?ephemeral=true`"}
         token: {type: string, pattern: "^gf_[A-Za-z0-9_-]{32,}$"}
         replaces: {type: string, pattern: "^key-[0-9a-f]{20,24}$"}
@@ -10855,29 +10898,43 @@ components:
           type: integer
           minimum: 0
     SyntheticBatch:
-      description: a batch as `snapshots.synthetic` reads it
-      allOf:
-      - $ref: '#/components/schemas/SyntheticBatchCreated'
-      - type: object
-        required:
-        - seed
-        - options
-        - tables
-        - counts
-        properties:
-          seed:
-            type: integer
-            minimum: 0
-            description: the seed the batch drew from, the one sent or the one the service chose
-          options:
-            $ref: '#/components/schemas/SyntheticBatchCreate'
-            description: the batch's payload as it was sent
-          tables:
-            type: array
-            items:
-              $ref: '#/components/schemas/SyntheticTable'
-          counts:
-            $ref: '#/components/schemas/SyntheticCounts'
+      type: object
+      description: |
+        a batch as `snapshots.synthetic` reads it: its create's answer, and
+        the seed, options, tables and counts. Its fields are listed whole, as
+        `SyntheticBatchCreated` allows no other fields.
+      required: [name, tag, count, snapshots, state, seed, options, tables, counts]
+      additionalProperties: false
+      properties:
+        name:
+          $ref: '#/components/schemas/SyntheticBatchName'
+        tag:
+          $ref: '#/components/schemas/RunTag'
+          description: the tag every table carries, `synthetic-<name>`
+        count:
+          type: integer
+          minimum: 1
+          maximum: 64
+        snapshots:
+          type: array
+          description: the tables' snapshot names, `<name>-0` to `<name>-<count - 1>`
+          items:
+            $ref: '#/components/schemas/Name'
+        state:
+          $ref: '#/components/schemas/SyntheticBatchState'
+        seed:
+          type: integer
+          minimum: 0
+          description: the seed the batch drew from, the one sent or the one the service chose
+        options:
+          $ref: '#/components/schemas/SyntheticBatchCreate'
+          description: the batch's payload as it was sent
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyntheticTable'
+        counts:
+          $ref: '#/components/schemas/SyntheticCounts'
     SyntheticBatchCreatedReply:
       allOf:
       - $ref: '#/components/schemas/Envelope'
@@ -10968,10 +11025,23 @@ components:
         updated: {type: string, format: date-time}
         url: {type: string}
         error:
-          type:
-          - string
-          - "null"
+          oneOf:
+          - $ref: "#/components/schemas/EnvironmentFailure"
+          - type: "null"
           description: "why a `failed` environment failed"
+
+    EnvironmentFailure:
+      type: object
+      description: |
+        why an environment's revision failed to start: the failure in words,
+        the request whose deploy or promote started it, and the revision the
+        environment still serves (null when it served none)
+      required: [message, request_id, serving_revision]
+      additionalProperties: false
+      properties:
+        message: {type: string}
+        request_id: {type: [string, "null"]}
+        serving_revision: {type: [integer, "null"], minimum: 1}
 
     EnvironmentReply:
       allOf:
@@ -11431,6 +11501,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/WorkspaceIdentity"
             - type: "null"
+        url: {type: string, description: "the console page of the caller's project"}
 
     AuthStatusReply:
       allOf:
@@ -11650,13 +11721,30 @@ components:
           type: array
           items: {$ref: "#/components/schemas/Name"}
     WorkspaceDetails:
-      allOf:
-        - {$ref: "#/components/schemas/WorkspaceSummary"}
-        - type: object
-          required: [organization, created_at]
-          properties:
-            organization: {$ref: "#/components/schemas/Name"}
-            created_at: {type: number}
+      type: object
+      description: |
+        a workspace as `workspaces.get` reads it: its summary, its
+        organization and when it was made. Its fields are listed whole, as
+        `WorkspaceSummary` allows no other fields.
+      required: [workspace, display_name, role, admin, default_project, projects, organization, created_at]
+      additionalProperties: false
+      properties:
+        workspace: {$ref: "#/components/schemas/Name"}
+        display_name: {type: string}
+        role:
+          oneOf:
+            - {$ref: "#/components/schemas/WorkspaceRole"}
+            - {type: "null"}
+        admin: {type: boolean}
+        default_project:
+          oneOf:
+            - {$ref: "#/components/schemas/Name"}
+            - {type: "null"}
+        projects:
+          type: array
+          items: {$ref: "#/components/schemas/Name"}
+        organization: {$ref: "#/components/schemas/Name"}
+        created_at: {type: number}
     JoinRequest:
       type: object
       description: a request to join a workspace, as the person who asked sees it
@@ -12720,6 +12808,11 @@ components:
         created: {type: string, format: date-time}
         updated: {type: string, format: date-time}
         url: {type: string}
+        file:
+          type:
+          - string
+          - "null"
+          description: "the file the version's upload came from, as `data.file` named it; null for one sent from memory, an import or a live context"
         upload:
           $ref: "#/components/schemas/ContextUploadTarget"
         unchanged:
@@ -13364,6 +13457,11 @@ components:
           oneOf:
           - $ref: "#/components/schemas/Digest"
           - type: "null"
+        context_rows:
+          type:
+          - integer
+          - "null"
+          description: the rows of the pinned context version; null for a live context
         inputs:
           type: array
           items: {type: string}

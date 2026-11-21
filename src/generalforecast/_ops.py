@@ -46,6 +46,7 @@ from generalforecast.types import (
     ContextUse,
     Deploy,
     Environment,
+    EnvironmentFailure,
     Estimate,
     Evaluation,
     Experiment,
@@ -889,10 +890,12 @@ def _env_wait(name: str, env: str, revision: int | None, timeout: float | None) 
         if current and found.state == "ready":
             return found
         if current and found.state in ("failed", "stopped"):
+            failure = found.error or EnvironmentFailure()
             raise failed(
                 f"{name} revision {found.revision} failed to start in {env}",
-                found.error,
+                failure.message,
                 code="DeployFailed",
+                request_id=failure.request_id,
             )
         if _past(deadline):
             raise _not_done(
@@ -1082,6 +1085,7 @@ def predictions_of(reply: _http.Reply) -> Predictions:
         timing=load(Timing, timing) if isinstance(timing, Mapping) else None,
         context=load(ContextUse, context) if isinstance(context, Mapping) else None,
         notes=tuple(str(n) for n in result.get("notes") or ()),
+        calls=int(used("calls", 0)),
     )
 
 
@@ -1109,6 +1113,7 @@ def combined(parts: Sequence[Predictions]) -> Predictions:
         if timings
         else None,
         notes=tuple(dict.fromkeys(n for p in parts for n in p.notes)),
+        calls=sum(p.calls for p in parts),
     )
 
 
