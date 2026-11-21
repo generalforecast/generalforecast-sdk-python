@@ -1404,6 +1404,7 @@ class FineTuneSpec:
     base: str
     _: KW_ONLY
     data: Sequence[Any] | None = None
+    target: str | None = None
     method: Method = DEFAULT_METHOD
     plan: Plan | None = None
     phases: Sequence[Phase] | None = None
@@ -1673,6 +1674,7 @@ class FineTuneRun:
     name: str = ""
     version: int = 0
     base: str = ""
+    target: str | None = None
     state: Literal["queued", "running", "finished", "failed", "cancelled"] = "queued"
     waiting: int | None = None
     phase: str | None = None
@@ -1749,6 +1751,7 @@ class FineTuneRun:
             name=str(data.get("name") or model.split("/")[-1].split("@ft")[0]),
             version=int(data.get("version") or 0),
             base=str(data.get("base") or ""),
+            target=data.get("target"),
             state=typing.cast(Any, _RUN_STATES.get(state, state)),
             waiting=waiting,
             phase=progress.get("phase") or data.get("phase"),

@@ -443,6 +443,7 @@ COMMANDS_LIST = [
              flags=(
                  _flag("base", "The model it trains from", metavar="M"),
                  _flag("data", "Snapshots, batches, contexts and tag:T", NAMES, metavar="S,..."),
+                 _flag("target", "The column a context's rows train to predict", metavar="COLUMN"),
                  Flag("method", "lora:16, lora:16+adapter, adapter or full:COMPONENTS", METHOD),
                  _flag("steps", "Training steps", WHOLE, to="plan.steps"),
                  _flag("learning-rate", "The learning rate", NUMBER, to="plan.learning_rate"),
