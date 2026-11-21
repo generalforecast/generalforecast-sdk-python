@@ -1,15 +1,15 @@
 --- 100 columns, not a terminal
 $ gf keys list
-  Name          Id                        Permissions  Expires
-  cli-maya-mbp  key-19ab0c1d2e3f40516273  standard     Feb 19 2027
-  ci-deploy     key-8f2c0c1d2e3f40516273  standard     never
-  old-laptop    key-02cd0c1d2e3f40516273  standard     revoked
+  Name          Id                        Permissions  Expires      Last used
+  cli-maya-mbp  key-19ab0c1d2e3f40516273  standard     Feb 19 2027  just now
+  ci-deploy     key-8f2c0c1d2e3f40516273  standard     never        3m ago
+  old-laptop    key-02cd0c1d2e3f40516273  standard     revoked      never
 --- 100 columns, a terminal
 $ gf keys list
-  Name          Id                        Permissions  Expires
-  cli-maya-mbp  key-19ab0c1d2e3f40516273  standard     Feb 19 2027
-  ci-deploy     key-8f2c0c1d2e3f40516273  standard     never
-  old-laptop    key-02cd0c1d2e3f40516273  standard     revoked
+  Name          Id                        Permissions  Expires      Last used
+  cli-maya-mbp  key-19ab0c1d2e3f40516273  standard     Feb 19 2027  just now
+  ci-deploy     key-8f2c0c1d2e3f40516273  standard     never        3m ago
+  old-laptop    key-02cd0c1d2e3f40516273  standard     revoked      never
 --- 44 columns, not a terminal
 $ gf keys list
   Name          Id                        Expires

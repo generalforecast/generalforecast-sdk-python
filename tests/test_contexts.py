@@ -46,10 +46,11 @@ def test_the_same_rows_again_are_unchanged_and_send_no_bytes(fake):
 def test_a_path_is_read_and_named(fake, tmp_path):
     path = tmp_path / "adult.csv"
     adult().to_csv(path, index=False)
-    gf.contexts.create("adult", data=str(path))
+    ctx = gf.contexts.create("adult", data=str(path))
     assert (
         fake.calls_to("POST", r".*/contexts")[0].payload["data"]["file"] == "adult.csv"
     )
+    assert ctx.file == "adult.csv"
 
 
 def test_a_source_import_polls_until_ready(fake):

@@ -5,8 +5,8 @@ $ gf predictors update churn --model kumo-medium --context customers
               ~ context  customers version 7 → 8
    Deploying churn revision 5 to production
 error: churn revision 5 failed to start in production
-note: the replica exited loading the model
-help: see `gf predictors logs churn --level error`
+note: the replica exited loading the model (request r-8f2c41d0)
+help: production still serves revision 4; see `gf predictors logs churn --level error`
 [exit 1]
 --- 100 columns, a terminal
 $ gf predictors update churn --model kumo-medium --context customers
@@ -16,8 +16,8 @@ $ gf predictors update churn --model kumo-medium --context customers
 [1;32m   Deploying[0m churn revision 5 to production  starting a replica
 [1;32m   Deploying[0m churn revision 5 to production  starting a replica  1s
 [1;31merror:[0m churn revision 5 failed to start in production
-[1mnote:[0m the replica exited loading the model
-[1mhelp:[0m see `gf predictors logs churn --level error`
+[1mnote:[0m the replica exited loading the model (request r-8f2c41d0)
+[1mhelp:[0m production still serves revision 4; see `gf predictors logs churn --level error`
 [exit 1]
 --- 44 columns, not a terminal
 $ gf predictors update churn --model kumo-medium --context customers
@@ -26,8 +26,8 @@ $ gf predictors update churn --model kumo-medium --context customers
               ~ context  customers version 7 → 8
    Deploying churn revision 5 to production
 error: churn revision 5 failed to start in production
-note: the replica exited loading the model
-help: see `gf predictors logs churn --level error`
+note: the replica exited loading the model (request r-8f2c41d0)
+help: production still serves revision 4; see `gf predictors logs churn --level error`
 [exit 1]
 --- 44 columns, a terminal
 $ gf predictors update churn --model kumo-medium --context customers
@@ -41,6 +41,8 @@ $ gf predictors update churn --model kumo-medium --context customers
 [1;31merror:[0m churn revision 5 failed to start in
        production
 [1mnote:[0m the replica exited loading the model
-[1mhelp:[0m see
+      (request r-8f2c41d0)
+[1mhelp:[0m production still serves revision 4;
+      see
       `gf predictors logs churn --level error`
 [exit 1]

@@ -238,6 +238,7 @@ def auth_status(fake: Fake, call: Call) -> Any:
         principal={"kind": "api-key", "id": fake.key["id"], "project": fake.project},
         key={**fake.key, "project": fake.project}, email="maya@acme.com", machine="maya-mbp",
         workspace={"id": "acme", "display_name": "Acme Analytics"},
+        url=f"{CONSOLE}/?project={fake.project}",
     )  # fmt: skip
     return ok(status)
 
@@ -303,6 +304,7 @@ def _open_upload(fake: Fake, name: str, data: dict[str, Any]) -> Any:
     fake.uploads[name] = {"version": version, "bytes": data["bytes"], "data": b"",
                           "digest": data.get("digest")}  # fmt: skip
     ctx["state"] = "uploading"
+    ctx["file"] = data.get("file")
     out = fake.context_json(name)
     out["upload"] = {"version": version, "url": None, "chunk_bytes": fake.chunk_bytes}
     return ok(out)
@@ -594,6 +596,7 @@ def _resolved(fake: Fake, spec: dict[str, Any]) -> dict[str, Any]:
             "model_digest": found["artifact"]["digest"], "task": spec.get("task") or found["task"],
             "context": name, "context_version": int(pinned) if pinned else ctx["version"],
             "context_digest": ctx["digest"],
+            "context_rows": ctx["rows"] if ctx["kind"] == "snapshot" else None,
             "inputs": [c["name"] for c in ctx["columns"] if c["name"] != spec["target"]],
             "types": {}}  # fmt: skip
 
@@ -728,7 +731,11 @@ def predictors_environment(fake: Fake, call: Call, name: str, env: str) -> Any:
         if not environment["_polls"]:
             environment["state"] = environment.get("_final", "ready")
             if environment["state"] == "failed":
-                environment["error"] = "the replica exited loading the model"
+                environment["error"] = {
+                    "message": "the replica exited loading the model",
+                    "request_id": "r-8f2c41d0",
+                    "serving_revision": environment.get("_previous"),
+                }
     return ok(_shown(environment))
 
 
@@ -800,7 +807,8 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
         "environment": payload.get("env") if predictor else None,
         "context": {"source": "snapshot", "name": None, "version": None,
                     "digest": held or digest(str(predictor)), "rows": 26048, "as_of": None},
-        "usage": {"rows": rows, "credits": 0.002 * rows, "usd": 0.000002 * rows, "gpu_seconds": None},
+        "usage": {"calls": -(-rows // 100), "rows": rows, "credits": 0.002 * rows,
+                  "usd": 0.000002 * rows, "gpu_seconds": None},
         "timing": {"queued_seconds": 0.1, "cold_start_seconds": 0.0, "compute_seconds": 0.4},
         "notes": [], "predictions": predictions,
     })  # fmt: skip
@@ -897,6 +905,10 @@ def sources_tables(fake: Fake, call: Call, name: str) -> Any:
     return ok(contract.example("sources.tables"))
 
 
+NEW_TOKEN = "gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa"
+ROTATED_TOKEN = "gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb"
+
+
 def keys_list(fake: Fake, call: Call) -> Any:
     return ok({"keys": list(fake.keys.values())})
 
@@ -907,22 +919,20 @@ def keys_create(fake: Fake, call: Call) -> Any:
     fake.keys[key_id] = {"id": key_id, "project": fake.project, "name": p["name"],
                          "permissions": p["permissions"], "created_at": EPOCH,
                          "expires_at": None if p["expires_in"] is None else EPOCH + p["expires_in"],
-                         "revoked_at": None}  # fmt: skip
-    return ok(
-        {**fake.keys[key_id], "token": "gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa"}
-    )
+                         "revoked_at": None, "state": "active", "prefix": NEW_TOKEN[:7],
+                         "last_used_at": None}  # fmt: skip
+    return ok({**fake.keys[key_id], "token": NEW_TOKEN})
 
 
 def keys_action(fake: Fake, call: Call, key: str, verb: str) -> Any:
     if key not in fake.keys:
         raise Refusal(404, "NotFound", f"no key {key}")
     if verb == "revoke":
-        fake.keys[key]["revoked_at"] = EPOCH - 3600
+        fake.keys[key].update(revoked_at=EPOCH - 3600, state="revoked")
         return ok({"id": key, "revoked": True})
     if verb == "rotate":
-        return ok(
-            {**fake.keys[key], "token": "gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb"}
-        )
+        fake.keys[key].update(prefix=ROTATED_TOKEN[:7], last_used_at=None)
+        return ok({**fake.keys[key], "token": ROTATED_TOKEN})
     if not fake.keys[key]["revoked_at"]:
         raise Refusal(409, "Conflict", f"key {fake.keys[key]['name']} is active", reason="key_active",
                       param="id", hint="revoke it first")  # fmt: skip

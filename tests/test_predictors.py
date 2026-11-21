@@ -57,6 +57,8 @@ def test_deploy_is_idempotent_and_reports_changes(adult):
     first = gf.predictors.deploy(spec)
     assert [d.action for d in first] == ["created"]
     assert first[0].environment.state == "ready"
+    resolved = first[0].revision.resolved
+    assert resolved.context_version == 1 and resolved.context_rows == 4
     again = gf.predictors.deploy(spec)
     assert again[0].action == "unchanged" and again[0].revision.number == 1
     plan = gf.predictors.deploy(
@@ -106,7 +108,11 @@ def test_a_failed_start_is_not_recoverable(adult):
         error.value.message == "adult-income revision 2 failed to start in production"
     )
     assert error.value.note == "the replica exited loading the model"
-    assert error.value.hint == "see gf.predictors.logs('adult-income', level='error')"
+    assert error.value.hint == (
+        "production still serves revision 1; "
+        "see gf.predictors.logs('adult-income', level='error')"
+    )
+    assert error.value.request_id == "r-8f2c41d0"
 
 
 def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
@@ -126,6 +132,7 @@ def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
         for c in calls
     )
     assert out.rows == 100 and out.credits == pytest.approx(0.2)
+    assert out.calls == len(calls)
     assert list(out.to_pandas().columns) == ["id", "label", "p_<=50K", "p_>50K"]
     assert out.timing.compute_seconds == pytest.approx(0.4 * len(calls))
     assert out.context.used == "exact"
