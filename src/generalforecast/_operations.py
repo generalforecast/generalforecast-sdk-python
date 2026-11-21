@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlencode
 
+from generalforecast.command_specs import SOURCE_KINDS
 from generalforecast.contracts import (
     ContextImportRef,
     Environment,
@@ -617,9 +618,14 @@ def upload_snapshot(
     return made
 
 
+# Collections listed under a path of their own: pinned sources are `sources/pins`.
+_PATHS = {"sources": "sources/pins"}
+
+
 def listed(kind: ResourceKind, collection: str) -> Operation[list[JsonObject]]:
     """`GET /{collection}`: the project's resource metadata."""
-    result = yield Call("GET", f"/{collection}", kind, collection)
+    path = _PATHS.get(collection, collection)
+    result = yield Call("GET", f"/{path}", kind, collection)
     value = result.get(collection)
     if type(value) is not list or any(type(item) is not dict for item in value):
         raise ServiceError("ProtocolError", "invalid collection response", 502)
@@ -633,9 +639,8 @@ def _segment(kind: ResourceKind, resource: str) -> str:
 
 def got(kind: ResourceKind, collection: str, resource: str) -> Operation[JsonObject]:
     """`GET /{collection}/{name}`: one project-qualified resource."""
-    return (
-        yield Call("GET", f"/{collection}/{_segment(kind, resource)}", kind, resource)
-    )
+    path = f"/{_PATHS.get(collection, collection)}/{_segment(kind, resource)}"
+    return (yield Call("GET", path, kind, resource))
 
 
 # A catalog model id, `general-forecast/<name>`, with an optional variant.
@@ -970,8 +975,43 @@ def context_snapshot(
 
 def source_pin(spec: JsonObject) -> Operation[SourcePin]:
     """Pins server-relative bytes; this does not upload a client-side path."""
-    result = yield from created("source", "sources", "new", spec)
+    result = yield from created("source", "sources/pins", "new", spec)
     return cast(SourcePin, result)
+
+
+def source_prepare(kind: str) -> Operation[JsonObject]:
+    """`POST /sources:prepare`: the workspace's identity a data source of `kind` is granted.
+
+    The service makes the workspace's service account if it has none, so
+    the call is a write it applies once however often it is sent.
+    """
+    require(kind in SOURCE_KINDS, "kind is one of " + ", ".join(SOURCE_KINDS))
+    value = yield Call(
+        "POST",
+        "/sources:prepare",
+        "source",
+        "identity",
+        {"kind": kind},
+        retry=WRITE,
+    )
+    identity = value.get("identity") if type(value) is dict else None
+    grants = value.get("grants") if type(value) is dict else None
+    if not (
+        type(identity) is dict
+        and all(
+            type(identity.get(key)) is str
+            for key in ("email", "unique_id", "principal")
+        )
+        and type(grants) is list
+        and all(
+            type(grant) is dict
+            and type(grant.get("role")) is str
+            and type(grant.get("on")) is str
+            for grant in grants
+        )
+    ):
+        raise ServiceError("ProtocolError", "invalid sources:prepare response", 502)
+    return value
 
 
 # Training uploads and runs that are done waiting.
@@ -1663,9 +1703,7 @@ def predictor_push(
     checked = yield Work(pushed, (predictor,))
     resource = checked.name
     selected = environment_name(env, client.profile.environment)
-    answer = yield from _checked(
-        client, checked.checked, upgrade=False, keep=False, deploy=True
-    )
+    answer = yield from _checked(client, checked.checked, upgrade=False, deploy=True)
     revision_payload = registered(answer, checked.lock)
     try:
         yield from got("predictor", "predictors", resource)
@@ -1767,11 +1805,9 @@ def _checked(
     checked: Checked,
     *,
     upgrade: bool,
-    keep: bool,
     deploy: bool = False,
 ) -> Generator[Step, Any, JsonObject]:
     """Uploads the manifest's snapshot and has the service check the manifest against it."""
-    require(not (keep and deploy), "a check keeps its rows or deploys them, not both")
     resource = checked.manifest.name
     snapshot = yield from _checked_snapshot(client, checked)
     payload: JsonObject = {
@@ -1779,7 +1815,6 @@ def _checked(
         "snapshot": snapshot,
         "previous": checked.previous,
         "upgrade": upgrade,
-        "keep": keep,
     }
     if deploy:
         payload["deploy"] = True
@@ -1796,18 +1831,6 @@ def _checked(
     decoded(PredictorLock.from_dict, value["lock"], "lock")
     if deploy:
         _deployed(value, snapshot)
-    if keep:
-        kept = value.get("snapshot")
-        if type(value.get("manifest")) is not dict or not (
-            (kept is None and snapshot is None)
-            or (
-                type(kept) is dict
-                and type(kept.get("name")) is str
-                and type(kept.get("digest")) is str
-                and type(kept.get("rows")) is int
-            )
-        ):
-            raise ServiceError("ProtocolError", "invalid check response", 502)
     return value
 
 
@@ -1840,24 +1863,21 @@ def predictor_check(
     predictor: str | Path,
     *,
     upgrade: bool = False,
-    keep: bool = False,
     deploy: bool = False,
 ) -> Operation[JsonObject]:
     """`POST /predictors/{name}/check`: the service resolves `gf.yaml` and answers its `gf.lock`.
 
     The manifest's snapshot is uploaded first and the check names it. The
     reply carries `lock`, `model`, `inferred`, `changes` against the previous
-    lock, the normalized `manifest`, the resolved `context` and, with `keep`,
-    the `snapshot` its rows were stored as. With `deploy`, it also carries
-    `deployed`: the lock, manifest, context and stored snapshot for every
-    labeled row, those the holdout or `until` held out included, as a push
-    registers them, and `held_out`, how many those were. A model digest
-    other than the previous lock's is refused unless `upgrade`.
+    lock, the normalized `manifest` and the resolved `context`. With
+    `deploy`, it also carries `deployed`: the lock, manifest, context and
+    stored snapshot for every labeled row, those the holdout or `until`
+    held out included, as a push registers them, and `held_out`, how many
+    those were. A model digest other than the previous lock's is refused
+    unless `upgrade`.
     """
     checked = yield Work(checked_manifest, (predictor,))
-    return (
-        yield from _checked(client, checked, upgrade=upgrade, keep=keep, deploy=deploy)
-    )
+    return (yield from _checked(client, checked, upgrade=upgrade, deploy=deploy))
 
 
 def predictor_evaluate(
