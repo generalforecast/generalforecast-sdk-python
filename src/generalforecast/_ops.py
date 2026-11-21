@@ -1132,17 +1132,26 @@ WAITING = {
 
 
 def _answered(request: _http.Request, label: str, log: str) -> Op:
-    """Sends a prediction part and follows a 202 until it is answered."""
+    """Sends a prediction part and follows a 202 until it is answered.
+
+    The service's Retry-After counts from when it answered; a call or poll
+    that waited on the service for that long already polls again at once.
+    """
+    began = time.monotonic()
     reply = yield request
     while reply.status == 202:
+        took = time.monotonic() - began
         status = reply.result or {}
         state = str(status.get("state") or "starting")
         yield Say(f"{label}  {WAITING.get(state, state)}", log=log)
         wait = status.get("retry_after") or reply.headers.get("retry-after") or 1
-        yield Sleep(min(max(float(wait), 0.0), 30.0))
+        left = min(max(float(wait), 0.0), 30.0) - took
+        if left > 0:
+            yield Sleep(left)
         location = reply.headers.get("location") or str(status.get("id") or "")
         if not location:
             raise InvalidInput("the service accepted a prediction without saying where")
+        began = time.monotonic()
         reply = yield _http.prediction_get(location)
     return reply
 
