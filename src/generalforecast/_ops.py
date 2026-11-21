@@ -1155,6 +1155,7 @@ def combined(parts: Sequence[Predictions]) -> Predictions:
             sum(t.queued_seconds for t in timings),
             sum(t.cold_start_seconds for t in timings),
             sum(t.compute_seconds for t in timings),
+            sum(t.compile_seconds for t in timings),
         )
         if timings
         else None,

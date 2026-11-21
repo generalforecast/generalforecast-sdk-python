@@ -230,8 +230,12 @@ paths:
         `options` object. The rows bind as a
         request context's do, so text and category inputs are read as the
         model reads them in process, and a forecaster's `inputs` may split
-        into `past` and `future`. Every limit error carries `limit` and
-        `actual` and names the model in `message`.
+        into `past` and `future`. No row, query, series or input count is
+        refused: the context reads exactly while the device holds it and by
+        retrieval past that, as the result's `context.used` says, and a
+        context past what the model was trained on carries a note. Every
+        limit error carries `limit` and `actual` and names the model in
+        `message`.
       parameters:
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/prefer"
@@ -390,7 +394,8 @@ paths:
       description: |
         A prediction sent with `Prefer: respond-async` that the hosted plane
         could not answer in time was accepted with `202` and this route as
-        its `Location`. While it is still starting or running, the reply is
+        its `Location`, as is one a server given an accepted timeout was
+        still running at 0.8 of its request timeout. While it is still starting or running, the reply is
         `202` with the accept's envelope, its current `state`, a
         `Retry-After` and the `Location` again. Once it has its answer, the
         reply is that answer exactly, as the prediction itself would have
@@ -7818,8 +7823,9 @@ components:
   responses:
     Accepted:
       description: |
-        hosted only: the prediction is accepted and still starting or
-        running; poll its `Location` after `Retry-After` seconds
+        hosted, or a server given an accepted timeout: the prediction is
+        accepted and still starting or running; poll its `Location` after
+        `Retry-After` seconds
       headers:
         Location:
           description: the prediction to poll, `/v1/projects/{project}/predictions/{id}`
@@ -8079,9 +8085,9 @@ components:
         series: {type: array, items: {type: string}}
         related:
           description: |
-            which series forecast jointly, at most 8 to a group: `all`, or the
-            series columns whose values name each group; every series forecasts
-            on its own when left out
+            which series forecast jointly: `all`, or the series columns whose
+            values name each group; every series forecasts on its own when
+            left out
           oneOf:
             - {type: string, enum: [all]}
             - type: array
@@ -8137,12 +8143,17 @@ components:
 
     Timing:
       type: object
-      description: where a call's time went, queueing and cold start apart from compute
+      description: |
+        where a call's time went, queueing and cold start apart from compute;
+        `compile_seconds` is the time its steps spent compiling or loading
+        programs they waited on, which `compute_seconds`, its own execution,
+        leaves out
       required: [queued_seconds, cold_start_seconds, compute_seconds]
       additionalProperties: false
       properties:
         queued_seconds: {type: number, minimum: 0}
         cold_start_seconds: {type: number, minimum: 0}
+        compile_seconds: {type: number, minimum: 0}
         compute_seconds: {type: number, minimum: 0}
 
     HeldSnapshot:
@@ -8334,7 +8345,9 @@ components:
 
     Limits:
       type: object
-      description: the most a model accepts in one call
+      description: |
+        the sizes a model was trained and measured to; a call past them is
+        admitted by the device's memory and carries a note
       required: [context_rows, queries, inputs]
       additionalProperties: false
       properties:
