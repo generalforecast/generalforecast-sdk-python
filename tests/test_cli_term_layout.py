@@ -455,3 +455,18 @@ def test_a_question_needs_a_terminal_and_anything_but_yes_declines():
         term.Output(out=io.StringIO(), err=Tty(), stdin=Tty("\n")).confirm(
             "Delete?", yes=False
         )
+
+
+@pytest.mark.parametrize("width", [20, 30, 40])
+def test_a_command_between_backticks_wraps_before_it_and_never_inside(width):
+    text = "production still serves revision 4; see `gf predictors logs churn --level error`"
+    lines = term.wrap(text, width)
+    command = "`gf predictors logs churn --level error`"
+    assert command in lines
+    assert all(line == command or term.visible(line) <= width for line in lines)
+    assert term.wrap("see `gf login`, then try again", 12) == [
+        "see",
+        "`gf login`,",
+        "then try",
+        "again",
+    ]

@@ -7,7 +7,8 @@ Each sample in `tests/samples.py` runs against a fresh fake service once
 per width and stream, and the four transcripts are kept together in
 `tests/golden/<name>.txt`. A terminal's transcript is what the screen
 shows: colours are kept, and each frame a progress line drew before a line
-replaced it is a line of its own, as the spec's samples show them. Time is
+replaced it is a line of its own, as the spec's samples show them. The
+fake's loopback address reads as the hosted service's. Time is
 a clock that moves only when the SDK sleeps or sends a request, so every
 duration is the same on every run. `GF_GOLDEN=update pytest` writes them.
 """
@@ -28,7 +29,7 @@ import pytest
 from generalforecast import _http, _ops, client, term
 from generalforecast.cli import _login, _views, main
 from tests import samples
-from tests.fake import TOKEN, Fake, serve
+from tests.fake import CONSOLE, TOKEN, Fake, serve
 
 GOLDEN = Path(__file__).parent / "golden"
 MODES = ((100, False), (100, True), (44, False), (44, True))
@@ -134,7 +135,8 @@ def transcript(
         stop()
         time.tzset()
     assert not fake.errors, fake.errors
-    return shown(screen.getvalue(), terminal)
+    # The fake stands for the hosted service, wherever on loopback it listens.
+    return shown(screen.getvalue().replace(fake.url, CONSOLE), terminal)
 
 
 @pytest.mark.parametrize("sample", samples.SAMPLES, ids=lambda sample: sample.name)

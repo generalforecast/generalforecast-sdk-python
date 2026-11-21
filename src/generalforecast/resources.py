@@ -303,7 +303,7 @@ class Experiments(_Sync):
         sql: Any = UNSET,
         context: Any = UNSET,
     ) -> Experiment:
-        """Changes only the fields given (`None` clears one); earlier runs become stale."""
+        """Changes only the fields given; earlier runs become stale."""
         values = _setup(
             title=title, target=target, task=task, id=id, time=time, inputs=inputs,
             exclude=exclude, types=types, holdout=holdout, sql=sql, context=context,

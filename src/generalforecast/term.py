@@ -205,13 +205,19 @@ def _words(text: str, width: int, line: str = "") -> list[str]:
 
     A word wider than a line is broken after a separator in it, starting on
     the line it follows where one is in reach, and where it has none at the
-    line's end.
+    line's end. A command between backticks is never broken: it starts a
+    line of its own, and runs past the edge when even that is too narrow.
     """
     lines = []
     for word in text.split(" "):
         joined = f"{line} {word}" if line else word
         if visible(joined) <= width:
             line = joined
+            continue
+        if "`" in word:
+            if line.strip():
+                lines.append(line.rstrip())
+            line = word
             continue
         if line.strip() and visible(word) > width:
             at = _separator(word, width - visible(line) - 1)
@@ -236,7 +242,8 @@ def wrap(text: str | Sequence[str], width: int) -> list[str]:
     when it has none. In text, such an item carries on from the line before
     it; in a list it starts its own, so a name is never split to fill a
     line. Text between backticks, a command or a name to copy, is one word
-    to the fold. Text that fits comes back as one line, unchanged. Style
+    to the fold that is never broken: it starts a line of its own instead,
+    and runs past the edge when even that is too narrow. Text that fits comes back as one line, unchanged. Style
     the lines after folding: an ANSI code is not kept whole.
     """
     width = max(width, 1)

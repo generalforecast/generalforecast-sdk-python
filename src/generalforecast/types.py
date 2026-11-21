@@ -108,7 +108,7 @@ STANDARD_PERMISSIONS: tuple[str, ...] = (
 )
 """The permissions the console pre-checks for a new key."""
 
-NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
 
 def instant(value: Any) -> datetime | None:
@@ -274,8 +274,7 @@ class ContextSource:
 class Context:
     """A context: data a model learns from, uploaded, imported or live.
 
-    `file` names the file an uploaded version came from, when it came from
-    one. `unchanged` is true on an upload whose rows matched the latest
+    `unchanged` is true on an upload whose rows matched the latest
     version, which then stays the latest.
     """
 
@@ -301,7 +300,6 @@ class Context:
     created: datetime | None = None
     updated: datetime | None = None
     url: str | None = None
-    file: str | None = None
     unchanged: bool = False
 
     @property
@@ -733,7 +731,7 @@ class Predictor:
         if not isinstance(self.name, str) or not NAME.match(self.name):
             raise InvalidInput(
                 f"`{self.name}` is not a predictor name",
-                hint="use lowercase letters, digits and hyphens, at most 64",
+                hint="start with a letter, then lowercase letters, digits and hyphens, at most 64",
                 param="name",
             )
         ref_of(self.context)
@@ -862,7 +860,6 @@ class Resolved:
     context_digest: str | None = None
     inputs: tuple[str, ...] = ()
     types: Mapping[str, ColumnType] = field(default_factory=dict)
-    context_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -956,11 +953,17 @@ class Timing:
 
 @dataclass(frozen=True)
 class ContextUse:
-    """How much of the context a call read: whole, or retrieved past the device's memory."""
+    """How much of the context a call read: whole, or retrieved past the device's memory.
+
+    `cells` is rows times input columns, what the large-context line is
+    drawn on; the service leaves `used`, `core` and `cells` out when it has
+    nothing to say, and then the whole context was read.
+    """
 
     rows: int = 0
     used: Literal["exact", "retrieved"] = "exact"
     core: int | None = None
+    cells: int | None = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -970,9 +973,7 @@ class Predictions:
     `table` has `id` (when the predictor declares one), then `label` and a
     `p_<class>` column per class, or `value` and a `q_<level>` per quantile.
     `gpu_seconds` is the large-context meter, set only past its line;
-    `timing` keeps queueing and cold start apart from compute. `calls` is
-    how many calls the engine made, each as many queries as the model
-    takes at once.
+    `timing` keeps queueing and cold start apart from compute.
     """
 
     predictor: str | None
@@ -989,7 +990,6 @@ class Predictions:
     timing: Timing | None = None
     context: ContextUse | None = None
     notes: tuple[str, ...] = ()
-    calls: int = 0
 
     def to_pandas(self) -> pandas.DataFrame:
         """The predictions as a DataFrame."""
@@ -1413,7 +1413,9 @@ class Tag:
 class Snapshot:
     """A named, immutable training table.
 
-    `target` and `task` are the training metadata a run reads.
+    `target` and `task` are the training metadata a run reads. A snapshot
+    has no console page: the `url` the service sends with one is where an
+    open upload sends its bytes, which `snapshots.create` uses.
     """
 
     name: str
@@ -1427,7 +1429,6 @@ class Snapshot:
     state: str = "ready"
     origin: Mapping[str, Any] = field(default_factory=dict)
     created: datetime | None = None
-    url: str | None = None
     error: str | None = None
 
     @classmethod
@@ -1455,7 +1456,6 @@ class Snapshot:
             state=str(data.get("state") or "ready"),
             origin=dict(data.get("origin") or metadata.get("origin") or {}),
             created=instant(data.get("created")),
-            url=None if data.get("state") == "open" else data.get("url"),
             error=error.get("message") if isinstance(error, Mapping) else error,
         )
 

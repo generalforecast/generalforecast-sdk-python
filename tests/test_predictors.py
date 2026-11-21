@@ -106,11 +106,7 @@ def test_a_failed_start_is_not_recoverable(adult):
         error.value.message == "adult-income revision 2 failed to start in production"
     )
     assert error.value.note == "the replica exited loading the model"
-    assert error.value.hint == (
-        "production still serves revision 1; "
-        "see gf.predictors.logs('adult-income', level='error')"
-    )
-    assert error.value.request_id == "r-8f2c41d0"
+    assert error.value.hint == "see gf.predictors.logs('adult-income', level='error')"
 
 
 def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
@@ -165,7 +161,9 @@ def test_promote_rollback_logs_and_delete(adult):
     back = gf.predictors.rollback("adult-income")
     assert back.revision == 1
     logs = gf.predictors.logs("adult-income", level="error", limit=2)
-    assert logs.entries[0].request_id == "r-3f1a92c0" and logs.next == "c2"
+    assert logs.entries[0].request_id == "r-3abb2401f119428db148927c6a0d358c"
+    assert logs.entries[1].level == "warn" and logs.entries[1].at.year == 2026
+    assert logs.next == "1795034671207000"
     query = adult.calls_to("GET", r".*/logs")[0].query
     assert query == {"limit": "2", "level": "error"}
     assert {p.name for p in gf.predictors.list()} == {"adult-income", "churn"}

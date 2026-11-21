@@ -21,7 +21,13 @@ def frame(rows):
 
 def test_list_and_get_return_the_same_model_shape(fake):
     models = gf.models.list(task="classification")
-    assert {m.short for m in models} == {"tabicl-v2", "kumo-medium"}
+    assert {m.short for m in models} == {
+        "tabicl-v2",
+        "kumo-medium",
+        "kumo-small",
+        "kumo-large",
+        "mitra-2",
+    }
     one = gf.models.get("tabicl-v2", task="classification")
     assert one == next(m for m in models if m.id == one.id)
     assert (
@@ -160,3 +166,5 @@ def test_json_parts_count_values_as_well_as_bytes(monkeypatch):
     rows = [{"a": i, "b": i, "c": i, "d": i} for i in range(5)]
     parts = _ops.json_parts(rows)
     assert [len(p) for p in parts] == [2, 2, 1]
+    monkeypatch.undo()
+    assert [len(p) for p in _ops.json_parts(list(range(250)), 100)] == [100, 100, 50]

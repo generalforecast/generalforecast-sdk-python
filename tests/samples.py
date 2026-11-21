@@ -21,33 +21,32 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from tests import contract
 from tests import fake as service
 from tests.fake import NOW, TOKEN, Fake
 
-LIMITS = {"context_rows": 60000, "queries": 100, "inputs": 32}
-
 
 def _model(
-    full: str, short: str, task: str, digest: str, rows: int, queries: int = 100
+    full: str, short: str, task: str, rows: int, queries: int = 100
 ) -> dict[str, Any]:
-    return {"id": f"general-forecast/{full}", "short": short, "task": task, "family": short,
-            "kind": "catalog", "hostable": True, "digest": digest,
-            "limits": {"context_rows": rows, "queries": queries, "inputs": 32}}  # fmt: skip
+    family = short.split("-")[0]
+    return service.model(f"general-forecast/{full}", short, task, family=family,
+                         context_rows=rows, queries=queries, inputs=32)  # fmt: skip
 
 
 CATALOG = [
-    _model("kumo-tabular-small-classifier", "kumo-small", "classification", "sha256:a1b2c3", 60000),
-    _model("kumo-tabular-small-regressor", "kumo-small", "regression", "sha256:a1b2c4", 60000),
-    _model("kumo-tabular-medium-classifier", "kumo-medium", "classification", "sha256:d0f1d0", 60000),
-    _model("kumo-tabular-medium-regressor", "kumo-medium", "regression", "sha256:d0f1d1", 60000),
-    _model("kumo-tabular-large-classifier", "kumo-large", "classification", "sha256:e4e5e6", 60000),
-    _model("kumo-tabular-large-regressor", "kumo-large", "regression", "sha256:e4e5e7", 60000),
-    _model("tabicl-v2-classifier", "tabicl-v2", "classification", "sha256:b14107", 100000),
-    _model("tabicl-v2-regressor", "tabicl-v2", "regression", "sha256:b14108", 100000),
-    _model("mitra-2-classifier", "mitra-2", "classification", "sha256:c0ffee", 5120),
-    _model("mitra-2-regressor", "mitra-2", "regression", "sha256:c0ffef", 5120),
-    _model("chronos-2", "chronos-2", "forecast", "sha256:f00d01", 100000, 8),
-    _model("timestral-209m", "timestral-209m", "forecast", "sha256:f00d02", 100000, 8),
+    _model("kumo-tabular-small-classifier", "kumo-small", "classification", 60000),
+    _model("kumo-tabular-small-regressor", "kumo-small", "regression", 60000),
+    _model("kumo-tabular-medium-classifier", "kumo-medium", "classification", 60000),
+    _model("kumo-tabular-medium-regressor", "kumo-medium", "regression", 60000),
+    _model("kumo-tabular-large-classifier", "kumo-large", "classification", 60000),
+    _model("kumo-tabular-large-regressor", "kumo-large", "regression", 60000),
+    _model("tabicl-v2-classifier", "tabicl-v2", "classification", 100000),
+    _model("tabicl-v2-regressor", "tabicl-v2", "regression", 100000),
+    _model("mitra-2-classifier", "mitra-2", "classification", 5120),
+    _model("mitra-2-regressor", "mitra-2", "regression", 5120),
+    _model("chronos-2", "chronos-2", "forecast", 100000, 8),
+    _model("timestral-209m", "timestral-209m", "forecast", 100000, 8),
 ]  # fmt: skip
 
 ADULT_COLUMNS = [
@@ -89,9 +88,9 @@ def context(fake: Fake, name: str, **values: Any) -> dict[str, Any]:
     columns = values.pop("columns", [("id", "number", 0)])
     ctx = {
         "name": name, "kind": "snapshot", "state": "ready", "version": 1, "versions": 1,
-        "digest": "sha256:5fb6a4c6f24b0d9e", "rows": 32561, "id": None, "time": None, "source": None,
+        "digest": service.digest(name), "rows": 32561, "id": None, "time": None, "source": None,
         "freshness_seconds": None, "read_at": None, "error": None, "predictors": [], "experiments": [],
-        "origin": service.ORIGIN, "created": NOW, "updated": NOW, "file": None,
+        "origin": service.origin(), "created": NOW, "updated": NOW,
         "url": fake.link(f"data/contexts/{name}"), "_versions": [], "_rows": [],
         "columns": [{"name": n, "type": t, "missing": m, "distinct": None} for n, t, m in columns],
     }  # fmt: skip
@@ -101,7 +100,7 @@ def context(fake: Fake, name: str, **values: Any) -> dict[str, Any]:
 
 
 def adult_context(fake: Fake, **values: Any) -> dict[str, Any]:
-    return context(fake, "adult", columns=ADULT_COLUMNS, file="adult.csv", _rows=ADULT_ROWS,
+    return context(fake, "adult", columns=ADULT_COLUMNS, _rows=ADULT_ROWS,
                    updated="2026-11-21T09:12:04Z", **values)  # fmt: skip
 
 
@@ -109,10 +108,12 @@ def customers(fake: Fake, version: int = 8) -> dict[str, Any]:
     names = ["customer_id", "tenure_m", "plan", "monthly_usd", "seats", "region", "signup_date",
              "support_tickets", "churned"]  # fmt: skip
     return context(
-        fake, "customers", version=version, versions=version, rows=48210, digest="sha256:91acfe20",
+        fake, "customers", version=version, versions=version, rows=48210,
+        digest=service.digest(f"customers@{version}"),
         source={"source": "bigquery-acme", "kind": "bigquery", "table": "acme.analytics.customers", "sql": None},
         columns=[(n, "number", 0) for n in names], updated="2026-11-20T17:03:00Z",
-        _versions=[{"version": v, "digest": f"sha256:91ac{v}", "rows": 48210} for v in range(1, version + 1)],
+        _versions=[{"version": v, "digest": service.digest(f"customers@{v}"), "rows": 48210}
+                   for v in range(1, version + 1)],
     )  # fmt: skip
 
 
@@ -133,9 +134,9 @@ def experiment(
                        finished=NOW, _polls=0)  # fmt: skip
         made.append(run)
     fake.experiments[name] = {
-        "name": name, "title": None, "context": ctx, "context_version": 1, "target": target,
+        "name": name, "title": "", "context": ctx, "context_version": 1, "target": target,
         "task": "classification", "id": None, "time": None, "inputs": [], "types": {}, "sql": None,
-        "holdout": {"kind": "random", "fraction": 0.2}, "metric": "auroc", "origin": service.ORIGIN,
+        "holdout": {"kind": "random", "fraction": 0.2}, "metric": "auroc", "origin": service.origin(),
         "created": NOW, "updated": "2026-11-21T09:20:00Z", "url": fake.link(f"experiments/{name}"),
         "_runs": made, "_setup": {}, **values,
     }  # fmt: skip
@@ -151,18 +152,20 @@ def predictor(
     """A predictor with these revisions' specs, each environment serving `(revision, calls today, p50)`."""
     made = []
     for number, spec in enumerate(revisions, 1):
-        made.append({"number": number, "spec": spec, "resolved": service._resolved(fake, spec),
-                     "origin": {"surface": "console" if number < len(revisions) else "cli"},
+        made.append({"predictor": name, "number": number, "spec": spec,
+                     "resolved": service._resolved(fake, spec),
+                     "origin": service.origin("console" if number < len(revisions) else "cli"),
                      "created": "2026-11-18T14:40:00Z" if number < len(revisions) else "2026-11-21T10:02:00Z"})  # fmt: skip
     environments = {}
     for env, (number, calls, p50) in envs.items():
         environments[env] = {
             "name": env, "revision": number, "state": "ready", "generation": number, "calls_today": calls,
-            "p50_seconds": p50, "updated": NOW, "url": fake.link(f"predictors/{name}"), "error": None,
+            "p50_seconds": p50, "updated": NOW, "url": fake.link(f"predictors/{name}"),
             "_previous": number - 1 if number > 1 else None,
         }  # fmt: skip
     fake.predictors[name] = {"name": name, "_revisions": made, "environments": environments,
-                             "created": NOW, "url": fake.link(f"predictors/{name}")}  # fmt: skip
+                             "created": NOW, "url": fake.link(f"predictors/{name}"),
+                             "origin": service.origin("console")}  # fmt: skip
     ctx = fake.contexts[str(revisions[-1]["context"]).partition("@")[0]]
     ctx["predictors"] = [*ctx["predictors"], name]
 
@@ -272,21 +275,29 @@ def _sources(fake: Fake) -> None:
     ):  # fmt: skip
         fake.sources[name] = {"name": name, "kind": kind, "state": "ready", "config": config,
                               "secret_expires": None, "tested_at": tested, "error": None,
-                              "created": NOW, "url": fake.link(f"data/sources/{name}")}  # fmt: skip
+                              "origin": service.origin("console"), "created": NOW,
+                              "url": fake.link(f"data/sources/{name}")}  # fmt: skip
+
+
+# The keys of the samples, by the ids the CLI is given.
+CLI_KEY, CI_KEY, OLD_KEY = (
+    "key-19ab0c1d2e3f40516273",
+    "key-8f2c0c1d2e3f40516273",
+    "key-02cd0c1d2e3f40516273",
+)
 
 
 def _keys(fake: Fake) -> None:
     from generalforecast.types import STANDARD_PERMISSIONS
 
-    for key_id, name, expires, used, state in (
-        ("key_19ab", "cli-maya-mbp", "2027-02-19T09:12:04Z", "2026-11-21T10:04:30Z", "active"),
-        ("key_8f2c", "ci-deploy", None, "2026-11-21T10:02:00Z", "active"),
-        ("key_02cd", "old-laptop", "2026-06-01T00:00:00Z", None, "revoked"),
+    for key_id, name, expires, revoked in (
+        (CLI_KEY, "cli-maya-mbp", 1803029524.0, None),
+        (CI_KEY, "ci-deploy", None, None),
+        (OLD_KEY, "old-laptop", 1780272000.0, 1780272000.0),
     ):  # fmt: skip
-        fake.keys[key_id] = {"id": key_id, "name": name, "permissions": list(STANDARD_PERMISSIONS),
-                             "created_at": "2026-08-01T00:00:00Z", "expires_at": expires,
-                             "last_used_at": used, "state": state,
-                             "revoked_at": "2026-06-01T00:00:00Z" if state == "revoked" else None}  # fmt: skip
+        fake.keys[key_id] = {"id": key_id, "project": fake.project, "name": name,
+                             "permissions": list(STANDARD_PERMISSIONS), "created_at": 1785542400.0,
+                             "expires_at": expires, "revoked_at": revoked}  # fmt: skip
 
 
 def _all_contexts(fake: Fake) -> None:
@@ -308,13 +319,26 @@ def _adult_experiments(fake: Fake) -> None:
     experiment(fake, "adult-income", "adult", "income", ["finished"])
 
 
+def _refused(fake: Fake) -> None:
+    """snowflake-prod refuses its test, as the contract's example has it."""
+    _sources(fake)
+    op = next(op for op in contract.operations() if op.id == "sources.test")
+    refused = op.body["responses"]["422"]["content"]["application/json"]["examples"]
+    fake.source_errors["snowflake-prod"] = next(iter(refused.values()))["value"][
+        "error"
+    ]
+
+
 def _logs(fake: Fake) -> None:
     churn(fake)
+    shown = contract.example("environments.logs")["logs"]
     fake.log_entries = [
-        {"at": "2026-11-21T10:04:12Z", "level": "info", "source": "predict", "message": "100 rows  0.92s  key ci-deploy",
-         "request_id": "r-3f1a92c0"},
-        {"at": "2026-11-21T10:04:15Z", "level": "warn", "source": "predict",
-         "message": "missing column plan, filled empty", "request_id": "r-77b0e1aa"},
+        {**shown[0], "id": "1795255452000000", "at": 1795255452.0, "source": "predict", "code": "Predicted",
+         "message": "100 rows  0.92s  key ci-deploy", "environment": "production", "revision": 4,
+         "request_id": "r-3f1a92c0", "fields": {"rows": 100}},
+        {**shown[1], "id": "1795255455000000", "at": 1795255455.0, "source": "predict",
+         "code": "MissingColumn", "message": "missing column plan, filled empty",
+         "environment": "production", "revision": 4, "request_id": "r-77b0e1aa", "fields": {}},
     ]  # fmt: skip
 
 
@@ -332,7 +356,7 @@ def _two_experiments(fake: Fake) -> None:
         "customers",
         "churned",
         ["finished"] * 3,
-        origin={"surface": "console"},
+        origin=service.origin("console"),
     )
     for run in found["_runs"]:
         run.update(_best="kumo-medium", _score=0.871)
@@ -355,18 +379,14 @@ def _unchanged(fake: Fake) -> None:
 
 
 def _login(fake: Fake) -> None:
-    fake.key = {
-        "id": "key_19ab",
-        "name": "cli-maya-mbp",
-        "expires_at": "2027-02-19T09:12:04Z",
-    }
+    fake.key = {"id": CLI_KEY, "name": "cli-maya-mbp", "expires_at": 1803029524.0}
 
 
 def _logout(fake: Fake) -> None:
     from generalforecast import _auth
 
     _login(fake)
-    login = _auth.Stored(fake.url, "key_19ab", "acme", "maya@acme.com", key=TOKEN)
+    login = _auth.Stored(fake.url, CLI_KEY, "acme", "maya@acme.com", key=TOKEN)
     login.name, login.minted = "cli-maya-mbp", True
     _auth.CredentialStore().save(login)
 
@@ -487,18 +507,15 @@ SAMPLES = [
     Sample("predictors-logs", ("predictors logs churn --limit 2",), _logs),
     Sample("predictors-delete", ("predictors delete churn",), churn, stdin="y\n"),
     Sample("sources-get", ("sources get bigquery-acme",), _sources),
-    Sample("sources-test", ("sources test snowflake-prod",), lambda fake: (_sources(fake), fake.source_errors.update(
-        {"snowflake-prod": {"message": "snowflake-prod refused the connection",
-                            "note": "Snowflake said: user GF_ACME is not authorized for warehouse ANALYTICS_XS",
-                            "hint": "run the grant SQL on the source page again, then gf.sources.test('snowflake-prod')"}}))),
+    Sample("sources-test", ("sources test snowflake-prod",), _refused),
     Sample("sources-create", ("sources create pg-replica --kind postgres --config host=10.2.0.4,port=5432,database=app,user=gf_read --secret-stdin",),
            stdin="hunter2\n"),
     Sample("sources-preview", ("sources preview bigquery-acme --table acme.analytics.customers",), _sources),
     Sample("sources-delete", ("sources delete pg-replica --yes",), lambda fake: fake.sources.update(
         {"pg-replica": {"name": "pg-replica", "kind": "postgres", "state": "ready", "config": {}}})),
     Sample("keys-list", ("keys list",), _keys),
-    Sample("keys-rotate", ("keys rotate key_8f2c --yes",), _keys),
-    Sample("keys-delete", ("keys delete key_02cd --yes",), _keys),
+    Sample("keys-rotate", (f"keys rotate {CI_KEY} --yes",), _keys),
+    Sample("keys-delete", (f"keys delete {OLD_KEY} --yes",), _keys),
     Sample("models-get", ("models get kumo-medium --task regression",)),
     Sample("models-predict", ("models predict tabicl-v2 --context train.csv --queries new.csv --target income",),
            files={"train.csv": lambda: adult(26048), "new.csv": _queries(3)}),

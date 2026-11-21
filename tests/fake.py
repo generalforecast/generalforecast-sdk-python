@@ -1,16 +1,19 @@
 # SPDX-FileCopyrightText: General Forecast, Inc.
 # SPDX-License-Identifier: MIT
 
-"""A fake General Forecast service, built from the surface spec's examples.
+"""A fake General Forecast service, built from the contract's examples.
 
-It serves the routes of section 3 over real HTTP on loopback, keeps its
-resources in memory, and records every request, so tests drive the SDK
-end to end. Shapes follow the spec's JSON examples; when engine PR 1's
-`api/openapi.yaml` lands, its examples replace these.
+It serves the routes of `api/openapi.yaml` over real HTTP on loopback,
+keeps its resources in memory, and records every request, so tests drive
+the SDK end to end. Its canned answers (the catalog, a leaderboard, auth
+status, logs, slices) are the contract's examples, and every request the
+SDK sends and every reply the fake gives is checked against the route's
+schemas (`tests/contract.py`): a test fails when they part ways.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -24,6 +27,8 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from tests import contract
+
 TOKEN = "gf_test_0123456789abcdefghijklmnopqrstuv"
 CONSOLE = "https://app.generalforecast.com"
 NOW = "2026-11-21T09:12:04Z"
@@ -31,38 +36,79 @@ EPOCH = 1795252324.0  # NOW, in Unix seconds
 DAY = 86400.0
 ARROW = "application/vnd.apache.arrow.stream"
 
-ORIGIN = {
-    "surface": "notebook",
-    "notebook": "jupyter",
-    "client": "generalforecast/0.2.3",
-    "by": "maya@acme.com",
+ORIGIN = contract.example("contexts.get")["origin"]
+LEADERBOARD = contract.example("experiments.get")["run"]["leaderboard"]
+# The times of the surface spec's leaderboard sample.
+for _entry, _seconds in zip(LEADERBOARD, (38.2, 51.0, 44.0), strict=False):
+    _entry["seconds"] = _seconds
+# The recommended sets of section 3.5, run when an experiment names no models.
+RECOMMENDED = {
+    "classification": ["kumo-medium", "tabicl-v2", "mitra-2", "kumo-small"],
+    "regression": ["kumo-medium", "tabicl-v2", "mitra-2", "kumo-small"],
+    "forecast": ["chronos-2", "timestral-209m"],
 }
 
+
+def digest(text: str) -> str:
+    """A well-formed digest standing for `text`."""
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+def origin(surface: str = "notebook") -> dict[str, Any]:
+    """Where a resource was made, as the contract writes it."""
+    return {
+        **ORIGIN,
+        "surface": surface,
+        "notebook": ORIGIN["notebook"] if surface == "notebook" else None,
+    }
+
+
+def model(
+    full: str,
+    short: str,
+    task: str,
+    *,
+    family: str | None = None,
+    context_rows: int = 100000,
+    queries: int = 100,
+    inputs: int = 500,
+) -> dict[str, Any]:
+    """A catalog entry shaped as the contract's `models.list` example."""
+    entry = contract.example("models.list")["models"][0]
+    pinned = digest(full)
+    entry.update(
+        model=f"{full}@{pinned}", name=full, short=short, task=task, family=family or short,
+        repository=full, limits={"context_rows": context_rows, "queries": queries, "inputs": inputs},
+    )  # fmt: skip
+    entry["artifact"] = {**entry["artifact"], "repository": full, "digest": pinned}
+    if task != "classification":
+        entry["trained_on"] = None
+    return entry
+
+
 CATALOG = [
-    {"id": "general-forecast/tabicl-v2-classifier", "short": "tabicl-v2", "task": "classification",
-     "family": "tabicl-v2", "kind": "catalog", "hostable": True, "digest": "sha256:b14107",
-     "limits": {"context_rows": 100000, "queries": 100, "inputs": 500},
-     "trained_on": {"rows": 100000, "inputs": 500, "classes": 10}, "architecture": {}},
-    {"id": "general-forecast/tabicl-v2-regressor", "short": "tabicl-v2", "task": "regression",
-     "family": "tabicl-v2", "kind": "catalog", "hostable": True, "digest": "sha256:b14108",
-     "limits": {"context_rows": 100000, "queries": 100, "inputs": 500}},
-    {"id": "general-forecast/kumo-tabular-medium-classifier", "short": "kumo-medium",
-     "task": "classification", "family": "kumo", "kind": "catalog", "hostable": True,
-     "digest": "sha256:d0f1d0", "limits": {"context_rows": 60000, "queries": 100, "inputs": 32}},
+    model("general-forecast/tabicl-v2-classifier", "tabicl-v2", "classification", family="tabicl"),
+    model("general-forecast/tabicl-v2-regressor", "tabicl-v2", "regression", family="tabicl"),
+    model("general-forecast/kumo-tabular-medium-classifier", "kumo-medium", "classification",
+          family="kumo", context_rows=60000, inputs=32),
+    model("general-forecast/kumo-tabular-medium-regressor", "kumo-medium", "regression",
+          family="kumo", context_rows=60000, inputs=32),
+    model("general-forecast/kumo-tabular-small-classifier", "kumo-small", "classification",
+          family="kumo", context_rows=60000, inputs=32),
+    model("general-forecast/kumo-tabular-small-regressor", "kumo-small", "regression",
+          family="kumo", context_rows=60000, inputs=32),
+    model("general-forecast/kumo-tabular-large-classifier", "kumo-large", "classification",
+          family="kumo", context_rows=60000, inputs=32),
+    model("general-forecast/mitra-2-classifier", "mitra-2", "classification", context_rows=5120),
+    model("general-forecast/mitra-2-regressor", "mitra-2", "regression", context_rows=5120),
+    model("general-forecast/chronos-2", "chronos-2", "forecast", queries=8),
+    model("general-forecast/timestral-209m", "timestral-209m", "forecast", queries=8),
 ]  # fmt: skip
 
-LEADERBOARD = [
-    {"model": "general-forecast/tabicl-v2-classifier", "short": "tabicl-v2", "state": "finished",
-     "score": 0.931, "interval": [0.925, 0.937],
-     "metrics": {"auroc": 0.931, "log loss": 0.287, "accuracy": 0.862},
-     "seconds": 38.2, "rows": 6513, "credits": 13.0, "usd": 0.013, "error": None},
-    {"model": "general-forecast/kumo-tabular-medium-classifier", "short": "kumo-medium",
-     "state": "finished", "score": 0.929, "interval": [0.923, 0.935], "metrics": {"auroc": 0.929},
-     "seconds": 51.0, "rows": 6513, "credits": 13.0, "usd": 0.013, "error": None},
-    {"model": "general-forecast/mitra-2-classifier", "short": "mitra-2", "state": "finished",
-     "score": 0.918, "interval": [0.911, 0.925], "metrics": {"auroc": 0.918},
-     "seconds": 44.0, "rows": 6513, "credits": 13.0, "usd": 0.013, "error": None},
-]  # fmt: skip
+
+def entry(full: str) -> dict[str, Any]:
+    """A catalog entry by full id or short name; classification for a short name with several."""
+    return next(m for m in CATALOG if full in (m["name"], m["short"]))
 
 
 class Refusal(Exception):
@@ -70,7 +116,8 @@ class Refusal(Exception):
 
     def __init__(self, status: int, code: str, message: str, **extra: Any) -> None:
         super().__init__(message)
-        self.status, self.body = status, {"code": code, "message": message, **extra}
+        given = {k: v for k, v in extra.items() if v is not None}
+        self.status, self.body = status, {"code": code, "message": message, **given}
 
 
 @dataclass
@@ -113,12 +160,12 @@ class Fake:
     runs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     run_ends: str = "finished"
     errors: list[str] = field(default_factory=list)
-    catalog: list[dict[str, Any]] = field(default_factory=lambda: list(CATALOG))
     key: dict[str, Any] = field(default_factory=lambda: {
         "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": 1795000000.0})  # fmt: skip
-    log_entries: list[dict[str, Any]] = field(default_factory=lambda: [
-        {"at": "2026-11-21T10:04:12Z", "level": "info", "source": "predict", "code": None,
-         "message": "100 rows  0.92s", "request_id": "r-3f1a92c0", "fields": {"rows": 100}}])  # fmt: skip
+    catalog: list[dict[str, Any]] = field(default_factory=lambda: list(CATALOG))
+    log_entries: list[dict[str, Any]] = field(
+        default_factory=lambda: contract.example("environments.logs")["logs"]
+    )
     source_errors: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def calls_to(self, method: str, pattern: str) -> list[Call]:
@@ -186,29 +233,28 @@ def _columns(table: pa.Table) -> list[dict[str, Any]]:
 
 
 def auth_status(fake: Fake, call: Call) -> Any:
-    return ok({
-        "authenticated": True,
-        "principal": {"kind": "api-key", "id": fake.key["id"], "project": fake.project},
-        "key": {**fake.key, "project": fake.project},
-        "email": "maya@acme.com",
-        "workspace": {"id": "acme", "display_name": "Acme Analytics"},
-        "url": f"{CONSOLE}/?project={fake.project}",
-    })  # fmt: skip
+    status = contract.example("auth.status")
+    status.update(
+        principal={"kind": "api-key", "id": fake.key["id"], "project": fake.project},
+        key={**fake.key, "project": fake.project}, email="maya@acme.com", machine="maya-mbp",
+        workspace={"id": "acme", "display_name": "Acme Analytics"},
+    )  # fmt: skip
+    return ok(status)
 
 
 def auth_logout(fake: Fake, call: Call) -> Any:
-    return ok({"revoked": "key-0f1e2d3c4b5a69788796"})
+    return ok({"revoked": fake.key["id"]})
 
 
 def device_start(fake: Fake, call: Call) -> Any:
     assert call.payload["client"] in ("cli", "notebook")
     fake.login = dict(call.payload)  # type: ignore[attr-defined]
-    return ok({
-        "device_code": "gf_dc_abc", "user_code": "WXHG-PTRB",
-        "verification_uri": f"{CONSOLE}/device",
-        "verification_uri_complete": f"{CONSOLE}/device?code=WXHG-PTRB",
-        "expires_in": 600, "interval": 1,
-    })  # fmt: skip
+    grant = contract.example("device.start")
+    grant.update(
+        user_code="WXHG-PTRB",
+        verification_uri_complete=f"{CONSOLE}/device?code=WXHG-PTRB",
+    )
+    return ok(grant)
 
 
 def device_token(fake: Fake, call: Call) -> Any:
@@ -217,25 +263,17 @@ def device_token(fake: Fake, call: Call) -> Any:
         raise Refusal(400, "Unauthorized", "waiting for browser approval",
                       reason="authorization_pending")  # fmt: skip
     login = fake.login  # type: ignore[attr-defined]
-    if login["client"] == "cli":
-        name, expires, ephemeral = (
-            f"cli-{login['machine']}",
-            "2027-02-19T09:12:04Z",
-            False,
-        )
-    else:
-        name, expires, ephemeral = (
-            f"notebook-{login['machine']}",
-            "2026-11-21T21:14:00Z",
-            True,
-        )
-    return ok({
-        "access_token": TOKEN, "token_type": "bearer", "expires_at": expires,
-        "key": {"id": "key-0f1e2d3c4b5a69788796", "name": name,
-                "project": fake.project, "expires_at": expires, "ephemeral": ephemeral},
-        "email": "maya@acme.com", "workspace": {"id": "acme", "display_name": "Acme Analytics"},
-        "project": fake.project, "url": f"{CONSOLE}/?project={fake.project}",
-    })  # fmt: skip
+    notebook = login["client"] == "notebook"
+    expires = 1795295640.0 if notebook else 1803029524.0
+    token = contract.example("device.token")
+    token.update(
+        access_token=TOKEN, expires_at=expires, project=fake.project,
+        key={"id": "key-0f1e2d3c4b5a69788796", "name": f"{login['client']}-{login['machine']}",
+             "project": fake.project, "expires_at": expires, "ephemeral": notebook},
+        email="maya@acme.com", workspace={"id": "acme", "display_name": "Acme Analytics"},
+        url=f"{CONSOLE}/?project={fake.project}",
+    )  # fmt: skip
+    return ok(token)
 
 
 def _new_context(fake: Fake, payload: dict[str, Any], state: str) -> dict[str, Any]:
@@ -247,7 +285,7 @@ def _new_context(fake: Fake, payload: dict[str, Any], state: str) -> dict[str, A
         "time": payload.get("time"),
         "source": {"kind": "bigquery", "table": None, "sql": None, **source} if source else None,
         "freshness_seconds": payload.get("freshness_seconds"), "read_at": None, "error": None,
-        "predictors": [], "experiments": [], "origin": ORIGIN, "created": NOW, "updated": NOW,
+        "predictors": [], "experiments": [], "origin": origin(), "created": NOW, "updated": NOW,
         "url": fake.link(f"data/contexts/{name}"), "_versions": [], "_rows": [],
     }  # fmt: skip
     if payload.get("columns"):
@@ -263,7 +301,7 @@ def _open_upload(fake: Fake, name: str, data: dict[str, Any]) -> Any:
         return ok({**fake.context_json(name), "unchanged": True})
     version = ctx["versions"] + 1
     fake.uploads[name] = {"version": version, "bytes": data["bytes"], "data": b"",
-                          "digest": data.get("digest"), "file": data.get("file")}  # fmt: skip
+                          "digest": data.get("digest")}  # fmt: skip
     ctx["state"] = "uploading"
     out = fake.context_json(name)
     out["upload"] = {"version": version, "url": None, "chunk_bytes": fake.chunk_bytes}
@@ -282,7 +320,7 @@ def contexts_create(fake: Fake, call: Call) -> Any:
         ctx = _new_context(fake, payload, "importing")
         ctx["_polls"] = fake.polls_until_done
         if payload["kind"] == "snapshot":
-            ctx["_final"] = {"version": 1, "versions": 1, "digest": "sha256:91ac", "rows": 48210,
+            ctx["_final"] = {"version": 1, "versions": 1, "digest": digest("customers@1"), "rows": 48210,
                              "columns": _named(9)}  # fmt: skip
         else:
             ctx["_final"] = {"rows": 12804, "columns": _named(11), "read_at": NOW}
@@ -308,7 +346,7 @@ def contexts_bytes(fake: Fake, call: Call, name: str, version: str) -> Any:
         ctx = fake.contexts[name]
         ctx.update(state="verifying", version=upload["version"], versions=upload["version"],
                    digest=upload["digest"], rows=table.num_rows, columns=_columns(table),
-                   file=upload["file"], updated=NOW, _polls=1)  # fmt: skip
+                   updated=NOW, _polls=1)  # fmt: skip
         ctx["_versions"].append({"version": upload["version"], "digest": upload["digest"],
                                  "rows": table.num_rows})  # fmt: skip
         ctx["_rows"] = table.to_pylist()
@@ -340,7 +378,7 @@ def contexts_refresh(fake: Fake, call: Call, name: str) -> Any:
     ctx["_final"] = {
         "version": version,
         "versions": version,
-        "digest": "sha256:a3c0",
+        "digest": digest(f"{name}@{version}"),
         "rows": 48377,
     }
     return ok(fake.context_json(name))
@@ -352,7 +390,8 @@ def contexts_rows(fake: Fake, call: Call, name: str) -> Any:
     start = int(call.query.get("after", 0))
     names = [c["name"] for c in ctx["columns"]]
     rows = [
-        [r.get(n) for n in names] for r in ctx["_rows"][start : start + min(limit, 3)]
+        {n: r.get(n) for n in names}
+        for r in ctx["_rows"][start : start + min(limit, 3)]
     ]
     after = start + len(rows)
     return ok({"columns": ctx["columns"], "rows": rows,
@@ -389,10 +428,14 @@ def snapshots_put(fake: Fake, call: Call) -> Any:
 
 
 def _entries(models: list[str]) -> list[dict[str, Any]]:
-    """The leaderboard's finished entries for these models, in the order asked."""
+    """Finished leaderboard entries for these models, the contract's example where it has one."""
     known = {e["short"]: e for e in LEADERBOARD}
-    return [known.get(m) or dict(LEADERBOARD[0], short=m, model=f"general-forecast/{m}-classifier")
-            for m in models]  # fmt: skip
+    out = []
+    for name in models:
+        found = entry(name)
+        base = known.get(found["short"]) or dict(LEADERBOARD[-1], score=0.9)
+        out.append(dict(base, model=found["name"], short=found["short"]))
+    return out
 
 
 def _run(
@@ -400,11 +443,12 @@ def _run(
 ) -> dict[str, Any]:
     return {
         "experiment": experiment, "number": number, "state": state, "stale": False,
-        "models": models, "metric": "auroc", "lower_is_better": False,
+        "models": [entry(m)["name"] for m in models], "metric": "auroc", "lower_is_better": False,
         "held_rows": 6513, "context_rows": 26048, "repeats": 1,
         "leaderboard": [dict(e, state="queued", score=None, interval=None) for e in _entries(models)],
         "rows": 0, "credits": 0.0, "usd": 0.0, "created": NOW, "started": None, "finished": None,
-        "origin": {"surface": "notebook"}, "error": None, "_polls": fake.polls_until_done,
+        "origin": origin(), "error": None, "url": fake.link(f"experiments/{experiment}?run={number}"),
+        "_polls": fake.polls_until_done,
     }  # fmt: skip
 
 
@@ -429,7 +473,7 @@ def _experiment_json(fake: Fake, name: str, number: int | None) -> dict[str, Any
     )
     out["runs"] = [{"number": r["number"], "state": r["state"], "models": r["models"],
                     "best": r.get("_best", "tabicl-v2"), "score": r.get("_score", 0.931),
-                    "origin": {"surface": "notebook"}, "created": NOW} for r in runs]  # fmt: skip
+                    "origin": origin(), "created": NOW} for r in runs]  # fmt: skip
     return out
 
 
@@ -442,19 +486,20 @@ def experiments_create(fake: Fake, call: Call) -> Any:
     if columns and payload["target"] not in columns:
         raise Refusal(422, "ValidationError", f"the context {context} has no column `{payload['target']}`",
                       hint="a similar column exists: `income`", param="target")  # fmt: skip
-    models = payload.pop("models", None) or ["tabicl-v2", "kumo-medium", "mitra-2"]
+    task = payload.get("task") or "classification"
+    models = payload.pop("models", None) or RECOMMENDED[task]
     if payload.pop("dry_run", False):
         return ok({"setup": payload, "estimate": {"calls": 198, "rows": 19539, "credits": 39.1, "usd": 0.0391},
                    "warnings": []})  # fmt: skip
     name = payload.get("name") or f"{context}-{payload['target']}"
     fake.experiments[name] = {
-        "name": name, "title": payload.get("title"), "context": context,
+        "name": name, "title": payload.get("title") or "", "context": context,
         "context_version": payload.get("version") or fake.contexts[context]["version"],
-        "target": payload["target"], "task": payload.get("task") or "classification",
+        "target": payload["target"], "task": task,
         "id": payload.get("id"), "time": payload.get("time"), "inputs": payload.get("inputs") or [],
         "types": payload.get("types") or {}, "sql": payload.get("sql"),
         "holdout": payload.get("holdout") or {"kind": "random", "fraction": 0.2},
-        "metric": "auroc", "origin": ORIGIN, "created": NOW, "updated": NOW,
+        "metric": "auroc", "origin": origin(), "created": NOW, "updated": NOW,
         "url": fake.link(f"experiments/{name}"),
         "_runs": [_run(fake, name, 1, models, "queued")], "_setup": payload,
     }  # fmt: skip
@@ -478,7 +523,7 @@ def experiments_list(fake: Fake, call: Call) -> Any:
     for n in page:
         item = _experiment_json(fake, n, None)
         if item["run"]:
-            item["run"].pop("leaderboard", None)
+            item["run"]["leaderboard"] = []
         found.append(item)
     after = start + 1
     return ok(
@@ -515,16 +560,18 @@ def experiments_cancel(fake: Fake, call: Call, name: str, number: str) -> Any:
 
 def experiments_rows(fake: Fake, call: Call, name: str, number: str) -> Any:
     after = int(call.query.get("after", 0))
-    rows = [{"row": after + i, "model": call.query.get("model") or "tabicl-v2", "label": "<=50K",
-             "p_>50K": 0.1} for i in range(2)]  # fmt: skip
-    return ok({"rows": rows, "next": "2" if after == 0 else None})
+    held = contract.example("experiments.rows")
+    held["rows"] = [dict(held["rows"][0], row=after + i) for i in range(2)]
+    held["model"] = entry(call.query.get("model") or "tabicl-v2")["name"]
+    held["next"] = "2" if after == 0 else None
+    return ok(held)
 
 
 def experiments_slices(fake: Fake, call: Call, name: str, number: str) -> Any:
-    return ok({"slices": [
-        {"column": "marital_status", "value": "Never-married", "rows": 2140, "score": 0.884, "delta": -0.047},
-        {"column": "education", "value": "HS-grad", "rows": 2096, "score": 0.902, "delta": -0.029},
-    ]})  # fmt: skip
+    found = contract.example("experiments.slices")
+    found["slices"].append({"column": "education", "value": "HS-grad", "rows": 2096,
+                            "score": 0.902, "delta": -0.029})  # fmt: skip
+    return ok(found)
 
 
 def experiments_delete(fake: Fake, call: Call, name: str) -> Any:
@@ -533,20 +580,20 @@ def experiments_delete(fake: Fake, call: Call, name: str) -> Any:
 
 
 def _resolved(fake: Fake, spec: dict[str, Any]) -> dict[str, Any]:
-    entry = next(
-        (m for m in fake.catalog if spec["model"] in (m["short"], m["id"])), None
+    found = next(
+        (m for m in fake.catalog if spec["model"] in (m["short"], m["name"])), None
     )
-    if entry is None:
-        raise Refusal(404, "NotFound", f"no model named `{spec['model']}`",
-                      hint="a similar model exists: `kumo-medium`; gf.models.list() shows them all")  # fmt: skip
+    if found is None:
+        raise Refusal(404, "NotFound", f"no model named `{spec['model']}`", param="spec.model",
+                      hint="a similar model exists: `kumo-medium`; `gf models list` shows them all")  # fmt: skip
     name, _, pinned = str(spec["context"]).partition("@")
     ctx = fake.contexts.get(name)
     if ctx is None:
         raise Refusal(404, "NotFound", f"no context named `{name}`")
-    return {"model": entry["id"], "short": entry["short"], "model_digest": entry["digest"],
-            "task": spec.get("task") or entry["task"], "context": name,
-            "context_version": int(pinned) if pinned else ctx["version"],
-            "context_digest": ctx["digest"], "context_rows": ctx["rows"],
+    return {"model": found["name"], "short": found["short"],
+            "model_digest": found["artifact"]["digest"], "task": spec.get("task") or found["task"],
+            "context": name, "context_version": int(pinned) if pinned else ctx["version"],
+            "context_digest": ctx["digest"],
             "inputs": [c["name"] for c in ctx["columns"] if c["name"] != spec["target"]],
             "types": {}}  # fmt: skip
 
@@ -557,26 +604,27 @@ def _deploy(
     resolved = _resolved(fake, spec)
     existing = fake.predictors.get(name)
     if existing is None:
-        action, changes, number = "created", [], 1
+        action, number = "created", 1
+        changes = _changes(None, spec, resolved)
     else:
         serving = existing["environments"].get(env, {}).get("revision")
         current = existing["_revisions"][serving - 1] if serving else None
         if current is not None and current["resolved"] == resolved:
             return ok({"predictor": name, "env": env, "action": "unchanged", "changes": [],
-                       "revision": current, "environment": existing["environments"][env]})  # fmt: skip
+                       "revision": current, "environment": _shown(existing["environments"][env])})  # fmt: skip
         action, number = "updated", len(existing["_revisions"]) + 1
         changes = _changes(current, spec, resolved)
-    revision = {"number": number, "spec": spec, "resolved": resolved,
-                "origin": {"surface": "notebook"}, "created": NOW}  # fmt: skip
+    revision = {"predictor": name, "number": number, "spec": spec, "resolved": resolved,
+                "origin": origin(), "created": NOW}  # fmt: skip
     environment = {"name": env, "revision": number, "state": "starting", "generation": number,
                    "calls_today": 0, "p50_seconds": None, "updated": NOW,
                    "url": fake.link(f"predictors/{name}"), "_polls": fake.polls_until_done,
-                   "_final": fake.deploy_ends, "error": None}  # fmt: skip
+                   "_final": fake.deploy_ends}  # fmt: skip
     if not dry_run:
         if existing is None:
             existing = fake.predictors[name] = {
                 "name": name, "_revisions": [], "environments": {}, "created": NOW,
-                "url": fake.link(f"predictors/{name}"),
+                "url": fake.link(f"predictors/{name}"), "origin": origin(),
             }  # fmt: skip
             ctx = fake.contexts[resolved["context"]]
             ctx["predictors"] = [*ctx["predictors"], name]
@@ -586,17 +634,19 @@ def _deploy(
         existing["environments"][env] = environment
     if dry_run:
         environment = (existing or {}).get("environments", {}).get(env)
-    shown = {
-        k: v for k, v in (environment or {}).items() if not k.startswith("_")
-    } or None
     return ok({"predictor": name, "env": env, "action": action, "changes": changes,
-               "revision": revision, "environment": shown})  # fmt: skip
+               "revision": revision, "environment": _shown(environment) if environment else None})  # fmt: skip
+
+
+def _shown(item: dict[str, Any]) -> dict[str, Any]:
+    """A stored resource without the fake's own bookkeeping."""
+    return {k: v for k, v in item.items() if not k.startswith("_")}
 
 
 def _changes(
     current: dict[str, Any] | None, spec: dict[str, Any], resolved: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """What a new spec changes, the model by short name and the context by pinned version."""
+    """What a spec changes, as the contract's example writes it: the model by short name, the context pinned."""
     before = dict(current["spec"]) if current else {}
     after = dict(spec)
     if current:
@@ -608,9 +658,14 @@ def _changes(
         model=resolved["short"],
         context=f"{resolved['context']}@{resolved['context_version']}",
     )
-    return [{"field": k, "before": None if before.get(k) is None else str(before[k]),
-             "after": None if after.get(k) is None else str(after[k])}
-            for k in dict.fromkeys([*before, *after]) if before.get(k) != after.get(k)]  # fmt: skip
+    keys = dict.fromkeys(["model", "context", "target", *before, *after])
+    return [{"field": k, "before": None if before.get(k) is None else _text(before[k]),
+             "after": None if after.get(k) is None else _text(after[k])}
+            for k in keys if before.get(k) != after.get(k)]  # fmt: skip
+
+
+def _text(value: Any) -> str:
+    return ", ".join(map(str, value)) if isinstance(value, list) else str(value)
 
 
 def predictors_create(fake: Fake, call: Call) -> Any:
@@ -646,10 +701,9 @@ def _predictor_json(fake: Fake, name: str) -> dict[str, Any]:
         iter(p["environments"].values())
     )
     revision = p["_revisions"][production["revision"] - 1]
-    envs = {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")}
-            for k, v in p["environments"].items()}  # fmt: skip
+    envs = {k: _shown(v) for k, v in p["environments"].items()}
     return {"name": name, "spec": revision["spec"], "revision": revision["number"],
-            "environments": envs, "created": NOW, "url": p["url"],
+            "environments": envs, "origin": p["origin"], "created": NOW, "url": p["url"],
             "resolved": revision["resolved"]}  # fmt: skip
 
 
@@ -674,13 +728,8 @@ def predictors_environment(fake: Fake, call: Call, name: str, env: str) -> Any:
         if not environment["_polls"]:
             environment["state"] = environment.get("_final", "ready")
             if environment["state"] == "failed":
-                previous = environment.get("_previous")
-                environment["error"] = {
-                    "code": "DeployFailed", "message": "the replica exited loading the model",
-                    "request_id": "r-8f2c41d0",
-                    "hint": f"{environment['name']} still serves revision {previous}" if previous else None,
-                }  # fmt: skip
-    return ok({k: v for k, v in environment.items() if not k.startswith("_")})
+                environment["error"] = "the replica exited loading the model"
+    return ok(_shown(environment))
 
 
 def predictors_move(fake: Fake, call: Call, name: str, env: str, verb: str) -> Any:
@@ -698,14 +747,19 @@ def predictors_move(fake: Fake, call: Call, name: str, env: str, verb: str) -> A
         "p50_seconds": None, "updated": NOW, "url": p["url"], "_polls": 1,
         "_previous": (target or {}).get("revision"),
     }  # fmt: skip
-    return ok(
-        {k: v for k, v in p["environments"][env].items() if not k.startswith("_")}
-    )
+    return ok(_shown(p["environments"][env]))
 
 
 def predictors_logs(fake: Fake, call: Call, name: str, env: str) -> Any:
     limit = int(call.query.get("limit", 100))
-    return ok({"entries": fake.log_entries[:limit], "next": "c2", "previous": None})
+    entries = fake.log_entries[:limit]
+    return ok(
+        {
+            "logs": entries,
+            "next": entries[-1]["id"] if entries else None,
+            "previous": None,
+        }
+    )
 
 
 def predictors_delete(fake: Fake, call: Call, name: str) -> Any:
@@ -718,7 +772,7 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
     assert call.envelope is not None and call.envelope["api_version"] == "gf/v1"
     if fake.accept_predictions > 0:
         fake.accept_predictions -= 1
-        return ok({"id": "pred-0123456789abcdef01234567", "state": "starting", "created": 1761400100.0,
+        return ok({"id": "pred-0123456789abcdef01234567", "state": "starting", "created": 1795252324.0,
                    "retry_after": 1}, 202,
                   Location=f"/v1/projects/{fake.project}/predictions/pred-0123456789abcdef01234567")  # fmt: skip
     rows = call.table.num_rows
@@ -739,13 +793,14 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
         predictions = [{"value": 2.0, "quantiles": {f"{q:g}": q for q in payload.get("quantiles", [])}}
                        for _ in range(rows)]  # fmt: skip
     fake.last_prediction = payload  # type: ignore[attr-defined]
+    held = (payload.get("context") or {}).get("snapshot")
     return ok({
-        "model": "general-forecast/tabicl-v2-classifier@sha256:7a01", "task": "classification",
+        "model": CATALOG[0]["model"], "task": "classification",
         "predictor": predictor, "revision": 1 if predictor else None,
         "environment": payload.get("env") if predictor else None,
-        "context": {"rows": 26048, "used": "exact", "core": None},
-        "usage": {"rows": rows, "calls": -(-rows // 100), "credits": 0.002 * rows,
-                  "usd": 0.000002 * rows, "gpu_seconds": None},
+        "context": {"source": "snapshot", "name": None, "version": None,
+                    "digest": held or digest(str(predictor)), "rows": 26048, "as_of": None},
+        "usage": {"rows": rows, "credits": 0.002 * rows, "usd": 0.000002 * rows, "gpu_seconds": None},
         "timing": {"queued_seconds": 0.1, "cold_start_seconds": 0.0, "compute_seconds": 0.4},
         "notes": [], "predictions": predictions,
     })  # fmt: skip
@@ -798,7 +853,7 @@ def models_get(fake: Fake, call: Call, name: str) -> Any:
     found = [
         m
         for m in fake.catalog
-        if name in (m["id"], m["short"]) and (not task or m["task"] == task)
+        if name in (m["name"], m["short"]) and (not task or m["task"] == task)
     ]
     if not found:
         raise Refusal(404, "NotFound", f"no model named `{name}`")
@@ -809,39 +864,37 @@ def models_get(fake: Fake, call: Call, name: str) -> Any:
 
 
 def sources_list(fake: Fake, call: Call) -> Any:
-    return ok({"sources": list(fake.sources.values())})
+    return ok({"sources": [_shown(s) for s in fake.sources.values()]})
 
 
 def sources_create(fake: Fake, call: Call) -> Any:
     p = call.payload
     fake.sources[p["name"]] = {"name": p["name"], "kind": p["kind"], "state": "ready",
                                "config": p["config"], "secret_expires": None,
-                               "tested_at": NOW, "error": None, "created": NOW,
-                               "url": fake.link(f"data/sources/{p['name']}"),
+                               "tested_at": NOW, "error": None, "origin": origin("cli"),
+                               "created": NOW, "url": fake.link(f"data/sources/{p['name']}"),
                                "_secret": p.get("secret")}  # fmt: skip
-    return ok(
-        {k: v for k, v in fake.sources[p["name"]].items() if not k.startswith("_")}
-    )
+    return ok(_shown(fake.sources[p["name"]]))
 
 
 def sources_get(fake: Fake, call: Call, name: str) -> Any:
-    return ok({k: v for k, v in fake.sources[name].items() if not k.startswith("_")})
+    return ok(_shown(fake.sources[name]))
 
 
 def sources_action(fake: Fake, call: Call, name: str, verb: str) -> Any:
     if verb == "preview":
-        return ok({"columns": ["customer_id", "plan"], "rows": [["C-100481", "team"]]})
+        return ok(contract.example("sources.preview"))
     if verb == "delete":
         del fake.sources[name]
         return ok({"name": name, "deleted": True})
     if name in fake.source_errors:
-        raise Refusal(422, "SourceTestFailed", **fake.source_errors[name])
+        refused = dict(fake.source_errors[name])
+        raise Refusal(422, refused.pop("code"), refused.pop("message"), **refused)
     return sources_get(fake, call, name)
 
 
 def sources_tables(fake: Fake, call: Call, name: str) -> Any:
-    return ok({"tables": [{"name": "acme.analytics.customers", "rows": 48210, "bytes": 1200000,
-                           "updated": NOW}]})  # fmt: skip
+    return ok(contract.example("sources.tables"))
 
 
 def keys_list(fake: Fake, call: Call) -> Any:
@@ -852,7 +905,7 @@ def keys_create(fake: Fake, call: Call) -> Any:
     p = call.payload
     key_id = f"key-{len(fake.keys) + 1:020x}"
     fake.keys[key_id] = {"id": key_id, "project": fake.project, "name": p["name"],
-                         "permissions": p["permissions"], "created_at": EPOCH, "state": "active",
+                         "permissions": p["permissions"], "created_at": EPOCH,
                          "expires_at": None if p["expires_in"] is None else EPOCH + p["expires_in"],
                          "revoked_at": None}  # fmt: skip
     return ok(
@@ -864,14 +917,15 @@ def keys_action(fake: Fake, call: Call, key: str, verb: str) -> Any:
     if key not in fake.keys:
         raise Refusal(404, "NotFound", f"no key {key}")
     if verb == "revoke":
-        fake.keys[key].update(revoked_at=1763700100.0, state="revoked")
-        return ok(fake.keys[key])
+        fake.keys[key]["revoked_at"] = EPOCH - 3600
+        return ok({"id": key, "revoked": True})
     if verb == "rotate":
         return ok(
             {**fake.keys[key], "token": "gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb"}
         )
     if not fake.keys[key]["revoked_at"]:
-        raise Refusal(409, "Conflict", "only an expired or revoked key is deleted")
+        raise Refusal(409, "Conflict", f"key {fake.keys[key]['name']} is active", reason="key_active",
+                      param="id", hint="revoke it first")  # fmt: skip
     del fake.keys[key]
     return ok({"id": key, "deleted": True})
 
@@ -897,9 +951,9 @@ def _store_snapshot(fake: Fake, name: str, table: pa.Table, metadata: dict[str, 
         "name": name, "state": "ready", "digest": digest, "bytes": table.nbytes,
         "rows": table.num_rows,
         "columns": [{"name": f.name, "type": arrow.get(str(f.type), str(f.type))} for f in table.schema],
-        "metadata": {**metadata, "origin": {"kind": "uploaded"}},
+        "metadata": {**metadata, "origin": {"kind": "uploaded"}} if metadata.get("target") else None,
         "tags": sorted({*tags, "uploaded"}), "error": None, "expires": None,
-        "created": 1761200000.0,
+        "created": 1761200000.0, "origin": origin(),
     }  # fmt: skip
     return fake.training[name]
 
@@ -914,23 +968,27 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
     fake.training[p["name"]] = {
         "name": p["name"], "state": "open", "digest": None, "bytes": p["bytes"], "rows": None,
         "columns": None, "metadata": p["metadata"], "tags": sorted({*p.get("tags", []), "uploaded"}),
-        "error": None, "expires": 1761286400.0, "created": 1761200000.0, "url": None,
-        "method": "PUT", "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
+        "error": None, "expires": 1761286400.0, "created": 1761200000.0, "origin": origin(),
+        "url": f"{fake.url}/uploads/snapshots/{p['name']}", "method": "PUT",
+        "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
     }  # fmt: skip
     return ok(_snapshot_json(fake, p["name"]))
 
 
-def snapshots_bytes(fake: Fake, call: Call, name: str) -> Any:
+def snapshots_upload(fake: Fake, call: Call, name: str) -> Any:
+    """A chunk sent to a snapshot's upload URL, the resumable object store's and not an API route."""
     snap = fake.training[name]
     start = int(call.headers["content-range"].split()[1].split("-")[0])
     assert start == len(snap["_data"]), "chunks arrive in order"
+    assert "authorization" not in call.headers, "an upload URL carries no credential"
     snap["_data"] += call.body
-    if len(snap["_data"]) == snap["bytes"]:
-        table = pq.read_table(io.BytesIO(snap["_data"]))
-        meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
-        _store_snapshot(fake, name, table, meta, snap["_tags"])
-        fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
-    return ok({"received": len(snap.get("_data", b""))})
+    if len(snap["_data"]) < snap["bytes"]:
+        return 308, None, {"Range": f"bytes=0-{len(snap['_data']) - 1}"}
+    table = pq.read_table(io.BytesIO(snap["_data"]))
+    meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
+    _store_snapshot(fake, name, table, meta, snap["_tags"])
+    fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
+    return ok(None)
 
 
 def snapshots_get(fake: Fake, call: Call, name: str) -> Any:
@@ -966,15 +1024,17 @@ def snapshots_delete(fake: Fake, call: Call, name: str) -> Any:
 
 def synthetic_post(fake: Fake, call: Call) -> Any:
     p = dict(call.payload)
-    name, count = p.pop("name"), p.pop("count", 1)
-    p.pop("tags", None)
+    name, count = p["name"], p.get("count", 1)
     fake.batches[name] = {
-        "name": name, "tag": f"synthetic-{name}", "count": count, "seed": p.pop("seed", 7),
-        "options": p, "state": "pending", "counts": {"pending": count, "ready": 0, "rejected": 0},
+        "name": name, "tag": f"synthetic-{name}", "count": count, "seed": p.get("seed", 7),
+        "snapshots": [f"{name}-{i}" for i in range(count)],
+        "options": {k: v for k, v in p.items() if k != "tags"}, "state": "pending",
+        "counts": {"pending": count, "ready": 0, "rejected": 0},
         "tables": [{"name": f"{name}-{i}", "state": "pending", "error": None} for i in range(count)],
-        "created": 1761200000.0, "_polls": 1,
+        "_polls": 1,
     }  # fmt: skip
-    return ok({k: v for k, v in fake.batches[name].items() if not k.startswith("_")})
+    created = ("name", "tag", "count", "snapshots", "state")
+    return ok({k: fake.batches[name][k] for k in created})
 
 
 def synthetic_get(fake: Fake, call: Call, name: str) -> Any:
@@ -999,30 +1059,40 @@ def _run_json(run: dict[str, Any]) -> dict[str, Any]:
 def runs_post(fake: Fake, call: Call) -> Any:
     p = call.payload
     versions = fake.runs.setdefault(p["name"], [])
-    if versions and versions[0]["base"] != p["base"]:
+    if versions and versions[0]["base"] != entry(p["base"])["name"]:
         raise Refusal(409, "Conflict", f"{p['name']} trains from {versions[0]['base']}")
     version = len(versions) + 1
     data = []
-    for item in p.get("data") or [
-        d for phase in p.get("phases", []) for d in phase["data"]
-    ]:
+    items = [(None, d) for d in p.get("data") or ()]
+    items += [
+        (phase["name"], d) for phase in p.get("phases", []) for d in phase["data"]
+    ]
+    for phase, item in items:
+        pinned = {"phase": phase} if phase else {}
         if isinstance(item, dict) and "context" in item:
             ctx = fake.contexts[item["context"]]
             data.append({"context": item["context"], "version": item.get("version") or ctx["version"],
-                         "name": f"context-{item['context']}", "digest": ctx["digest"]})  # fmt: skip
+                         "name": f"context-{item['context']}", "digest": ctx["digest"], **pinned})  # fmt: skip
         elif isinstance(item, dict):
-            data += [{"name": n, "digest": v["digest"]} for n, v in fake.training.items()
+            data += [{"name": n, "digest": v["digest"], **pinned} for n, v in fake.training.items()
                      if item["tag"] in v["tags"]]  # fmt: skip
         else:
-            data.append({"name": item, "digest": fake.training[item]["digest"]})
+            data.append(
+                {"name": item, "digest": fake.training[item]["digest"], **pinned}
+            )
     run = {
         "model": f"{fake.project}/{p['name']}@ft{version}", "name": p["name"], "version": version,
-        "state": "queued", "reason": None, "attempt": 0, "base": p["base"], "data": data,
-        "data_digest": "sha256:dd", "waiting": None, "phases": p.get("phases", []),
-        "architecture": p.get("architecture", []), "warnings": [], "progress": None,
-        "method": p["method"], "evaluation": p.get("evaluation", {}), "budget": p.get("budget"),
-        "seed": p.get("seed", 0), "tags": p.get("tags", []), "plan": p.get("plan", {}),
+        "state": "queued", "reason": None, "attempt": 0, "base": entry(p["base"])["name"],
+        "data": data, "data_digest": digest(str(data)),
+        "phases": [{**phase, "data": [d for d in data if d.get("phase") == phase["name"]]}
+                   for phase in p.get("phases", [])],
+        "architecture": [{"stages": [], "init": None, **a} for a in p.get("architecture", [])],
+        "warnings": [], "progress": None, "method": p["method"],
+        "evaluation": {**contract.example("runs.get")["evaluation"], **p.get("evaluation", {})},
+        "budget": p.get("budget"), "seed": p.get("seed", 0), "tags": p.get("tags", []),
+        "plan": p.get("plan", {"steps": sum(ph["plan"]["steps"] for ph in p.get("phases", []))}),
         "created": 1761200000.0, "updated": 1761200000.0, "usage": None, "published": None,
+        "origin": origin(), "url": fake.link(f"fine-tunes/{p['name']}"),
         "_polls": fake.polls_until_done, "_events": [
             {"at": 1761200000.0, "kind": "state", "body": {"state": "queued"}}],
         "_payload": p,
@@ -1046,7 +1116,7 @@ def _advance(fake: Fake, run: dict[str, Any]) -> None:
     steps = run["plan"].get("steps", 100)
     if run["_polls"] > 0:
         run.update(state="training", progress={"step": steps // 2, "loss": 0.45},
-                   usage={"gpu_seconds": 60.0, "credits": 120.0})  # fmt: skip
+                   usage=_usage(60.0))  # fmt: skip
         run["_events"].append({"at": 1761200060.0, "kind": "metrics",
                                "body": {"steps": steps // 2, "loss": 0.45, "validation_loss": 0.43}})  # fmt: skip
         return
@@ -1054,15 +1124,21 @@ def _advance(fake: Fake, run: dict[str, Any]) -> None:
         run.update(state="failed", reason="the trainer ran out of memory")
         return
     run.update(state="finished", progress={"step": steps, "loss": 0.41},
-               usage={"gpu_seconds": 130.0, "credits": 260.0},
-               published={"model": run["model"], "digest": "sha256:ee", "kept_step": steps,
+               usage=_usage(130.0),
+               published={"model": run["model"], "digest": digest(run["model"]), "kept_step": steps,
                           "validation_loss": 0.398, "base_validation_loss": 0.421,
                           "report": {"data": {"rows": 900, "base": 0.421, "kept": 0.398,
-                                              "gain": 0.023, "ci95": [0.01, 0.03], "metrics": {}}}})  # fmt: skip
+                                              "gain": 0.023, "ci95": [0.01, 0.03],
+                                              "metrics": {"base": {"auroc": 0.81}, "kept": {"auroc": 0.84}}}}})  # fmt: skip
     run["_events"] += [
         {"at": 1761200120.0, "kind": "metrics", "body": {"steps": steps, "loss": 0.41, "validation_loss": 0.398}},
         {"at": 1761200130.0, "kind": "published", "body": {"model": run["model"]}},
     ]  # fmt: skip
+
+
+def _usage(seconds: float) -> dict[str, float]:
+    return {"gpu_seconds": seconds, "charged_gpu_seconds": seconds, "voided_gpu_seconds": 0.0,
+            "credits": 2.0 * seconds}  # fmt: skip
 
 
 def runs_get(fake: Fake, call: Call, segment: str) -> Any:
@@ -1086,7 +1162,7 @@ def runs_cancel(fake: Fake, call: Call, segment: str) -> Any:
     run = _run_for(fake, segment)
     run["state"] = "cancelled"
     if call.payload.get("save"):
-        run["published"] = {"model": run["model"], "digest": "sha256:ff", "kept_step": 10,
+        run["published"] = {"model": run["model"], "digest": digest(run["model"] + "-saved"), "kept_step": 10,
                             "validation_loss": 0.44, "base_validation_loss": 0.421, "report": None}  # fmt: skip
     return ok(_run_json(run))
 
@@ -1113,7 +1189,7 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("POST", f"{P}/snapshots/synthetic", synthetic_post),
     ("GET", f"{P}/snapshots/synthetic/{N}", synthetic_get),
     ("GET", f"{P}/snapshots/{N}", snapshots_get),
-    ("POST", f"{P}/snapshots/{N}/bytes", snapshots_bytes),
+    ("PUT", f"/uploads/snapshots/{N}", snapshots_upload),
     ("POST", f"{P}/snapshots/{N}/update", snapshots_update),
     ("POST", f"{P}/snapshots/{N}/delete", snapshots_delete),
     ("POST", f"{P}/runs", runs_post),
@@ -1160,6 +1236,37 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
 ]
 
 
+def _contract_problems(
+    method: str, path: str, call: Call, status: int, data: Any
+) -> list[str]:
+    """How a request the SDK sent, or the fake's reply to it, departs from the contract."""
+    if path.startswith("/uploads/"):
+        return []  # an upload URL is the object store's, outside the API
+    op = contract.operation(method, path)
+    if op is None:
+        return [f"{method} {path} is not a route of api/openapi.yaml"]
+    sent = call.envelope if call.envelope is not None else call.payload
+    if call.table is not None and sent is not None:
+        # Queries sent as Arrow: the envelope rides in the stream's metadata without them.
+        sent = {
+            **sent,
+            "payload": {
+                **sent["payload"],
+                "queries": call.table.slice(0, 1).to_pylist(),
+            },
+        }
+    problems = []
+    if sent is not None:
+        problems += [
+            f"{op.id} request: {p}" for p in contract.request_problems(op, sent)
+        ]
+    problems += [
+        f"{op.id} reply {status}: {p}"
+        for p in contract.reply_problems(op, status, data)
+    ]
+    return problems
+
+
 def serve(fake: Fake) -> Callable[[], None]:
     """Starts the fake on loopback; returns a function that stops it."""
     pending: dict[str, tuple[int, Any, dict[str, str]]] = {}
@@ -1193,7 +1300,7 @@ def serve(fake: Fake) -> Callable[[], None]:
             )
             rid = headers.get("x-gf-request-id", "r-none")
             status, result, extra = 500, None, {}
-            envelope = not parts.path.startswith("/v1/device-logins")
+            envelope = not parts.path.startswith(("/v1/device-logins", "/uploads/"))
             try:
                 if (
                     parts.path.startswith(P)
@@ -1234,16 +1341,19 @@ def serve(fake: Fake) -> Callable[[], None]:
                 if not envelope:
                     data = result
             except Refusal as refusal:
-                status, data = (
-                    refusal.status,
-                    {"error": {**refusal.body, "request_id": rid}},
-                )
+                status, data = refusal.status, {"error": refusal.body}
+                if envelope:
+                    data = {"api_version": "gf/v1", "project": fake.project, "request_id": rid,
+                            "resource": {"kind": "project", "name": fake.project}, **data}  # fmt: skip
             except Exception as error:  # noqa: BLE001
                 fake.errors.append(f"{type(error).__name__}: {error}")
                 status, data = (
                     500,
                     {"error": {"code": "Internal", "message": str(error)}},
                 )
+            fake.errors += _contract_problems(
+                self.command, parts.path, call, status, data
+            )
             raw = json.dumps(data).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")

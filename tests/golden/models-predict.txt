@@ -2,7 +2,7 @@
 $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target income
    Uploading the context  26,048 rows, 4.2 MiB
   Predicting 3 rows with tabicl-v2  26,048 context rows
-   Predicted 3 rows in 0.80s  1 call, 0.006 credits ($0.000006)
+   Predicted 3 rows in 0.80s  0.006 credits ($0.000006)
   id  label  p_<=50K  p_>50K
    0  <=50K      0.5     0.5
    1  <=50K      0.5     0.5
@@ -11,7 +11,7 @@ $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target inc
 $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target income
 [1;32m   Uploading[0m the context  26,048 rows, 4.2 MiB
 [1;32m  Predicting[0m 3 rows with tabicl-v2  26,048 context rows
-[1;32m   Predicted[0m 3 rows in 0.80s  1 call, 0.006 credits ($0.000006)
+[1;32m   Predicted[0m 3 rows in 0.80s  0.006 credits ($0.000006)
   id  label  p_<=50K  p_>50K
    0  <=50K      0.5     0.5
    1  <=50K      0.5     0.5
@@ -20,7 +20,7 @@ $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target inc
 $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target income
    Uploading the context  26,048 rows, 4.2 MiB
   Predicting 3 rows with tabicl-v2  26,048 context rows
-   Predicted 3 rows in 0.80s  1 call, 0.006 credits ($0.000006)
+   Predicted 3 rows in 0.80s  0.006 credits ($0.000006)
   id  label  p_<=50K  p_>50K
    0  <=50K      0.5     0.5
    1  <=50K      0.5     0.5
@@ -29,8 +29,8 @@ $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target inc
 $ gf models predict tabicl-v2 --context train.csv --queries new.csv --target income
 [1;32m   Uploading[0m the context  26,048 rows, 4.2[0m…
 [1;32m  Predicting[0m 3 rows with tabicl-v2  26,048[0m…
-[1;32m   Predicted[0m 3 rows in 0.80s  1 call,
-             0.006 credits ($0.000006)
+[1;32m   Predicted[0m 3 rows in 0.80s  0.006 credits
+             ($0.000006)
   id  label  p_<=50K  p_>50K
    0  <=50K      0.5     0.5
    1  <=50K      0.5     0.5
