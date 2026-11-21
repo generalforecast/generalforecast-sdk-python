@@ -38,6 +38,7 @@ __all__ = [
     "Deploy",
     "Entry",
     "Environment",
+    "EnvironmentFailure",
     "Estimate",
     "Experiment",
     "Holdout",
@@ -253,7 +254,8 @@ class ContextSource:
 class Context:
     """A context: data a model learns from, uploaded, imported or live.
 
-    `unchanged` is true on an upload whose rows matched the latest version,
+    `file` names the file an uploaded version came from, when it came from
+    one. `unchanged` is true on an upload whose rows matched the latest version,
     which then stays the latest.
     """
 
@@ -279,6 +281,7 @@ class Context:
     created: datetime | None = None
     updated: datetime | None = None
     url: str | None = None
+    file: str | None = None
     unchanged: bool = False
 
     @property
@@ -812,6 +815,20 @@ def spec_json(values: Mapping[str, Any], *, partial: bool) -> dict[str, Any]:
 
 
 @dataclass(frozen=True)
+class EnvironmentFailure:
+    """Why an environment's revision failed to start.
+
+    `request_id` names the deploy or promote that started it, and
+    `serving_revision` the revision the environment still serves (None
+    when it served none).
+    """
+
+    message: str = ""
+    request_id: str | None = None
+    serving_revision: int | None = None
+
+
+@dataclass(frozen=True)
 class Environment:
     """Where a predictor serves a revision: `production`, `staging` and others."""
 
@@ -823,7 +840,7 @@ class Environment:
     p50_seconds: float | None = None
     updated: datetime | None = None
     url: str | None = None
-    error: str | None = None
+    error: EnvironmentFailure | None = None
 
 
 @dataclass(frozen=True)
@@ -839,6 +856,7 @@ class Resolved:
     context_digest: str | None = None
     inputs: tuple[str, ...] = ()
     types: Mapping[str, ColumnType] = field(default_factory=dict)
+    context_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -952,7 +970,9 @@ class Predictions:
     `table` has `id` (when the predictor declares one), then `label` and a
     `p_<class>` column per class, or `value` and a `q_<level>` per quantile.
     `gpu_seconds` is the large-context meter, set only past its line;
-    `timing` keeps queueing and cold start apart from compute.
+    `timing` keeps queueing and cold start apart from compute. `calls` is
+    how many calls the engine made, each as many queries as the model
+    takes at once.
     """
 
     predictor: str | None
@@ -969,6 +989,7 @@ class Predictions:
     timing: Timing | None = None
     context: ContextUse | None = None
     notes: tuple[str, ...] = ()
+    calls: int = 0
 
     def to_pandas(self) -> pandas.DataFrame:
         """The predictions as a DataFrame."""
