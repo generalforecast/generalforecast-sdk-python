@@ -662,9 +662,9 @@ def setup(values: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]
                 out["version"] = None
             continue
         if key == "holdout":
-            out["holdout"] = holdout_json(
-                value, None if partial else values.get("time")
-            )
+            holdout = holdout_json(value, None if partial else values.get("time"))
+            if holdout is not None or partial:
+                out["holdout"] = holdout
             continue
         if key in ("inputs", "exclude"):
             value = _names(value, key)
