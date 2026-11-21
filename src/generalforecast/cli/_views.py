@@ -145,10 +145,9 @@ def fields(call: Call, rows: Sequence[tuple[str, str | Sequence[str]]]) -> None:
     call.out.details([(k, v, "") for k, v in rows if v], stream=call.out.out)
 
 
-def pinned(context: str, version: int | None, rows: int | None = None) -> str:
-    """`adult version 1, 32,561 rows`."""
-    text = context if version is None else f"{context} version {version}"
-    return text if rows is None else f"{text}, {plural(rows, 'row')}"
+def pinned(context: str, version: int | None) -> str:
+    """`adult version 1`."""
+    return context if version is None else f"{context} version {version}"
 
 
 def shape(context: Context | Snapshot) -> str:
@@ -259,12 +258,10 @@ def versioned(verb: str) -> Any:
 
 
 def context_source(context: Context) -> str:
-    """`upload adult.csv`, `bigquery-acme`, `snowflake-prod, SQL`, `API`."""
+    """`upload`, `bigquery-acme`, `snowflake-prod, SQL`, `API`."""
     if context.source is not None:
         return context.source.source + (", SQL" if context.source.sql else "")
-    if context.kind == "live":
-        return "API"
-    return f"upload {context.file}" if context.file else "upload"
+    return "API" if context.kind == "live" else "upload"
 
 
 def contexts_list(call: Call, contexts: list[Context]) -> None:
@@ -450,34 +447,13 @@ def experiment_deleted(call: Call, result: None) -> None:
     call.out.status("Deleted", f"experiment {call.name}  {plural(runs, 'run')}")
 
 
-def _created_changes(deploy: Deploy) -> list[Change]:
-    """What a new predictor's spec sets, as changes from nothing."""
-    from generalforecast.types import PREDICTOR_FIELDS, Change
-
-    spec = deploy.revision.spec if deploy.revision else None
-    if spec is None:
-        return list(deploy.changes)
-    values = spec.to_json()
-    first = ["model", "context"]
-    order = [*first, *(key for key in PREDICTOR_FIELDS if key not in first)]
-    return [Change(key, None, _value(values[key])) for key in order if key in values]
-
-
-def _value(value: Any) -> str:
-    if isinstance(value, (list, tuple)):
-        return ", ".join(str(v) for v in value)
-    if isinstance(value, dict):
-        return ", ".join(f"{k}={v}" for k, v in value.items())
-    return str(value)
-
-
 def _ref(value: str) -> tuple[str, int | None]:
     name, _, version = value.partition("@")
     return name, int(version) if version.isdigit() else None
 
 
 def change_value(change: Change, deploy: Deploy) -> tuple[str, str]:
-    """A change's sign and value: `~`, `kumo-small → kumo-medium`; `+ context` reads `adult version 1, 32,561 rows`."""
+    """A change's sign and value: `~`, `kumo-small → kumo-medium`; `+ context` reads `adult version 1`."""
     resolved = deploy.revision.resolved if deploy.revision else None
     before, after = change.before, change.after
     if change.field == "context":
@@ -487,9 +463,7 @@ def change_value(change: Change, deploy: Deploy) -> tuple[str, str]:
                 return "~", f"{new} version {v1} → {v2}"
             return "~", f"{pinned(old, v1)} → {pinned(new, v2)}"
         if after is not None and resolved is not None:
-            return "+", pinned(
-                resolved.context, resolved.context_version, resolved.context_rows
-            )
+            return "+", pinned(resolved.context, resolved.context_version)
     if change.field == "model" and before is None and after is not None and resolved:
         return "+", f"{after}, {full_model(resolved)}"
     if before is None:
@@ -517,19 +491,16 @@ def plan_lines(
     items = []
     for deploy in deploys:
         number = deploy.revision.number if deploy.revision else None
-        if deploy.action == "created":
-            items.append((indent, "+", deploy.predictor, f"revision {number}"))
-            changes = _created_changes(deploy)
-        elif deploy.action == "updated":
-            was = deploy.environment.revision if deploy.environment else None
-            head = f"revision {was} → {number}" if was else f"revision {number}"
-            items.append((indent, "~", deploy.predictor, head))
-            changes = list(deploy.changes)
-        else:
-            head = f"revision {number}, unchanged"
-            items.append((indent, "=", deploy.predictor, head))
-            changes = []
-        items += change_items(changes, deploy, indent + 4)
+        was = deploy.environment.revision if deploy.environment else None
+        sign, head = {
+            "created": ("+", f"revision {number}"),
+            "updated": (
+                "~",
+                f"revision {was} → {number}" if was else f"revision {number}",
+            ),
+        }.get(deploy.action, ("=", f"revision {number}, unchanged"))
+        items.append((indent, sign, deploy.predictor, head))
+        items += change_items(deploy.changes, deploy, indent + 4)
     return items
 
 
@@ -579,10 +550,9 @@ def predictors_get(call: Call, info: PredictorInfo) -> None:
     if spec is not None:
         rows.append(("Task", f"{task or 'task to infer'}, target {spec.target}"))
     if resolved is not None:
-        context = (resolved.context, resolved.context_version, resolved.context_rows)
         rows += [
             ("Model", f"{short_model(resolved)}, {full_model(resolved)}"),
-            ("Context", pinned(*context)),
+            ("Context", pinned(resolved.context, resolved.context_version)),
         ]
     fields(call, rows)
     if info.environments:
@@ -664,11 +634,11 @@ def predictors_revisions(call: Call, revisions: list[Revision]) -> None:
 
 
 def predicted(call: Call, result: Predictions) -> None:
-    """`Predicted 1,000 rows in 2.1s  10 calls, 2.0 credits ($0.002)`, then the rows or the file."""
+    """`Predicted 1,000 rows in 2.1s  2.0 credits ($0.002)`, then the rows or the file."""
     call.out.status(
         "Predicted",
         f"{plural(result.rows, 'row')} in {duration(call.seconds())}  "
-        + usage(result.credits, result.usd, result.calls),
+        + usage(result.credits, result.usd),
     )
     for note in result.notes:
         call.out.warning(note)
@@ -785,20 +755,17 @@ def permissions(key: Key) -> str:
 
 
 def keys_list(call: Call, keys: list[Key]) -> None:
-    """Name, id, permissions, expiry and last use."""
+    """Name, id, permissions and expiry; drops Permissions."""
     rows = [
         [
             k.name,
             k.id,
             permissions(k),
             k.state if k.state != "active" else day(k.expires) or "never",
-            when(k.last_used) or "never",
         ]
         for k in keys
     ]
-    call.out.table(
-        ["Name", "Id", "Permissions", "Expires", "Last used"], rows, drop=(4, 2)
-    )
+    call.out.table(["Name", "Id", "Permissions", "Expires"], rows, drop=(2,))
 
 
 def key_created(verb: str, detail: str) -> Any:
@@ -953,7 +920,8 @@ def run_started(call: Call, run: FineTuneRun) -> None:
     """`Started run credit-default@ft2  base tabicl-v2, 2 tables pinned`."""
     call.out.status(
         "Started",
-        f"run {_render.run_name(run)}  base {run.base}, {plural(len(run.data), 'table')} pinned",
+        f"run {_render.run_name(run)}  base {_render.model_name(run.base)}, "
+        f"{plural(len(run.data), 'table')} pinned",
     )
 
 
@@ -988,7 +956,7 @@ def runs_list(call: Call, runs: list[FineTuneRun]) -> None:
         [
             _render.run_name(r),
             r.state,
-            r.base,
+            _render.model_name(r.base),
             steps(r),
             "" if r.loss is None else f"{r.loss:.3f}",
             "" if r.validation_loss is None else f"{r.validation_loss:.3f}",

@@ -924,15 +924,14 @@ def _env_wait(name: str, env: str, revision: int | None, timeout: float | None) 
     attempt = 0
     while True:
         reply = yield _http.predictors_environment(name, env)
-        result = reply.result or {}
-        found = load(Environment, {"name": env, **result})
+        found = load(Environment, {"name": env, **(reply.result or {})})
         current = revision is None or found.revision == revision
         if current and found.state == "ready":
             return found
         if current and found.state in ("failed", "stopped"):
             raise failed(
                 f"{name} revision {found.revision} failed to start in {env}",
-                result.get("error"),
+                found.error,
                 code="DeployFailed",
                 hint=f"see gf.predictors.logs({name!r}{_env_arg(env)}, level='error')",
             )
@@ -1126,7 +1125,6 @@ def predictions_of(reply: _http.Reply) -> Predictions:
         timing=load(Timing, timing) if isinstance(timing, Mapping) else None,
         context=load(ContextUse, context) if isinstance(context, Mapping) else None,
         notes=tuple(str(n) for n in result.get("notes") or ()),
-        calls=int(used("calls", 1)),
     )
 
 
@@ -1154,7 +1152,6 @@ def combined(parts: Sequence[Predictions]) -> Predictions:
         if timings
         else None,
         notes=tuple(dict.fromkeys(n for p in parts for n in p.notes)),
-        calls=sum(p.calls for p in parts),
     )
 
 

@@ -2,8 +2,8 @@
 $ gf predictors get adult-income
   Name     adult-income
   Task     classification, target income
-  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:d0f1d0
-  Context  adult version 1, 32,561 rows
+  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:28653cbaedbd
+  Context  adult version 1
 
   Environment  Revision  State  Calls today    p50
   production          2  ready        1,204  0.90s
@@ -13,8 +13,8 @@ $ gf predictors get adult-income
 $ gf predictors get adult-income
   Name     adult-income
   Task     classification, target income
-  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:d0f1d0
-  Context  adult version 1, 32,561 rows
+  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:28653cbaedbd
+  Context  adult version 1
 
   Environment  Revision  State  Calls today    p50
   production          2  ready        1,204  0.90s
@@ -24,8 +24,8 @@ $ gf predictors get adult-income
 $ gf predictors get adult-income
   Name     adult-income
   Task     classification, target income
-  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:d0f1d0
-  Context  adult version 1, 32,561 rows
+  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:28653cbaedbd
+  Context  adult version 1
 
   Environment  Revision  State  Calls today    p50
   production          2  ready        1,204  0.90s
@@ -37,8 +37,8 @@ $ gf predictors get adult-income
   Task     classification, target income
   Model    kumo-medium, general-forecast/
            kumo-tabular-medium-
-           classifier@sha256:d0f1d0
-  Context  adult version 1, 32,561 rows
+           classifier@sha256:28653cbaedbd
+  Context  adult version 1
 
   Environment  Revision  State  Calls today    p50
   production          2  ready        1,204  0.90s

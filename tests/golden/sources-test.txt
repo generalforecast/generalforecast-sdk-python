@@ -1,28 +1,22 @@
 --- 100 columns, not a terminal
 $ gf sources test snowflake-prod
 error: snowflake-prod refused the connection
-note: Snowflake said: user GF_ACME is not authorized for warehouse ANALYTICS_XS
-help: run the grant SQL on the source page again, then `gf sources test snowflake-prod`
+help: run the grant SQL on the source page again
 [exit 1]
 --- 100 columns, a terminal
 $ gf sources test snowflake-prod
 [1merror:[0m snowflake-prod refused the connection
-[1mnote:[0m Snowflake said: user GF_ACME is not authorized for warehouse ANALYTICS_XS
-[1mhelp:[0m run the grant SQL on the source page again, then `gf sources test snowflake-prod`
+[1mhelp:[0m run the grant SQL on the source page again
 [exit 1]
 --- 44 columns, not a terminal
 $ gf sources test snowflake-prod
 error: snowflake-prod refused the connection
-note: Snowflake said: user GF_ACME is not authorized for warehouse ANALYTICS_XS
-help: run the grant SQL on the source page again, then `gf sources test snowflake-prod`
+help: run the grant SQL on the source page again
 [exit 1]
 --- 44 columns, a terminal
 $ gf sources test snowflake-prod
 [1merror:[0m snowflake-prod refused the
        connection
-[1mnote:[0m Snowflake said: user GF_ACME is not
-      authorized for warehouse ANALYTICS_XS
 [1mhelp:[0m run the grant SQL on the source page
-      again,
-      then `gf sources test snowflake-prod`
+      again
 [exit 1]

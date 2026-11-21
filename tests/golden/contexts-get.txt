@@ -2,9 +2,9 @@
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload adult.csv
+  Source   upload
   Rows     32,561
-  Digest   sha256:5fb6a4c6f24b
+  Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income, predictor adult-income
 
   Column          Type      Missing
@@ -22,9 +22,9 @@ $ gf contexts get adult
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload adult.csv
+  Source   upload
   Rows     32,561
-  Digest   sha256:5fb6a4c6f24b
+  Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income, predictor adult-income
 
   Column          Type      Missing
@@ -42,9 +42,9 @@ $ gf contexts get adult
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload adult.csv
+  Source   upload
   Rows     32,561
-  Digest   sha256:5fb6a4c6f24b
+  Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income, predictor adult-income
 
   Column          Type      Missing
@@ -62,9 +62,9 @@ $ gf contexts get adult
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload adult.csv
+  Source   upload
   Rows     32,561
-  Digest   sha256:5fb6a4c6f24b
+  Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income,
            predictor adult-income
 

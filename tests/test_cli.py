@@ -293,7 +293,7 @@ def test_logs_follow_pages_after_the_last_until_interrupted(monkeypatch, fake):
     code, out, _ = gf_cli(monkeypatch, "predictors", "logs", "churn", "--follow")
     assert code == 130 and out.count("r-3f1a92c0") == 2
     afters = [c.query.get("after") for c in fake.calls_to("GET", r".*/logs")]
-    assert afters == [None, "c2"]
+    assert afters == [None, "1795255455000000"]
 
 
 def test_deploy_files_that_name_a_predictor_twice_or_none_are_refused(

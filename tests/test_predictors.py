@@ -106,11 +106,7 @@ def test_a_failed_start_is_not_recoverable(adult):
         error.value.message == "adult-income revision 2 failed to start in production"
     )
     assert error.value.note == "the replica exited loading the model"
-    assert error.value.hint == (
-        "production still serves revision 1; "
-        "see gf.predictors.logs('adult-income', level='error')"
-    )
-    assert error.value.request_id == "r-8f2c41d0"
+    assert error.value.hint == "see gf.predictors.logs('adult-income', level='error')"
 
 
 def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):

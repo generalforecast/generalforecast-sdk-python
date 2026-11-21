@@ -274,8 +274,7 @@ class ContextSource:
 class Context:
     """A context: data a model learns from, uploaded, imported or live.
 
-    `file` names the file an uploaded version came from, when it came from
-    one. `unchanged` is true on an upload whose rows matched the latest
+    `unchanged` is true on an upload whose rows matched the latest
     version, which then stays the latest.
     """
 
@@ -301,7 +300,6 @@ class Context:
     created: datetime | None = None
     updated: datetime | None = None
     url: str | None = None
-    file: str | None = None
     unchanged: bool = False
 
     @property
@@ -862,7 +860,6 @@ class Resolved:
     context_digest: str | None = None
     inputs: tuple[str, ...] = ()
     types: Mapping[str, ColumnType] = field(default_factory=dict)
-    context_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -976,9 +973,7 @@ class Predictions:
     `table` has `id` (when the predictor declares one), then `label` and a
     `p_<class>` column per class, or `value` and a `q_<level>` per quantile.
     `gpu_seconds` is the large-context meter, set only past its line;
-    `timing` keeps queueing and cold start apart from compute. `calls` is
-    how many calls the engine made, each as many queries as the model
-    takes at once.
+    `timing` keeps queueing and cold start apart from compute.
     """
 
     predictor: str | None
@@ -995,7 +990,6 @@ class Predictions:
     timing: Timing | None = None
     context: ContextUse | None = None
     notes: tuple[str, ...] = ()
-    calls: int = 0
 
     def to_pandas(self) -> pandas.DataFrame:
         """The predictions as a DataFrame."""

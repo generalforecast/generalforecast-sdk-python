@@ -1,12 +1,12 @@
 --- 100 columns, not a terminal
 $ gf fine-tunes runs list
-  Run                 State     Base              Step   Loss  Val loss   Cost  Created
-  credit-default@ft1  finished  tabicl-v2  1,000/1,000  0.410     0.398  $0.26  Oct 23 2025
-  credit-default@ft2  queued    tabicl-v2      0/1,000                          Oct 23 2025
+  Run                 State     Base                         Step   Loss  Val loss   Cost
+  credit-default@ft1  finished  tabicl-v2-classifier  1,000/1,000  0.410     0.398  $0.26
+  credit-default@ft2  queued    tabicl-v2-classifier      0/1,000
 $ gf fine-tunes runs get credit-default@ft1
   Run         credit-default@ft1
   State       finished
-  Base        tabicl-v2
+  Base        general-forecast/tabicl-v2-classifier
   Data        credit-2026-01 sha256:35ab91712b77
   Method      type lora, rank 16
   Step        1,000/1,000
@@ -15,15 +15,16 @@ $ gf fine-tunes runs get credit-default@ft1
   Published   acme/credit-default@ft1, step 1,000
   Cost        260.0 credits ($0.26)
   Created     Oct 23 2025
+        View https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default
 --- 100 columns, a terminal
 $ gf fine-tunes runs list
-  Run                 State     Base              Step   Loss  Val loss   Cost  Created
-  credit-default@ft1  finished  tabicl-v2  1,000/1,000  0.410     0.398  $0.26  Oct 23 2025
-  credit-default@ft2  queued    tabicl-v2      0/1,000                          Oct 23 2025
+  Run                 State     Base                         Step   Loss  Val loss   Cost
+  credit-default@ft1  finished  tabicl-v2-classifier  1,000/1,000  0.410     0.398  $0.26
+  credit-default@ft2  queued    tabicl-v2-classifier      0/1,000
 $ gf fine-tunes runs get credit-default@ft1
   Run         credit-default@ft1
   State       finished
-  Base        tabicl-v2
+  Base        general-forecast/tabicl-v2-classifier
   Data        credit-2026-01 sha256:35ab91712b77
   Method      type lora, rank 16
   Step        1,000/1,000
@@ -32,6 +33,7 @@ $ gf fine-tunes runs get credit-default@ft1
   Published   acme/credit-default@ft1, step 1,000
   Cost        260.0 credits ($0.26)
   Created     Oct 23 2025
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default\https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default]8;;\
 --- 44 columns, not a terminal
 $ gf fine-tunes runs list
   Run                 State            Step  Val loss
@@ -40,7 +42,7 @@ $ gf fine-tunes runs list
 $ gf fine-tunes runs get credit-default@ft1
   Run         credit-default@ft1
   State       finished
-  Base        tabicl-v2
+  Base        general-forecast/tabicl-v2-classifier
   Data        credit-2026-01 sha256:35ab91712b77
   Method      type lora, rank 16
   Step        1,000/1,000
@@ -49,6 +51,7 @@ $ gf fine-tunes runs get credit-default@ft1
   Published   acme/credit-default@ft1, step 1,000
   Cost        260.0 credits ($0.26)
   Created     Oct 23 2025
+        View https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default
 --- 44 columns, a terminal
 $ gf fine-tunes runs list
   Run                 State            Step  Val loss
@@ -57,7 +60,8 @@ $ gf fine-tunes runs list
 $ gf fine-tunes runs get credit-default@ft1
   Run         credit-default@ft1
   State       finished
-  Base        tabicl-v2
+  Base        general-forecast/
+              tabicl-v2-classifier
   Data        credit-2026-01
               sha256:35ab91712b77
   Method      type lora, rank 16
@@ -68,3 +72,4 @@ $ gf fine-tunes runs get credit-default@ft1
               step 1,000
   Cost        260.0 credits ($0.26)
   Created     Oct 23 2025
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default\https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default]8;;\
