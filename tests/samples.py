@@ -251,6 +251,7 @@ run = gf.FineTuneSpec(
         gf.Phase("warmup", data=[gf.Tag("synthetic-credit-warmup")], steps=200),
         gf.Phase("credit", data=["credit-2026-01", "adult@1"], steps=800, episode_rows=4096),
     ],
+    target="income",
     method=gf.LoRA(rank=16, input_adapter=True),
     architecture=[gf.ArchitectureChange("row_encoder", to={"layers": 4})],
     budget=gf.Budget(credits=500),

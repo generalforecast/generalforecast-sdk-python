@@ -155,14 +155,16 @@ def test_flags_become_the_sdk_keywords(monkeypatch, fake):
     }
     samples._snapshot(fake)
     code, _, err = gf_cli(monkeypatch, "fine-tunes", "runs", "create", "ft", "--base", "tabicl-v2",
-                          "--data", "credit-2026-01,tag:nightly", "--steps", "300", "--learning-rate", "0.0001",
+                          "--data", "credit-2026-01,tag:nightly,adult", "--target", "income",
+                          "--steps", "300", "--learning-rate", "0.0001",
                           "--holdout", "10%", "--method", "lora:8+adapter", "--budget", "2h")  # fmt: skip
     assert code == 0, err
     run = fake.calls_to("POST", r".*/runs")[0].payload
     assert run["plan"] == {"steps": 300, "learning_rate": 0.0001}
     assert run["evaluation"]["holdout"] == 0.1 and run["budget"] == {"hours": 2.0}
     assert run["method"] == {"type": "lora", "rank": 8, "input_adapter": True}
-    assert run["data"] == ["credit-2026-01", {"tag": "nightly"}]
+    assert run["data"] == ["credit-2026-01", {"tag": "nightly"}, {"context": "adult"}]
+    assert run["target"] == "income"
     assert gf_cli(monkeypatch, "fine-tunes", "snapshots", "synthesize", "warm", "--count", "4",
                   "--rows", "1024..8192", "--missing", "5%", "--set", "graph_nodes=16",
                   "--set", "categorical.share=0.3", "--reject", "trivial")[0] == 0  # fmt: skip
