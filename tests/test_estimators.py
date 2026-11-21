@@ -178,3 +178,13 @@ def test_every_predict_waits_for_a_prediction_accepted_for_later(fake, predict):
     fake.accept_predictions = 1
     assert len(predict()) > 0
     assert fake.calls_to("GET", r".*/predictions/pred-.*")
+
+
+def test_queries_go_in_parts_by_bytes_not_by_the_models_queries_per_call(fake):
+    # The catalog's `limits.queries` (100 here) no longer caps a call (engine
+    # #169): 10,001 rows of a few columns are one request, well under a part.
+    assert gf.models.get("tabicl-v2", task="classification").limits.queries == 100
+    clf = gf.Classifier("tabicl-v2", verbose=False).fit(adult(), income())
+    assert len(clf.predict(adult(10_001))) == 10_001
+    sent = fake.calls_to("POST", r".*/predict")
+    assert len(sent) == 1 and sent[0].table.num_rows == 10_001
