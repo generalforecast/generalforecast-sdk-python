@@ -39,7 +39,7 @@ Repository = "https://github.com/generalforecast/generalforecast-sdk-python"
 Issues = "https://github.com/generalforecast/generalforecast-sdk-python/issues"
 
 [dependency-groups]
-dev = ["pytest>=8.3", "pyyaml>=6.0.2", "ruff==0.16.10"]
+dev = ["jsonschema>=4.23", "pytest>=8.3", "pyyaml>=6.0.2", "ruff==0.16.10"]
 
 [build-system]
 requires = ["hatchling>=1.27"]

@@ -667,7 +667,9 @@ def keys_create(payload: Mapping[str, Any]) -> Request:
 
 def keys_action(key: str, verb: str) -> Request:
     """Rotates, revokes or deletes a key."""
-    return Request("POST", f"/keys/{_segment(key)}/{verb}", "api-key", key, payload={})
+    return Request(
+        "POST", f"/keys/{_segment(key)}/{verb}", "api-key", key, payload={"id": key}
+    )
 
 
 def models_list(task: str | None, all: bool) -> Request:

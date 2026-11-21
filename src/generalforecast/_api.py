@@ -267,6 +267,8 @@ ResourceKind = Literal[
     "snapshot",
     "run",
     "prediction",
+    "experiment",
+    "estimate",
 ]
 _decode_ResourceKind: Decoder = _literal(
     "predictor",
@@ -280,6 +282,8 @@ _decode_ResourceKind: Decoder = _literal(
     "snapshot",
     "run",
     "prediction",
+    "experiment",
+    "estimate",
 )
 
 
@@ -318,23 +322,23 @@ class ErrorCode(StrEnum):
 
     ValidationError 422, NotFound 404, Unauthorized 401, CapacityExceeded 422,
     ModelNotReady 503, Internal 500, Conflict 409 (a compare-and-swap on a stale
-    generation), Unsupported 501 (an operation this server does not offer),
-    PaymentRequired 402 (the workspace's plan or credit does not cover the request).
-    Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
-    `plan_required` (fine-tuning needs a Pro or Enterprise plan) and
-    `credits_exhausted` (an enforced workspace has used its credits, which also refuses
-    predictions); `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not
-    turned on for the project); `CapacityExceeded` 429 `run_limit_reached` (the project
-    has as many runs, Playground runs or evaluations queued or running as it may),
-    `quota_exceeded` (the project's training data would pass its quota) and
-    `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`, and lift
-    only when the caller ends a run or deletes data, so clients do not retry them; a
-    429 `rate_limited` passes on its own and may be retried. A run's create is refused
-    with `Conflict` 409 `run_active` (another run of the fine-tune is still queued or
-    running) or `base_mismatch` (the fine-tune's versions train from another base), and
-    with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the base). An
-    evaluation refuses a model with `ValidationError` 422 `model_not_hostable` (another
-    task's model, or one the service does not host).
+    generation), Unsupported 501 (an operation this server does not offer, such as a
+    hosted route on gf serve), PaymentRequired 402 (the workspace's plan or credit does
+    not cover the request), AmbiguousReference 422 (a short model name whose task
+    nothing decides: pass `task`, or the full id). Hosted fine-tuning's gates, with
+    their `reason`: `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
+    Enterprise plan) and `credits_exhausted` (an enforced workspace has used its
+    credits, which also refuses predictions); `Unauthorized` 403
+    `fine_tuning_unavailable` (fine-tuning is not turned on for the project);
+    `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs queued or
+    running as it may), `quota_exceeded` (the project's training data would pass its
+    quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`,
+    and lift only when the caller ends a run or deletes data, so clients do not retry
+    them; a 429 `rate_limited` passes on its own and may be retried. A run's create is
+    refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
+    queued or running) or `base_mismatch` (the fine-tune's versions train from another
+    base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
+    base).
     """
 
     ValidationError = "ValidationError"
@@ -346,6 +350,7 @@ class ErrorCode(StrEnum):
     Conflict = "Conflict"
     Unsupported = "Unsupported"
     PaymentRequired = "PaymentRequired"
+    AmbiguousReference = "AmbiguousReference"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -470,18 +475,41 @@ class Selection(Payload):
     }
 
 
+ModelField = ModelId | ModelName
+_decode_ModelField: Decoder = _union(_decode_ModelId, _decode_ModelName)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SnapshotReference(Payload):
+    """A context the service holds by its digest."""
+
+    snapshot: Digest
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("snapshot", "snapshot", True, _decode_Digest),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class Manifest(Payload):
     """The Manifest schema.
 
-    the ad hoc predictor: the gf.yaml fields, with `context` and `queries` as rows
-    instead of a context declaration; `name` and `resources` are file-only
+    the ad hoc predictor: a predictor's fields, with `context` as rows or by reference
+    to a snapshot the service holds (`{"snapshot": "<digest>"}`, uploaded with `PUT
+    /snapshots?digest=`), and `queries` as rows, or as the Arrow stream the request is.
+    `task` decides a short model name's entry; `exclude`, `types`, `past` and `future`
+    take a predictor spec's forms beside `inputs`'
     """
 
-    model: ModelId
+    model: ModelField
     target: str
-    context: tuple[Row, ...]
+    context: tuple[Row, ...] | SnapshotReference
     queries: tuple[Row, ...]
+    task: Task | None = None
+    exclude: tuple[str, ...] | None = None
+    types: dict[str, ColumnType] | None = None
+    past: tuple[str, ...] | None = None
+    future: tuple[str, ...] | None = None
     id: str | None = None
     inputs: tuple[str, ...] | Inputs | None = None
     time: str | None = None
@@ -496,7 +524,12 @@ class Manifest(Payload):
     selection: Selection | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("model", "model", True, _decode_ModelId),
+        Field("task", "task", False, _decode_Task),
+        Field("exclude", "exclude", False, _items(_text)),
+        Field("types", "types", False, _mapping(_decode_ColumnType)),
+        Field("past", "past", False, _items(_text)),
+        Field("future", "future", False, _items(_text)),
+        Field("model", "model", True, _decode_ModelField),
         Field("target", "target", True, _text),
         Field("id", "id", False, _text),
         Field("inputs", "inputs", False, _union(_items(_text), _record(Inputs))),
@@ -518,10 +551,83 @@ class Manifest(Payload):
             _items(_literal("label", "value", "probabilities", "quantiles")),
         ),
         Field("selection", "selection", False, _record(Selection)),
-        Field("context", "context", True, _items(_decode_Row)),
+        Field(
+            "context",
+            "context",
+            True,
+            _union(_items(_decode_Row), _record(SnapshotReference)),
+        ),
         Field("queries", "queries", True, _items(_decode_Row)),
     )
     DEFAULTS: ClassVar[dict[str, Any]] = {"quantiles": [0.1, 0.5, 0.9]}
+
+
+@dataclass(frozen=True, kw_only=True)
+class Usage(Payload):
+    """The Usage schema.
+
+    what a call is billed: its scored rows, and past the large-context line
+    (`large_context_cells` in the price book) the GPU seconds of its own execution
+    """
+
+    rows: int
+    credits: float
+    usd: float
+    gpu_seconds: float | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("rows", "rows", True, _integer),
+        Field("credits", "credits", True, _number),
+        Field("usd", "usd", True, _number),
+        Field("gpu_seconds", "gpu_seconds", False, _union(_number, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Timing(Payload):
+    """Where a call's time went, queueing and cold start apart from compute."""
+
+    queued_seconds: float
+    cold_start_seconds: float
+    compute_seconds: float
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("queued_seconds", "queued_seconds", True, _number),
+        Field("cold_start_seconds", "cold_start_seconds", True, _number),
+        Field("compute_seconds", "compute_seconds", True, _number),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class HeldSnapshot(Payload):
+    """The HeldSnapshot schema."""
+
+    digest: Digest
+    rows: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("digest", "digest", True, _decode_Digest),
+        Field("rows", "rows", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class HeldSnapshotReply(Payload):
+    """The HeldSnapshotReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: HeldSnapshot
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(HeldSnapshot)),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -549,20 +655,16 @@ _decode_AsOfRequest: Decoder = _union(_text, _number)
 
 @dataclass(frozen=True, kw_only=True)
 class Queries(Payload):
-    """The Queries schema.
-
-    the declared predictor payload; `context` only when the manifest declares `context:
-    {request: ...}`
-    """
+    """A predictor's payload: the queries, and `as_of` for a live context."""
 
     queries: tuple[Row, ...]
-    context: tuple[Row, ...] | None = None
     as_of: AsOfRequest | None = None
+    env: Name | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("queries", "queries", True, _items(_decode_Row)),
-        Field("context", "context", False, _items(_decode_Row)),
         Field("as_of", "as_of", False, _decode_AsOfRequest),
+        Field("env", "env", False, _decode_Name),
     )
 
 
@@ -595,12 +697,13 @@ _decode_AsOf: Decoder = _union(_pattern("Z$"), _null)
 
 @dataclass(frozen=True, kw_only=True)
 class ContextInfo(Payload):
-    """The context a prediction actually used.
+    """The ContextInfo schema.
 
-    `source` is the context's kind; `name` names a live context; `version` is a live
-    context's accepted sequence; `digest` is a snapshot's content digest; `rows` counts
-    the rows read; `as_of` is the instant a live context was read as of. Each field a
-    source does not have is null.
+    the context a prediction actually used, the same shape from gf serve and the hosted
+    platform. `source` is the context's kind; `name` names a live context; `version` is
+    a live context's accepted sequence; `digest` is a snapshot's content digest; `rows`
+    counts the rows read; `as_of` is the instant a live context was read as of. Each
+    field a source does not have is null.
     """
 
     source: ContextKind
@@ -609,6 +712,9 @@ class ContextInfo(Payload):
     digest: Digest | None
     rows: int
     as_of: AsOf
+    used: Literal["exact", "retrieved"] | None = None
+    core: int | None = None
+    cells: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("source", "source", True, _decode_ContextKind),
@@ -617,6 +723,9 @@ class ContextInfo(Payload):
         Field("digest", "digest", True, _union(_decode_Digest, _null)),
         Field("rows", "rows", True, _integer),
         Field("as_of", "as_of", True, _decode_AsOf),
+        Field("used", "used", False, _literal("exact", "retrieved")),
+        Field("core", "core", False, _union(_integer, _null)),
+        Field("cells", "cells", False, _integer),
     )
 
 
@@ -624,8 +733,8 @@ class ContextInfo(Payload):
 class Prediction(Payload):
     """The Prediction schema.
 
-    the query's id under the manifest's id column name when it declares one (omitted
-    when it does not); `label` and `probabilities` for classification, `value` for
+    the query's id under the predictor's id column name when it names one (omitted when
+    it does not); `label` and `probabilities` for classification, `value` for
     regression, `value` and `quantiles` for forecasts
     """
 
@@ -655,6 +764,9 @@ class Result(Payload):
     predictor: Name | None = None
     revision: int | None = None
     environment: Name | None = None
+    usage: Usage | None = None
+    timing: Timing | None = None
+    notes: tuple[str, ...] | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("model", "model", True, _decode_ModelId),
@@ -664,6 +776,9 @@ class Result(Payload):
         Field("revision", "revision", False, _union(_integer, _null)),
         Field("environment", "environment", False, _union(_decode_Name, _null)),
         Field("predictions", "predictions", True, _items(_record(Prediction))),
+        Field("usage", "usage", False, _record(Usage)),
+        Field("timing", "timing", False, _record(Timing)),
+        Field("notes", "notes", False, _items(_text)),
     )
 
 
@@ -732,11 +847,7 @@ class PredictionAccepted(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class Limits(Payload):
-    """The Limits schema.
-
-    a model's bounds: the most context rows and inputs one call sends it, and
-    `queries`, how many query rows it scores in one pass
-    """
+    """The most a model accepts in one call."""
 
     context_rows: int
     queries: int
@@ -767,332 +878,22 @@ class Shape(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class LockInput(Payload):
-    """The LockInput schema.
+class TrainedOn(Payload):
+    """The TrainedOn schema.
 
-    an input column as gf.lock pins it: its kind (null when a request or live context's
-    rows were not seen) and its role, `input` for a tabular model, `past` or `future`
-    for a forecaster's covariates
+    what a catalog model saw in training: its upstream's stated context rows, inputs
+    and classes, each null where none is stated. A note shown beside results, never a
+    limit; null for a forecaster
     """
 
-    name: str
-    type: Kind | None
-    role: Literal["input", "past", "future"]
+    rows: int | None
+    inputs: int | None
+    classes: int | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("name", "name", True, _text),
-        Field("type", "type", True, _union(_decode_Kind, _null)),
-        Field("role", "role", True, _literal("input", "past", "future")),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LockHoldout(Payload):
-    """The LockHoldout schema.
-
-    a seeded random draw of the labeled rows are queries: `fraction` of them or `rows`
-    of them, exactly one of the two. `stratify`, `group` and `repeats` are present only
-    when the manifest sets them, so a holdout of a fraction and a seed is `{fraction,
-    seed}`
-    """
-
-    seed: int
-    fraction: float | None = None
-    rows: int | None = None
-    stratify: bool | None = None
-    group: str | None = None
-    repeats: int | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("fraction", "fraction", False, _number),
-        Field("rows", "rows", False, _integer),
-        Field("seed", "seed", True, _integer),
-        Field("stratify", "stratify", False, _boolean),
-        Field("group", "group", False, _text),
-        Field("repeats", "repeats", False, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextLock(Payload):
-    """The ContextLock schema.
-
-    the context as gf.lock pins it: a snapshot's file, its context rows' digest and
-    count and the split that made its queries; a live context's name; a request
-    context's most rows per call
-    """
-
-    kind: ContextKind
-    rows: int | None = None
-    query_rows: int | None = None
-    digest: Digest | None = None
-    path: str | None = None
-    name: Name | None = None
-    max_rows: int | None = None
-    until: str | None = None
-    holdout: LockHoldout | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("kind", "kind", True, _decode_ContextKind),
-        Field("rows", "rows", False, _integer),
-        Field("query_rows", "query_rows", False, _integer),
-        Field("digest", "digest", False, _decode_Digest),
-        Field("path", "path", False, _text),
-        Field("name", "name", False, _decode_Name),
-        Field("max_rows", "max_rows", False, _integer),
-        Field("until", "until", False, _text),
-        Field("holdout", "holdout", False, _record(LockHoldout)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ResolvedSelection(Payload):
-    """The ResolvedSelection schema.
-
-    the selection as gf.lock pins it, in rows: `exact` reads the whole context,
-    `retrieved` a core and each query's nearest rows, and `adaptive` resolves per call
-    for a context only calls carry
-    """
-
-    strategy: Literal["exact", "adaptive", "retrieved"]
-    core: int | None
-    neighbors: int
-    kind: Literal["stratified", "random", "balanced", "diverse"]
-    recent: int | None
-    seed: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("strategy", "strategy", True, _literal("exact", "adaptive", "retrieved")),
-        Field("core", "core", True, _union(_integer, _null)),
-        Field("neighbors", "neighbors", True, _integer),
-        Field(
-            "kind",
-            "kind",
-            True,
-            _literal("stratified", "random", "balanced", "diverse"),
-        ),
-        Field("recent", "recent", True, _union(_integer, _null)),
-        Field("seed", "seed", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class DerivedBase(Payload):
-    """The DerivedBase schema.
-
-    what a derived model runs on: the catalog base and its digest, which its weights
-    are only valid with, how many bags of weights it averages (each counts as one
-    estimator), and what kind of change its weights make
-    """
-
-    base: ModelId
-    base_digest: Digest
-    bags: int
-    kind: Literal["lora", "input_adapter", "full"]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("base", "base", True, _decode_ModelId),
-        Field("base_digest", "base_digest", True, _decode_Digest),
-        Field("bags", "bags", True, _integer),
-        Field("kind", "kind", True, _literal("lora", "input_adapter", "full")),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Resolution(Payload):
-    """The resolved predictor gf.lock pins."""
-
-    name: Name
-    model: ModelId
-    model_digest: Digest
-    task: Task
-    target: str
-    target_type: Kind | None
-    outputs: tuple[str, ...]
-    inputs: tuple[LockInput, ...]
-    context: ContextLock
-    selection: ResolvedSelection
-    derived: DerivedBase | None = None
-    classes: tuple[str | int | bool, ...] | None = None
-    id: str | None = None
-    id_type: Kind | None = None
-    time: str | None = None
-    time_type: Kind | None = None
-    series: tuple[str, ...] | None = None
-    series_types: tuple[Kind | None, ...] | None = None
-    related: tuple[str, ...] | None = None
-    frequency: str | float | None = None
-    horizon: int | None = None
-    quantiles: tuple[float, ...] | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("name", "name", True, _decode_Name),
-        Field("model", "model", True, _decode_ModelId),
-        Field("model_digest", "model_digest", True, _decode_Digest),
-        Field("derived", "derived", False, _record(DerivedBase)),
-        Field("task", "task", True, _decode_Task),
-        Field("target", "target", True, _text),
-        Field("target_type", "target_type", True, _union(_decode_Kind, _null)),
-        Field("classes", "classes", False, _items(_union(_text, _integer, _boolean))),
-        Field("id", "id", False, _text),
-        Field("id_type", "id_type", False, _union(_decode_Kind, _null)),
-        Field("time", "time", False, _text),
-        Field("time_type", "time_type", False, _union(_decode_Kind, _null)),
-        Field("series", "series", False, _items(_text)),
-        Field(
-            "series_types",
-            "series_types",
-            False,
-            _items(_union(_decode_Kind, _null)),
-        ),
-        Field("related", "related", False, _items(_text)),
-        Field("frequency", "frequency", False, _union(_text, _number)),
-        Field("horizon", "horizon", False, _integer),
-        Field("quantiles", "quantiles", False, _items(_number)),
-        Field("outputs", "outputs", True, _items(_text)),
-        Field("inputs", "inputs", True, _items(_record(LockInput))),
-        Field("context", "context", True, _record(ContextLock)),
-        Field("selection", "selection", True, _record(ResolvedSelection)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Serving(Payload):
-    """Whether this server has the predictor's model loaded and compiled."""
-
-    loaded: bool
-    compiled: bool
-    warm_shapes: tuple[Shape, ...]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("loaded", "loaded", True, _boolean),
-        Field("compiled", "compiled", True, _boolean),
-        Field("warm_shapes", "warm_shapes", True, _items(_record(Shape))),
-    )
-
-
-State = Literal["pending", "building", "ready", "failed", "stopped"]
-_decode_State: Decoder = _literal("pending", "building", "ready", "failed", "stopped")
-
-
-@dataclass(frozen=True, kw_only=True)
-class Environment(Payload):
-    """A pointer to a revision; `generation` guards promote and rollback."""
-
-    predictor: Name
-    name: Name
-    revision: int | None
-    generation: int
-    status: State
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("predictor", "predictor", True, _decode_Name),
-        Field("name", "name", True, _decode_Name),
-        Field("revision", "revision", True, _union(_integer, _null)),
-        Field("generation", "generation", True, _integer),
-        Field("status", "status", True, _decode_State),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Predictor(Payload):
-    """A predictor by name, with its environments.
-
-    Its resolution (the fields `Resolution` names, `limits` and `serving`) is there
-    once it resolves: once the predictor has a revision, from its latest. `created_at`
-    and `latest_revision` come from the hosted journal; a declared predictor has
-    neither.
-    """
-
-    name: Name
-    environments: tuple[Environment, ...]
-    created_at: float | None = None
-    latest_revision: int | None = None
-    lock_digest: Digest | None = None
-    model: ModelId | None = None
-    model_digest: Digest | None = None
-    task: Task | None = None
-    target: str | None = None
-    target_type: Kind | None = None
-    classes: tuple[str | int | bool, ...] | None = None
-    id: str | None = None
-    time: str | None = None
-    series: tuple[str, ...] | None = None
-    inputs: tuple[LockInput, ...] | None = None
-    context: ContextLock | None = None
-    selection: ResolvedSelection | None = None
-    limits: Limits | None = None
-    serving: Serving | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("name", "name", True, _decode_Name),
-        Field("created_at", "created_at", False, _number),
-        Field("latest_revision", "latest_revision", False, _union(_integer, _null)),
-        Field("environments", "environments", True, _items(_record(Environment))),
-        Field("lock_digest", "lock_digest", False, _decode_Digest),
-        Field("model", "model", False, _decode_ModelId),
-        Field("model_digest", "model_digest", False, _decode_Digest),
-        Field("task", "task", False, _decode_Task),
-        Field("target", "target", False, _text),
-        Field("target_type", "target_type", False, _union(_decode_Kind, _null)),
-        Field("classes", "classes", False, _items(_union(_text, _integer, _boolean))),
-        Field("id", "id", False, _text),
-        Field("time", "time", False, _text),
-        Field("series", "series", False, _items(_text)),
-        Field("inputs", "inputs", False, _items(_record(LockInput))),
-        Field("context", "context", False, _record(ContextLock)),
-        Field("selection", "selection", False, _record(ResolvedSelection)),
-        Field("limits", "limits", False, _record(Limits)),
-        Field("serving", "serving", False, _record(Serving)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorReply(Payload):
-    """The PredictorReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: Predictor
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(Predictor)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorList(Payload):
-    """The PredictorList schema."""
-
-    predictors: tuple[Predictor, ...]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("predictors", "predictors", True, _items(_record(Predictor))),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorListReply(Payload):
-    """The PredictorListReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: PredictorList
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(PredictorList)),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("inputs", "inputs", True, _union(_integer, _null)),
+        Field("classes", "classes", True, _union(_integer, _null)),
     )
 
 
@@ -1485,9 +1286,14 @@ class Model(Payload):
     """The Model schema.
 
     the catalog's description of a served model: `model` is the resolved id with its
-    content digest, `limits` its bounds, `warm_shapes` the shapes compiled at startup
+    content digest, `limits` what one call may send here, `warm_shapes` the shapes
+    compiled at startup
     """
 
+    short: str | None
+    kind: Literal["catalog", "fine-tune"]
+    base: str | None
+    trained_on: TrainedOn | None
     model: str
     name: ModelId
     task: Task
@@ -1500,6 +1306,8 @@ class Model(Payload):
     capabilities: tuple[Capability, ...]
     limits: Limits
     warm_shapes: tuple[Shape, ...]
+    family: str | None = None
+    hostable: bool | None = None
     derived: DerivedModel | None = None
     versions: tuple[FineTuneVersion, ...] | None = None
     artifact_verification: str | None = None
@@ -1508,6 +1316,12 @@ class Model(Payload):
     architecture: ModelArchitecture | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("short", "short", True, _union(_text, _null)),
+        Field("kind", "kind", True, _literal("catalog", "fine-tune")),
+        Field("family", "family", False, _text),
+        Field("base", "base", True, _union(_text, _null)),
+        Field("trained_on", "trained_on", True, _union(_record(TrainedOn), _null)),
+        Field("hostable", "hostable", False, _boolean),
         Field("model", "model", True, _text),
         Field("name", "name", True, _decode_ModelId),
         Field("derived", "derived", False, _record(DerivedModel)),
@@ -1821,6 +1635,7 @@ class Key(Payload):
     created_at: float
     expires_at: float | None
     revoked_at: float | None
+    ephemeral: bool | None = None
     token: str | None = None
     replaces: str | None = None
 
@@ -1832,6 +1647,7 @@ class Key(Payload):
         Field("created_at", "created_at", True, _number),
         Field("expires_at", "expires_at", True, _union(_number, _null)),
         Field("revoked_at", "revoked_at", True, _union(_number, _null)),
+        Field("ephemeral", "ephemeral", False, _boolean),
         Field("token", "token", False, _pattern("^gf_[A-Za-z0-9_-]{32,}$")),
         Field("replaces", "replaces", False, _pattern("^key-[0-9a-f]{20,24}$")),
     )
@@ -2210,11 +2026,15 @@ class RunData(Payload):
     name: Name
     digest: Digest
     phase: Name | None = None
+    context: Name | None = None
+    version: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Name),
         Field("digest", "digest", True, _decode_Digest),
         Field("phase", "phase", False, _decode_Name),
+        Field("context", "context", False, _decode_Name),
+        Field("version", "version", False, _integer),
     )
 
 
@@ -2345,8 +2165,55 @@ class RunDataTag(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (Field("tag", "tag", True, _decode_RunTag),)
 
 
-RunDataItem = Name | RunDataTag
-_decode_RunDataItem: Decoder = _union(_decode_Name, _record(RunDataTag))
+@dataclass(frozen=True, kw_only=True)
+class RunDataContext(Payload):
+    """The RunDataContext schema.
+
+    a context version a run trains on: `version`, or the latest when it is left out,
+    pinned to that version's snapshot digest when the run is created
+    """
+
+    context: Name
+    version: int | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("context", "context", True, _decode_Name),
+        Field("version", "version", False, _integer),
+    )
+
+
+RunDataItem = Name | RunDataTag | RunDataContext
+_decode_RunDataItem: Decoder = _union(
+    _decode_Name,
+    _record(RunDataTag),
+    _record(RunDataContext),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Origin(Payload):
+    """The Origin schema.
+
+    where a resource was made: the surface from the request's `X-GF-Origin` header
+    (`api` when it sends none) and who made it
+    """
+
+    surface: Literal["console", "cli", "notebook", "script", "api"]
+    notebook: str | None
+    client: str | None
+    by: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field(
+            "surface",
+            "surface",
+            True,
+            _literal("console", "cli", "notebook", "script", "api"),
+        ),
+        Field("notebook", "notebook", True, _union(_text, _null)),
+        Field("client", "client", True, _union(_text, _null)),
+        Field("by", "by", True, _union(_text, _null)),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2698,6 +2565,8 @@ class RunPublished(Payload):
 class Run(Payload):
     """The Run schema."""
 
+    origin: Origin
+    url: str
     model: RunModel
     name: Name
     version: int
@@ -2724,6 +2593,8 @@ class Run(Payload):
     usage: RunUsage | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("origin", "origin", True, _record(Origin)),
+        Field("url", "url", True, _text),
         Field("model", "model", True, _decode_RunModel),
         Field("name", "name", True, _decode_Name),
         Field("version", "version", True, _integer),
@@ -2872,7 +2743,7 @@ class RunCreate(Payload):
     """
 
     name: Name
-    base: ModelId
+    base: ModelField
     method: RunMethod
     data: tuple[RunDataItem, ...] | None = None
     plan: RunPlan | RunCurriculumPlan | None = None
@@ -2885,7 +2756,7 @@ class RunCreate(Payload):
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Name),
-        Field("base", "base", True, _decode_ModelId),
+        Field("base", "base", True, _decode_ModelField),
         Field("data", "data", False, _items(_decode_RunDataItem)),
         Field("method", "method", True, _record(RunMethod)),
         Field(
@@ -3125,8 +2996,9 @@ class SnapshotMetadata(Payload):
 class Snapshot(Payload):
     """A named, immutable table.
 
-    `digest`, `rows` and `columns` are set once it is `ready`. A create that opens an
-    upload also carries where its bytes go: `url`, `method` and `chunk_bytes`.
+    `digest`, `rows` and `columns` are set once it is `ready`; `origin` says where it
+    was uploaded from. A create that opens an upload also carries where its bytes go:
+    `url`, `method` and `chunk_bytes`.
     """
 
     name: Name
@@ -3140,11 +3012,13 @@ class Snapshot(Payload):
     error: str | None
     expires: float | None
     created: float
+    origin: Origin | None = None
     url: str | None = None
     method: Literal["PUT"] | None = None
     chunk_bytes: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("origin", "origin", False, _record(Origin)),
         Field("name", "name", True, _decode_Name),
         Field("state", "state", True, _decode_SnapshotState),
         Field("digest", "digest", True, _union(_decode_Digest, _null)),
@@ -3857,24 +3731,109 @@ class SyntheticBatchReply(Payload):
     )
 
 
+State = Literal["pending", "building", "ready", "failed", "stopped"]
+_decode_State: Decoder = _literal("pending", "building", "ready", "failed", "stopped")
+
+
+@dataclass(frozen=True, kw_only=True)
+class Spec(Payload):
+    """A predictor's spec: `gf.Predictor`'s fields but its name, as JSON."""
+
+    context: str
+    model: ModelField
+    target: str
+    task: Task | None = None
+    id: str | None = None
+    time: str | None = None
+    inputs: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    types: dict[str, ColumnType] | None = None
+    series: tuple[str, ...] | None = None
+    frequency: str | float | None = None
+    horizon: int | None = None
+    quantiles: tuple[float, ...] | None = None
+    past: tuple[str, ...] | None = None
+    future: tuple[str, ...] | None = None
+    selection: Selection | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field(
+            "context",
+            "context",
+            True,
+            _pattern("^[a-z][a-z0-9-]{0,62}(@[1-9][0-9]{0,8})?$"),
+        ),
+        Field("model", "model", True, _decode_ModelField),
+        Field("target", "target", True, _text),
+        Field("task", "task", False, _decode_Task),
+        Field("id", "id", False, _text),
+        Field("time", "time", False, _text),
+        Field("inputs", "inputs", False, _items(_text)),
+        Field("exclude", "exclude", False, _items(_text)),
+        Field("types", "types", False, _mapping(_decode_ColumnType)),
+        Field("series", "series", False, _items(_text)),
+        Field("frequency", "frequency", False, _union(_text, _number)),
+        Field("horizon", "horizon", False, _integer),
+        Field("quantiles", "quantiles", False, _items(_number)),
+        Field("past", "past", False, _items(_text)),
+        Field("future", "future", False, _items(_text)),
+        Field("selection", "selection", False, _record(Selection)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Resolved(Payload):
+    """The Resolved schema.
+
+    what a spec resolved to against its context version's rows, by the engine's
+    `resolve`: the full model id and digest, the task, inputs and their types. A deploy
+    compares these, so a short name and its full id are one predictor
+    """
+
+    model: ModelField
+    short: str | None
+    model_digest: Digest
+    task: Task
+    context: Name
+    context_version: int | None
+    context_digest: Digest | None
+    inputs: tuple[str, ...]
+    types: dict[str, ColumnType]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("model", "model", True, _decode_ModelField),
+        Field("short", "short", True, _union(_text, _null)),
+        Field("model_digest", "model_digest", True, _decode_Digest),
+        Field("task", "task", True, _decode_Task),
+        Field("context", "context", True, _decode_Name),
+        Field("context_version", "context_version", True, _union(_integer, _null)),
+        Field("context_digest", "context_digest", True, _union(_decode_Digest, _null)),
+        Field("inputs", "inputs", True, _items(_text)),
+        Field("types", "types", True, _mapping(_decode_ColumnType)),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class Revision(Payload):
-    """An immutable pushed predictor."""
+    """The Revision schema.
+
+    an immutable spec with what it resolved to; the plane keeps its lock beside it
+    """
 
     predictor: Name
     number: int
-    predictor_digest: Digest
-    model: ModelId
-    created_at: float
-    status: State
+    spec: Spec
+    resolved: Resolved
+    origin: Origin
+    created: str
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("predictor", "predictor", True, _decode_Name),
         Field("number", "number", True, _integer),
-        Field("predictor_digest", "predictor_digest", True, _decode_Digest),
-        Field("model", "model", True, _decode_ModelId),
-        Field("created_at", "created_at", True, _number),
-        Field("status", "status", True, _decode_State),
+        Field("spec", "spec", True, _record(Spec)),
+        Field("resolved", "resolved", True, _record(Resolved)),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("created", "created", True, _text),
     )
 
 
@@ -3928,444 +3887,34 @@ class RevisionListReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class LockedModel(Payload):
-    """The LockedModel schema."""
+class Environment(Payload):
+    """A pointer to a revision; `generation` guards promote and rollback."""
 
-    files: dict[str, str]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("files", "files", True, _mapping(_pattern("^[0-9a-f]{64}$"))),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LockResources(Payload):
-    """The hosted serving resources gf.yaml declares."""
-
-    accelerator: Literal["L4", "A10G", "L40S", "cpu"] | None = None
-    replicas_min: int | None = None
-    replicas_max: int | None = None
-    idle_seconds: int | None = None
+    name: Name
+    revision: int | None
+    state: Literal["starting", "ready", "failed", "stopped"]
+    generation: int
+    url: str
+    calls_today: int | None = None
+    p50_seconds: float | None = None
+    updated: str | None = None
+    error: str | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("revision", "revision", True, _union(_integer, _null)),
         Field(
-            "accelerator",
-            "accelerator",
-            False,
-            _literal("L4", "A10G", "L40S", "cpu"),
+            "state",
+            "state",
+            True,
+            _literal("starting", "ready", "failed", "stopped"),
         ),
-        Field("replicas_min", "replicas_min", False, _integer),
-        Field("replicas_max", "replicas_max", False, _integer),
-        Field("idle_seconds", "idle_seconds", False, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LockWriter(Payload):
-    """The LockWriter schema.
-
-    the gf that wrote a lock: its package version, and the revision of what its gf
-    check writes for the same gf.yaml, rows and catalog. A lock without it was written
-    under rules 1
-    """
-
-    gf: str
-    rules: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("gf", "gf", True, _text),
-        Field("rules", "rules", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Lock(Payload):
-    """Gf.lock: what gf check resolved gf.yaml into.
-
-    `digest` is the canonical JSON digest of the document without `digest` and
-    `checked_with`, the one identity of a predictor revision; `manifest` the digest of
-    the normalized gf.yaml it resolves
-    """
-
-    lock_version: Literal[1, 2]
-    digest: Digest
-    manifest: Digest
-    predictor: Resolution
-    model: LockedModel
-    checked_with: LockWriter | None = None
-    resources: LockResources | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("lock_version", "lock_version", True, _literal(1, 2)),
-        Field("digest", "digest", True, _decode_Digest),
-        Field("checked_with", "checked_with", False, _record(LockWriter)),
-        Field("manifest", "manifest", True, _decode_Digest),
-        Field("predictor", "predictor", True, _record(Resolution)),
-        Field("resources", "resources", False, _record(LockResources)),
-        Field("model", "model", True, _record(LockedModel)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class RevisionRegister(Payload):
-    """The RevisionRegister schema.
-
-    a checked predictor's lock, its uploaded snapshot's digest, and the normalized
-    gf.yaml the lock was written for, which the plane holds the lock to field by field
-    """
-
-    lock: Lock
-    snapshot: Digest | None
-    manifest: dict[str, Any]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("lock", "lock", True, _record(Lock)),
-        Field("snapshot", "snapshot", True, _union(_decode_Digest, _null)),
-        Field("manifest", "manifest", True, _mapping(_any)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class RevisionRegisterRequest(Payload):
-    """The RevisionRegisterRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: RevisionRegister
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(RevisionRegister)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorCheck(Payload):
-    """A gf.yaml as written, its uploaded snapshot, and the lock it replaces."""
-
-    manifest: str
-    snapshot: str | None = None
-    previous: dict[str, Any] | None = None
-    upgrade: bool | None = None
-    deploy: bool | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("manifest", "manifest", True, _text),
-        Field("snapshot", "snapshot", False, _union(_text, _null)),
-        Field("previous", "previous", False, _union(_mapping(_any), _null)),
-        Field("upgrade", "upgrade", False, _boolean),
-        Field("deploy", "deploy", False, _boolean),
-    )
-    DEFAULTS: ClassVar[dict[str, Any]] = {"upgrade": False, "deploy": False}
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorCheckRequest(Payload):
-    """The PredictorCheckRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: PredictorCheck
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(PredictorCheck)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class CheckedContext(Payload):
-    """The context the lock resolved."""
-
-    kind: Literal["snapshot", "request", "live"]
-    rows: int | None
-    query_rows: int | None
-    digest: str | None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("kind", "kind", True, _literal("snapshot", "request", "live")),
-        Field("rows", "rows", True, _union(_integer, _null)),
-        Field("query_rows", "query_rows", True, _union(_integer, _null)),
-        Field("digest", "digest", True, _union(_text, _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class KeptSnapshot(Payload):
-    """A snapshot context's resolved rows, stored for `gf push`."""
-
-    name: str
-    digest: str
-    rows: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("name", "name", True, _text),
-        Field("digest", "digest", True, _text),
-        Field("rows", "rows", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class DeployedContext(Payload):
-    """The DeployedContext schema.
-
-    a snapshot context's every labeled row, those the holdout or `until` holds out
-    included, stored for `gf push`, with the lock and manifest for them
-    """
-
-    lock: Lock
-    manifest: dict[str, Any]
-    context: CheckedContext
-    snapshot: KeptSnapshot
-    held_out: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("lock", "lock", True, _record(Lock)),
-        Field("manifest", "manifest", True, _mapping(_any)),
-        Field("context", "context", True, _record(CheckedContext)),
-        Field("snapshot", "snapshot", True, _record(KeptSnapshot)),
-        Field("held_out", "held_out", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorCheckResult(Payload):
-    """The PredictorCheckResult schema."""
-
-    lock: Lock
-    model: str
-    inferred: dict[str, Any]
-    changes: tuple[tuple[Any, ...], ...]
-    manifest: dict[str, Any]
-    context: CheckedContext
-    deployed: DeployedContext | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("lock", "lock", True, _record(Lock)),
-        Field("model", "model", True, _text),
-        Field("inferred", "inferred", True, _mapping(_any)),
-        Field("changes", "changes", True, _items(_items(_any))),
-        Field("manifest", "manifest", True, _mapping(_any)),
-        Field("context", "context", True, _record(CheckedContext)),
-        Field("deployed", "deployed", False, _union(_record(DeployedContext), _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorCheckReply(Payload):
-    """The PredictorCheckReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: PredictorCheckResult
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(PredictorCheckResult)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationCreate(Payload):
-    """The EvaluationCreate schema."""
-
-    manifest: str
-    snapshot: str
-    models: tuple[str, ...] | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("manifest", "manifest", True, _text),
-        Field("snapshot", "snapshot", True, _text),
-        Field("models", "models", False, _union(_items(_text), _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationCreateRequest(Payload):
-    """The EvaluationCreateRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: EvaluationCreate
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(EvaluationCreate)),
-    )
-
-
-EvaluationState = Literal["queued", "running", "finished", "failed", "cancelled"]
-_decode_EvaluationState: Decoder = _literal(
-    "queued",
-    "running",
-    "finished",
-    "failed",
-    "cancelled",
-)
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationInterval(Payload):
-    """The EvaluationInterval schema."""
-
-    metric: str
-    low: float
-    high: float
-    level: float
-    resamples: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("metric", "metric", True, _text),
-        Field("low", "low", True, _number),
-        Field("high", "high", True, _number),
-        Field("level", "level", True, _number),
-        Field("resamples", "resamples", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationModel(Payload):
-    """One model's scoring of the held-out rows."""
-
-    model: str
-    state: EvaluationState
-    metrics: dict[str, float | None]
-    interval: EvaluationInterval | None
-    scored: int
-    total: int
-    seconds: float | None
-    error: Error | None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("model", "model", True, _text),
-        Field("state", "state", True, _decode_EvaluationState),
-        Field("metrics", "metrics", True, _mapping(_union(_number, _null))),
-        Field("interval", "interval", True, _union(_record(EvaluationInterval), _null)),
-        Field("scored", "scored", True, _integer),
-        Field("total", "total", True, _integer),
-        Field("seconds", "seconds", True, _union(_number, _null)),
-        Field("error", "error", True, _union(_record(Error), _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationBilled(Payload):
-    """The EvaluationBilled schema.
-
-    what the evaluation was billed so far, on the prediction meters, by its calls and
-    rows
-    """
-
-    predictions: int
-    rows: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("predictions", "predictions", True, _integer),
-        Field("rows", "rows", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Evaluation(Payload):
-    """The Evaluation schema."""
-
-    evaluation: int
-    state: EvaluationState
-    held: int | None
-    repeats: int
-    context: int | None
-    task: str | None
-    metric: str | None
-    models: tuple[EvaluationModel, ...]
-    billed: EvaluationBilled
-    created: float
-    started: float | None
-    finished: float | None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("evaluation", "evaluation", True, _integer),
-        Field("state", "state", True, _decode_EvaluationState),
-        Field("held", "held", True, _union(_integer, _null)),
-        Field("repeats", "repeats", True, _integer),
-        Field("context", "context", True, _union(_integer, _null)),
-        Field("task", "task", True, _union(_text, _null)),
-        Field("metric", "metric", True, _union(_text, _null)),
-        Field("models", "models", True, _items(_record(EvaluationModel))),
-        Field("billed", "billed", True, _record(EvaluationBilled)),
-        Field("created", "created", True, _number),
-        Field("started", "started", True, _union(_number, _null)),
-        Field("finished", "finished", True, _union(_number, _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvaluationReply(Payload):
-    """The EvaluationReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: Evaluation
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(Evaluation)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class RevisionDetails(Payload):
-    """The RevisionDetails schema."""
-
-    revision: Revision
-    lock: Lock
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("revision", "revision", True, _record(Revision)),
-        Field("lock", "lock", True, _record(Lock)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class RevisionDetailsReply(Payload):
-    """The RevisionDetailsReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: RevisionDetails
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(RevisionDetails)),
+        Field("generation", "generation", True, _integer),
+        Field("calls_today", "calls_today", False, _integer),
+        Field("p50_seconds", "p50_seconds", False, _union(_number, _null)),
+        Field("updated", "updated", False, _text),
+        Field("url", "url", True, _text),
+        Field("error", "error", False, _union(_text, _null)),
     )
 
 
@@ -4419,43 +3968,21 @@ class EnvironmentListReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EnvironmentCreate(Payload):
-    """The EnvironmentCreate schema."""
-
-    name: Name
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (Field("name", "name", True, _decode_Name),)
-
-
-@dataclass(frozen=True, kw_only=True)
-class EnvironmentCreateRequest(Payload):
-    """The EnvironmentCreateRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: EnvironmentCreate
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(EnvironmentCreate)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
 class Promote(Payload):
-    """The Promote schema."""
+    """The Promote schema.
 
-    revision: int
-    expected_generation: int
+    the revision to point at, or `from_env`, the environment whose revision to take;
+    `expected_generation` refuses a change past a stale read
+    """
+
+    revision: int | None = None
+    from_env: Name | None = None
+    expected_generation: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("revision", "revision", True, _integer),
-        Field("expected_generation", "expected_generation", True, _integer),
+        Field("revision", "revision", False, _integer),
+        Field("from_env", "from_env", False, _decode_Name),
+        Field("expected_generation", "expected_generation", False, _integer),
     )
 
 
@@ -4751,134 +4278,6 @@ class PredictorDeletedReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class LiveContext(Payload):
-    """A hosted, appendable context."""
-
-    name: Name
-    inputs: tuple[str, ...]
-    targets: dict[str, ColumnType]
-    max_rows: int
-    rows: int
-    labeled_rows: int
-    sequence: int
-    accepted_at: float | None
-    id: str | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("name", "name", True, _decode_Name),
-        Field("inputs", "inputs", True, _items(_text)),
-        Field("targets", "targets", True, _mapping(_decode_ColumnType)),
-        Field("max_rows", "max_rows", True, _integer),
-        Field("rows", "rows", True, _integer),
-        Field("labeled_rows", "labeled_rows", True, _integer),
-        Field("sequence", "sequence", True, _integer),
-        Field("accepted_at", "accepted_at", True, _union(_number, _null)),
-        Field("id", "id", False, _text),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LiveContextReply(Payload):
-    """The LiveContextReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: LiveContext
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(LiveContext)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LiveContextList(Payload):
-    """The LiveContextList schema."""
-
-    contexts: tuple[LiveContext, ...]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("contexts", "contexts", True, _items(_record(LiveContext))),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LiveContextListReply(Payload):
-    """The LiveContextListReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: LiveContextList
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(LiveContextList)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class LiveContextCreate(Payload):
-    """The LiveContextCreate schema."""
-
-    name: Name
-    inputs: tuple[str, ...]
-    targets: dict[str, ColumnType]
-    max_rows: int | None = None
-    id: str | None = None
-    types: dict[str, ColumnType] | None = None
-    max_writes: int | None = None
-    max_pending_labels: int | None = None
-    pending_ttl_seconds: float | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("name", "name", True, _decode_Name),
-        Field("inputs", "inputs", True, _items(_text)),
-        Field("targets", "targets", True, _mapping(_decode_ColumnType)),
-        Field("max_rows", "max_rows", False, _integer),
-        Field("id", "id", False, _text),
-        Field("types", "types", False, _mapping(_decode_ColumnType)),
-        Field("max_writes", "max_writes", False, _integer),
-        Field("max_pending_labels", "max_pending_labels", False, _integer),
-        Field("pending_ttl_seconds", "pending_ttl_seconds", False, _number),
-    )
-    DEFAULTS: ClassVar[dict[str, Any]] = {
-        "max_rows": 100000,
-        "max_writes": 10000,
-        "max_pending_labels": 0,
-        "pending_ttl_seconds": 3600,
-    }
-
-
-@dataclass(frozen=True, kw_only=True)
-class LiveContextCreateRequest(Payload):
-    """The LiveContextCreateRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: LiveContextCreate
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(LiveContextCreate)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
 class LiveContextAppend(Payload):
     """The LiveContextAppend schema."""
 
@@ -5004,8 +4403,16 @@ class PredictorCreate(Payload):
     """The PredictorCreate schema."""
 
     name: Name
+    spec: Spec
+    env: Name
+    dry_run: bool | None = None
 
-    FIELDS: ClassVar[tuple[Field, ...]] = (Field("name", "name", True, _decode_Name),)
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("spec", "spec", True, _record(Spec)),
+        Field("env", "env", True, _decode_Name),
+        Field("dry_run", "dry_run", False, _boolean),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -5024,492 +4431,6 @@ class PredictorCreateRequest(Payload):
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
         Field("payload", "payload", True, _record(PredictorCreate)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class PredictorCreatedReply(Payload):
-    """The PredictorCreatedReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: PredictorCreate
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(PredictorCreate)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextImport(Payload):
-    """Where a live context's rows come from, and how its columns map."""
-
-    context: Name
-    source: str
-    format: Literal["csv", "tsv", "parquet", "arrow", "json", "jsonl", "table"]
-    credential_ref: str | None = None
-    digest: Digest | None = None
-    mapping: tuple[tuple[str, ...], ...] | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("context", "context", True, _decode_Name),
-        Field("source", "source", True, _text),
-        Field(
-            "format",
-            "format",
-            True,
-            _literal("csv", "tsv", "parquet", "arrow", "json", "jsonl", "table"),
-        ),
-        Field(
-            "credential_ref",
-            "credential_ref",
-            False,
-            _union(_pattern("^secret/[a-z][a-z0-9-]{0,62}$"), _null),
-        ),
-        Field("digest", "digest", False, _union(_decode_Digest, _null)),
-        Field("mapping", "mapping", False, _items(_items(_text))),
-    )
-    DEFAULTS: ClassVar[dict[str, Any]] = {"mapping": []}
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextImportRequest(Payload):
-    """The ContextImportRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: ContextImport
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(ContextImport)),
-    )
-
-
-WriteOperation = Literal[
-    "create_features",
-    "attach_labels",
-    "correct_features",
-    "correct_labels",
-    "resupply_labels",
-    "import_record",
-    "checkpoint",
-]
-_decode_WriteOperation: Decoder = _literal(
-    "create_features",
-    "attach_labels",
-    "correct_features",
-    "correct_labels",
-    "resupply_labels",
-    "import_record",
-    "checkpoint",
-)
-
-
-@dataclass(frozen=True, kw_only=True)
-class Observation(Payload):
-    """One observation's components; corrections name the versions they replace."""
-
-    key: str
-    features: dict[str, str | float | bool | None] | None = None
-    labels: dict[str, str | float | bool] | None = None
-    event_at: float | None = None
-    expected_feature_version: int | None = None
-    expected_label_versions: dict[str, int] | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("key", "key", True, _text),
-        Field(
-            "features",
-            "features",
-            False,
-            _mapping(_union(_text, _number, _boolean, _null)),
-        ),
-        Field("labels", "labels", False, _mapping(_union(_text, _number, _boolean))),
-        Field("event_at", "event_at", False, _number),
-        Field("expected_feature_version", "expected_feature_version", False, _integer),
-        Field(
-            "expected_label_versions",
-            "expected_label_versions",
-            False,
-            _mapping(_integer),
-        ),
-    )
-
-
-MutationOperation = Literal[
-    "create_features",
-    "attach_labels",
-    "correct_features",
-    "correct_labels",
-    "resupply_labels",
-]
-_decode_MutationOperation: Decoder = _literal(
-    "create_features",
-    "attach_labels",
-    "correct_features",
-    "correct_labels",
-    "resupply_labels",
-)
-
-
-@dataclass(frozen=True, kw_only=True)
-class Mutation(Payload):
-    """The Mutation schema."""
-
-    write_id: str
-    operation: MutationOperation
-    records: tuple[Observation, ...]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("write_id", "write_id", True, _text),
-        Field("operation", "operation", True, _decode_MutationOperation),
-        Field("records", "records", True, _items(_record(Observation))),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class MutationRequest(Payload):
-    """The MutationRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: Mutation
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(Mutation)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ComponentVersions(Payload):
-    """The ComponentVersions schema."""
-
-    key: str
-    feature_version: int | None
-    label_versions: dict[str, int]
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("key", "key", True, _text),
-        Field("feature_version", "feature_version", True, _union(_integer, _null)),
-        Field("label_versions", "label_versions", True, _mapping(_integer)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class AcceptedWrite(Payload):
-    """A write's durable receipt, the same for every retry of its write id."""
-
-    project: Name
-    context: Name
-    write_id: str
-    operation: WriteOperation
-    sequence: int
-    accepted_at: float
-    durably_accepted: bool
-    changes: tuple[ComponentVersions, ...]
-    retry_valid_until: float | None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("project", "project", True, _decode_Name),
-        Field("context", "context", True, _decode_Name),
-        Field("write_id", "write_id", True, _text),
-        Field("operation", "operation", True, _decode_WriteOperation),
-        Field("sequence", "sequence", True, _integer),
-        Field("accepted_at", "accepted_at", True, _number),
-        Field("durably_accepted", "durably_accepted", True, _boolean),
-        Field("changes", "changes", True, _items(_record(ComponentVersions))),
-        Field("retry_valid_until", "retry_valid_until", True, _union(_number, _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class AcceptedWriteReply(Payload):
-    """The AcceptedWriteReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: AcceptedWrite
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(AcceptedWrite)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ImportReceipt(Payload):
-    """The ImportReceipt schema."""
-
-    context: Name
-    digest: Digest
-    rows: int
-    sequence: int
-    accepted_at: float
-    receipt: AcceptedWrite
-    mode: Literal["explicit-refresh"] = "explicit-refresh"
-    continuous: Literal[False] = False
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("context", "context", True, _decode_Name),
-        Field("digest", "digest", True, _decode_Digest),
-        Field("rows", "rows", True, _integer),
-        Field("sequence", "sequence", True, _integer),
-        Field("accepted_at", "accepted_at", True, _number),
-        Field("receipt", "receipt", True, _record(AcceptedWrite)),
-        Field("mode", "mode", True, _literal("explicit-refresh")),
-        Field("continuous", "continuous", True, _literal(False)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ImportReceiptReply(Payload):
-    """The ImportReceiptReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: ImportReceipt
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(ImportReceipt)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextSnapshotQuery(Payload):
-    """The ContextSnapshotQuery schema."""
-
-    target: str
-    knowledge_at: float | None = None
-    event_before: float | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("target", "target", True, _text),
-        Field("knowledge_at", "knowledge_at", False, _union(_number, _null)),
-        Field("event_before", "event_before", False, _union(_number, _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextSnapshotQueryRequest(Payload):
-    """The ContextSnapshotQueryRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: ContextSnapshotQuery
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(ContextSnapshotQuery)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SnapshotRow(Payload):
-    """The SnapshotRow schema."""
-
-    key: str
-    features: dict[str, str | float | bool | None]
-    label: str | float | bool
-    feature_version: int
-    label_version: int
-    feature_accepted_at: float
-    label_accepted_at: float
-    event_at: float | None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("key", "key", True, _text),
-        Field(
-            "features",
-            "features",
-            True,
-            _mapping(_union(_text, _number, _boolean, _null)),
-        ),
-        Field("label", "label", True, _union(_text, _number, _boolean)),
-        Field("feature_version", "feature_version", True, _integer),
-        Field("label_version", "label_version", True, _integer),
-        Field("feature_accepted_at", "feature_accepted_at", True, _number),
-        Field("label_accepted_at", "label_accepted_at", True, _number),
-        Field("event_at", "event_at", True, _union(_number, _null)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextSnapshot(Payload):
-    """The ContextSnapshot schema."""
-
-    project: Name
-    context: Name
-    target: str
-    features: tuple[str, ...]
-    through_sequence: int
-    knowledge_at: float
-    event_before: float | None
-    rows: tuple[SnapshotRow, ...]
-    source_wait_count: int
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("project", "project", True, _decode_Name),
-        Field("context", "context", True, _decode_Name),
-        Field("target", "target", True, _text),
-        Field("features", "features", True, _items(_text)),
-        Field("through_sequence", "through_sequence", True, _integer),
-        Field("knowledge_at", "knowledge_at", True, _number),
-        Field("event_before", "event_before", True, _union(_number, _null)),
-        Field("rows", "rows", True, _items(_record(SnapshotRow))),
-        Field("source_wait_count", "source_wait_count", True, _integer),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextSnapshotReply(Payload):
-    """The ContextSnapshotReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: ContextSnapshot
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(ContextSnapshot)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SourceMapping(Payload):
-    """The SourceMapping schema.
-
-    which columns of a pinned file are an observation's key, features and labels; empty
-    for JSONL already in that shape
-    """
-
-    key: str | None = None
-    features: dict[str, str] | None = None
-    labels: dict[str, str] | None = None
-    event_at: str | None = None
-    label_types: dict[str, Literal["boolean", "numeric"]] | None = None
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("key", "key", False, _text),
-        Field("features", "features", False, _mapping(_text)),
-        Field("labels", "labels", False, _mapping(_text)),
-        Field("event_at", "event_at", False, _text),
-        Field(
-            "label_types",
-            "label_types",
-            False,
-            _mapping(_literal("boolean", "numeric")),
-        ),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SourcePinSpec(Payload):
-    """The SourcePinSpec schema."""
-
-    path: str
-    format: Literal["jsonl", "csv"]
-    mapping: SourceMapping
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("path", "path", True, _text),
-        Field("format", "format", True, _literal("jsonl", "csv")),
-        Field("mapping", "mapping", True, _record(SourceMapping)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SourcePinRequest(Payload):
-    """The SourcePinRequest schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    payload: SourcePinSpec
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(SourcePinSpec)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SourcePin(Payload):
-    """The SourcePin schema."""
-
-    source_id: Name
-    digest: Digest
-    size_bytes: int
-    format: Literal["jsonl", "csv"]
-    mapping: SourceMapping
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("source_id", "source_id", True, _decode_Name),
-        Field("digest", "digest", True, _decode_Digest),
-        Field("size_bytes", "size_bytes", True, _integer),
-        Field("format", "format", True, _literal("jsonl", "csv")),
-        Field("mapping", "mapping", True, _record(SourceMapping)),
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class SourcePinReply(Payload):
-    """The SourcePinReply schema."""
-
-    api_version: Literal["gf/v1"] = "gf/v1"
-    project: Name
-    request_id: str
-    resource: Resource
-    result: SourcePin
-
-    FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("api_version", "api_version", True, _literal("gf/v1")),
-        Field("project", "project", True, _decode_Name),
-        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
-        Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(SourcePin)),
     )
 
 
@@ -5623,14 +4544,59 @@ class SourcePreparedReply(Payload):
     )
 
 
+SourceKind = Literal["bigquery", "gcs", "snowflake", "databricks", "s3", "postgres"]
+_decode_SourceKind: Decoder = _literal(
+    "bigquery",
+    "gcs",
+    "snowflake",
+    "databricks",
+    "s3",
+    "postgres",
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Source(Payload):
+    """A workspace connection to a warehouse or bucket.
+
+    Config keys by kind: bigquery `project, dataset`; gcs `bucket, prefix`; snowflake
+    `account, warehouse, database, role`; databricks `host, warehouse, client_id`; s3
+    `role_arn, region, bucket, prefix`; postgres `host, port, database, user, tls`
+    """
+
+    name: Name
+    kind: SourceKind
+    state: Literal["ready", "failing", "expired"]
+    config: dict[str, str]
+    secret_expires: str | None
+    tested_at: str | None
+    error: str | None
+    origin: Origin
+    created: str
+    url: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("kind", "kind", True, _decode_SourceKind),
+        Field("state", "state", True, _literal("ready", "failing", "expired")),
+        Field("config", "config", True, _mapping(_text)),
+        Field("secret_expires", "secret_expires", True, _union(_text, _null)),
+        Field("tested_at", "tested_at", True, _union(_text, _null)),
+        Field("error", "error", True, _union(_text, _null)),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("created", "created", True, _text),
+        Field("url", "url", True, _text),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class SourceList(Payload):
     """The SourceList schema."""
 
-    sources: tuple[SourcePin, ...]
+    sources: tuple[Source, ...]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("sources", "sources", True, _items(_record(SourcePin))),
+        Field("sources", "sources", True, _items(_record(Source))),
     )
 
 
@@ -5683,12 +4649,14 @@ class KeyIdentity(Payload):
     name: Name
     project: Name
     expires_at: float | None
+    ephemeral: bool | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("id", "id", True, _pattern("^key-[0-9a-f]{20,24}$")),
         Field("name", "name", True, _decode_Name),
         Field("project", "project", True, _decode_Name),
         Field("expires_at", "expires_at", True, _union(_number, _null)),
+        Field("ephemeral", "ephemeral", False, _boolean),
     )
 
 
@@ -6030,17 +4998,21 @@ class AuditLogReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginStart(Payload):
-    """The CliLoginStart schema."""
+class DeviceLoginStart(Payload):
+    """The DeviceLoginStart schema."""
 
     machine: str
+    client: Literal["cli", "notebook"]
 
-    FIELDS: ClassVar[tuple[Field, ...]] = (Field("machine", "machine", True, _text),)
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("machine", "machine", True, _text),
+        Field("client", "client", True, _literal("cli", "notebook")),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginGrant(Payload):
-    """The CliLoginGrant schema."""
+class DeviceLoginGrant(Payload):
+    """The DeviceLoginGrant schema."""
 
     device_code: str
     user_code: str
@@ -6065,8 +5037,8 @@ class CliLoginGrant(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginPoll(Payload):
-    """The CliLoginPoll schema."""
+class DeviceLoginPoll(Payload):
+    """The DeviceLoginPoll schema."""
 
     device_code: str
 
@@ -6081,29 +5053,33 @@ class CliLoginPoll(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginToken(Payload):
-    """The CliLoginToken schema."""
+class DeviceLoginToken(Payload):
+    """The DeviceLoginToken schema."""
 
     access_token: str
     token_type: Literal["bearer"] = "bearer"
+    expires_at: float | None
     key: KeyIdentity
     email: str
     workspace: WorkspaceIdentity
     project: Name
+    url: str
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("access_token", "access_token", True, _text),
         Field("token_type", "token_type", True, _literal("bearer")),
+        Field("expires_at", "expires_at", True, _union(_number, _null)),
         Field("key", "key", True, _record(KeyIdentity)),
         Field("email", "email", True, _text),
         Field("workspace", "workspace", True, _record(WorkspaceIdentity)),
         Field("project", "project", True, _decode_Name),
+        Field("url", "url", True, _text),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
 class LoginErrorReply(Payload):
-    """Why a CLI login cannot go on, outside the envelope as the login is.
+    """Why a device login cannot go on, outside the envelope as the login is.
 
     `reason` says which: `authorization_pending` (`Unauthorized`, poll again),
     `slow_down` (`ValidationError`, poll less often), `expired_token` and
@@ -6924,8 +5900,8 @@ class WaitlistEntryView(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginCode(Payload):
-    """The CliLoginCode schema."""
+class DeviceLoginCode(Payload):
+    """The DeviceLoginCode schema."""
 
     user_code: UserCode
 
@@ -6935,8 +5911,8 @@ class CliLoginCode(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginWorkspace(Payload):
-    """The CliLoginWorkspace schema."""
+class DeviceLoginWorkspace(Payload):
+    """The DeviceLoginWorkspace schema."""
 
     workspace: Name
     display_name: str
@@ -6948,18 +5924,20 @@ class CliLoginWorkspace(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginPreview(Payload):
-    """The CliLoginPreview schema.
+class DeviceLoginPreview(Payload):
+    """The DeviceLoginPreview schema.
 
-    what the sign-in page confirms: the machine asking and the workspaces with a
-    project the key may serve
+    what the sign-in page confirms: the machine and client asking ("Approve the CLI on
+    maya-mbp", "Approve a notebook on maya-mbp") and the workspaces with a project the
+    key may serve
     """
 
     user_code: str
     machine: str
+    client: Literal["cli", "notebook"]
     expires_at: float
     email: str
-    workspaces: tuple[CliLoginWorkspace, ...]
+    workspaces: tuple[DeviceLoginWorkspace, ...]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field(
@@ -6969,15 +5947,16 @@ class CliLoginPreview(Payload):
             _pattern("^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$"),
         ),
         Field("machine", "machine", True, _text),
+        Field("client", "client", True, _literal("cli", "notebook")),
         Field("expires_at", "expires_at", True, _number),
         Field("email", "email", True, _text),
-        Field("workspaces", "workspaces", True, _items(_record(CliLoginWorkspace))),
+        Field("workspaces", "workspaces", True, _items(_record(DeviceLoginWorkspace))),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginApprove(Payload):
-    """The CliLoginApprove schema."""
+class DeviceLoginApprove(Payload):
+    """The DeviceLoginApprove schema."""
 
     user_code: UserCode
     workspace: Name
@@ -6989,8 +5968,8 @@ class CliLoginApprove(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginGranted(Payload):
-    """The CliLoginGranted schema."""
+class DeviceLoginGranted(Payload):
+    """The DeviceLoginGranted schema."""
 
     id: Name
     display_name: str
@@ -7002,12 +5981,12 @@ class CliLoginGranted(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginApproved(Payload):
-    """The CliLoginApproved schema."""
+class DeviceLoginApproved(Payload):
+    """The DeviceLoginApproved schema."""
 
     user_code: str
     state: Literal["approved"] = "approved"
-    workspace: CliLoginGranted
+    workspace: DeviceLoginGranted
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field(
@@ -7017,13 +5996,13 @@ class CliLoginApproved(Payload):
             _pattern("^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$"),
         ),
         Field("state", "state", True, _literal("approved")),
-        Field("workspace", "workspace", True, _record(CliLoginGranted)),
+        Field("workspace", "workspace", True, _record(DeviceLoginGranted)),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginDenied(Payload):
-    """The CliLoginDenied schema."""
+class DeviceLoginDenied(Payload):
+    """The DeviceLoginDenied schema."""
 
     user_code: str
     state: Literal["denied"] = "denied"
@@ -7040,40 +6019,40 @@ class CliLoginDenied(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginApproveRequest(Payload):
-    """The CliLoginApproveRequest schema."""
+class DeviceLoginApproveRequest(Payload):
+    """The DeviceLoginApproveRequest schema."""
 
     api_version: Literal["gf/v1"] = "gf/v1"
     project: Name
     request_id: str
     resource: Resource
-    payload: CliLoginApprove
+    payload: DeviceLoginApprove
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("api_version", "api_version", True, _literal("gf/v1")),
         Field("project", "project", True, _decode_Name),
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(CliLoginApprove)),
+        Field("payload", "payload", True, _record(DeviceLoginApprove)),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginCodeRequest(Payload):
-    """The CliLoginCodeRequest schema."""
+class DeviceLoginCodeRequest(Payload):
+    """The DeviceLoginCodeRequest schema."""
 
     api_version: Literal["gf/v1"] = "gf/v1"
     project: Name
     request_id: str
     resource: Resource
-    payload: CliLoginCode
+    payload: DeviceLoginCode
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("api_version", "api_version", True, _literal("gf/v1")),
         Field("project", "project", True, _decode_Name),
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
-        Field("payload", "payload", True, _record(CliLoginCode)),
+        Field("payload", "payload", True, _record(DeviceLoginCode)),
     )
 
 
@@ -7344,59 +6323,59 @@ class WorkspaceRenameRequest(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginApprovedReply(Payload):
-    """The CliLoginApprovedReply schema."""
+class DeviceLoginApprovedReply(Payload):
+    """The DeviceLoginApprovedReply schema."""
 
     api_version: Literal["gf/v1"] = "gf/v1"
     project: Name
     request_id: str
     resource: Resource
-    result: CliLoginApproved
+    result: DeviceLoginApproved
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("api_version", "api_version", True, _literal("gf/v1")),
         Field("project", "project", True, _decode_Name),
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(CliLoginApproved)),
+        Field("result", "result", True, _record(DeviceLoginApproved)),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginDeniedReply(Payload):
-    """The CliLoginDeniedReply schema."""
+class DeviceLoginDeniedReply(Payload):
+    """The DeviceLoginDeniedReply schema."""
 
     api_version: Literal["gf/v1"] = "gf/v1"
     project: Name
     request_id: str
     resource: Resource
-    result: CliLoginDenied
+    result: DeviceLoginDenied
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("api_version", "api_version", True, _literal("gf/v1")),
         Field("project", "project", True, _decode_Name),
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(CliLoginDenied)),
+        Field("result", "result", True, _record(DeviceLoginDenied)),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
-class CliLoginPreviewReply(Payload):
-    """The CliLoginPreviewReply schema."""
+class DeviceLoginPreviewReply(Payload):
+    """The DeviceLoginPreviewReply schema."""
 
     api_version: Literal["gf/v1"] = "gf/v1"
     project: Name
     request_id: str
     resource: Resource
-    result: CliLoginPreview
+    result: DeviceLoginPreview
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("api_version", "api_version", True, _literal("gf/v1")),
         Field("project", "project", True, _decode_Name),
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
-        Field("result", "result", True, _record(CliLoginPreview)),
+        Field("result", "result", True, _record(DeviceLoginPreview)),
     )
 
 
@@ -7818,6 +6797,1625 @@ class WorkspaceSummaryReply(Payload):
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class Code(Payload):
+    """The Code schema.
+
+    the same resource made in code: the SDK call, the `gf` command and a curl request
+    """
+
+    python: str
+    cli: str
+    curl: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("python", "python", True, _text),
+        Field("cli", "cli", True, _text),
+        Field("curl", "curl", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Deleted(Payload):
+    """The Deleted schema."""
+
+    name: Name
+    deleted: Literal[True] = True
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("deleted", "deleted", True, _literal(True)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class LargeContext(Payload):
+    """The LargeContext schema.
+
+    the large-context line: GPU seconds past `large_context_cells` in the price book,
+    and their cost
+    """
+
+    gpu_seconds: float
+    credits: float
+    usd: float
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("gpu_seconds", "gpu_seconds", True, _number),
+        Field("credits", "credits", True, _number),
+        Field("usd", "usd", True, _number),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Estimate(Payload):
+    """The Estimate schema.
+
+    what a call or a run would cost from the live price book: model calls, scored rows,
+    credits (1 credit is $0.001) and dollars
+    """
+
+    calls: int
+    rows: int
+    credits: float
+    usd: float
+    large_context: LargeContext | None = None
+    warnings: tuple[str, ...] | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("calls", "calls", True, _integer),
+        Field("rows", "rows", True, _integer),
+        Field("credits", "credits", True, _number),
+        Field("usd", "usd", True, _number),
+        Field("large_context", "large_context", False, _record(LargeContext)),
+        Field("warnings", "warnings", False, _items(_text)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Column(Payload):
+    """The Column schema."""
+
+    name: str
+    type: ColumnType
+    missing: int
+    distinct: int | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _text),
+        Field("type", "type", True, _decode_ColumnType),
+        Field("missing", "missing", True, _integer),
+        Field("distinct", "distinct", True, _union(_integer, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextData(Payload):
+    """The ContextData schema.
+
+    an upload's announcement; the bytes follow in chunks unless the rows are unchanged
+    """
+
+    format: Literal["parquet", "arrow", "csv"]
+    bytes: int
+    digest: Digest
+    rows: int | None = None
+    file: str | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("format", "format", True, _literal("parquet", "arrow", "csv")),
+        Field("bytes", "bytes", True, _integer),
+        Field("digest", "digest", True, _decode_Digest),
+        Field("rows", "rows", False, _integer),
+        Field("file", "file", False, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextSourceRead(Payload):
+    """What a context reads from a source: one `table` or a `sql` query."""
+
+    source: Name
+    table: str | None = None
+    sql: str | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("source", "source", True, _decode_Name),
+        Field("table", "table", False, _text),
+        Field("sql", "sql", False, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextSource(Payload):
+    """The ContextSource schema."""
+
+    source: Name
+    kind: SourceKind
+    table: str | None
+    sql: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("source", "source", True, _decode_Name),
+        Field("kind", "kind", True, _decode_SourceKind),
+        Field("table", "table", True, _union(_text, _null)),
+        Field("sql", "sql", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextCreate(Payload):
+    """The ContextCreate schema.
+
+    one origin: `data` (an upload, version 1), `source` (an import, or with `kind:
+    live` a read at call time cached for `freshness_seconds`), or `kind: live` with
+    `columns` for rows that arrive through `append`
+    """
+
+    name: Name
+    kind: Literal["snapshot", "live"]
+    data: ContextData | None = None
+    source: ContextSourceRead | None = None
+    columns: dict[str, ColumnType] | None = None
+    targets: tuple[str, ...] | None = None
+    id: str | None = None
+    time: str | None = None
+    freshness_seconds: int | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("kind", "kind", True, _literal("snapshot", "live")),
+        Field("data", "data", False, _record(ContextData)),
+        Field("source", "source", False, _record(ContextSourceRead)),
+        Field("columns", "columns", False, _mapping(_decode_ColumnType)),
+        Field("targets", "targets", False, _items(_text)),
+        Field("id", "id", False, _union(_text, _null)),
+        Field("time", "time", False, _union(_text, _null)),
+        Field("freshness_seconds", "freshness_seconds", False, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextUploadTarget(Payload):
+    """The ContextUploadTarget schema."""
+
+    version: int
+    url: str | None
+    chunk_bytes: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("version", "version", True, _integer),
+        Field("url", "url", True, _union(_text, _null)),
+        Field("chunk_bytes", "chunk_bytes", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Context(Payload):
+    """The Context schema.
+
+    the data a model learns from; `version` is the latest (or the one read), `upload`
+    where an upload's chunks go
+    """
+
+    name: Name
+    kind: Literal["snapshot", "live"]
+    state: Literal["uploading", "importing", "ready", "failed"]
+    version: int | None
+    versions: int
+    digest: Digest | None
+    rows: int | None
+    columns: tuple[Column, ...]
+    id: str | None
+    time: str | None
+    source: ContextSource | None
+    freshness_seconds: int | None
+    read_at: str | None
+    error: str | None
+    predictors: tuple[Name, ...]
+    experiments: tuple[Name, ...]
+    origin: Origin
+    created: str
+    updated: str
+    url: str
+    targets: tuple[str, ...] | None = None
+    upload: ContextUploadTarget | None = None
+    unchanged: bool | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("kind", "kind", True, _literal("snapshot", "live")),
+        Field(
+            "state",
+            "state",
+            True,
+            _literal("uploading", "importing", "ready", "failed"),
+        ),
+        Field("version", "version", True, _union(_integer, _null)),
+        Field("versions", "versions", True, _integer),
+        Field("digest", "digest", True, _union(_decode_Digest, _null)),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("columns", "columns", True, _items(_record(Column))),
+        Field("id", "id", True, _union(_text, _null)),
+        Field("time", "time", True, _union(_text, _null)),
+        Field("targets", "targets", False, _items(_text)),
+        Field("source", "source", True, _union(_record(ContextSource), _null)),
+        Field("freshness_seconds", "freshness_seconds", True, _union(_integer, _null)),
+        Field("read_at", "read_at", True, _union(_text, _null)),
+        Field("error", "error", True, _union(_text, _null)),
+        Field("predictors", "predictors", True, _items(_decode_Name)),
+        Field("experiments", "experiments", True, _items(_decode_Name)),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("created", "created", True, _text),
+        Field("updated", "updated", True, _text),
+        Field("url", "url", True, _text),
+        Field("upload", "upload", False, _record(ContextUploadTarget)),
+        Field("unchanged", "unchanged", False, _boolean),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextUpload(Payload):
+    """The ContextUpload schema."""
+
+    data: ContextData
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("data", "data", True, _record(ContextData)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextList(Payload):
+    """The ContextList schema."""
+
+    contexts: tuple[Context, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("contexts", "contexts", True, _items(_record(Context))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextVersionInfo(Payload):
+    """The ContextVersionInfo schema."""
+
+    version: int
+    digest: Digest
+    rows: int
+    created: str
+    origin: Origin
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("version", "version", True, _integer),
+        Field("digest", "digest", True, _decode_Digest),
+        Field("rows", "rows", True, _integer),
+        Field("created", "created", True, _text),
+        Field("origin", "origin", True, _record(Origin)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextVersions(Payload):
+    """The ContextVersions schema."""
+
+    versions: tuple[ContextVersionInfo, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("versions", "versions", True, _items(_record(ContextVersionInfo))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Rows(Payload):
+    """A page of rows; `next` is the cursor for the page after, or null at the end."""
+
+    columns: tuple[Column, ...]
+    rows: tuple[Row, ...]
+    next: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("columns", "columns", True, _items(_record(Column))),
+        Field("rows", "rows", True, _items(_decode_Row)),
+        Field("next", "next", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Received(Payload):
+    """The bytes of the version the service holds so far."""
+
+    received: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("received", "received", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Holdout(Payload):
+    """The Holdout schema.
+
+    the rows held out to score: a random share or count (optionally stratified), whole
+    groups of a column, the latest by time, or none
+    """
+
+    kind: Literal["random", "group", "time", "none"]
+    fraction: float | None = None
+    rows: int | None = None
+    column: str | None = None
+    until: str | None = None
+    stratify: bool | None = None
+    seed: int | None = None
+    repeats: int | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("kind", "kind", True, _literal("random", "group", "time", "none")),
+        Field("fraction", "fraction", False, _number),
+        Field("rows", "rows", False, _integer),
+        Field("column", "column", False, _text),
+        Field("until", "until", False, _text),
+        Field("stratify", "stratify", False, _boolean),
+        Field("seed", "seed", False, _integer),
+        Field("repeats", "repeats", False, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentSetup(Payload):
+    """The ExperimentSetup schema.
+
+    an experiment's setup; `name` defaults to `<context>-<target>`, the task is
+    inferred from the target, the holdout is the latest 20% by `time` when one is
+    declared, else 20% at random
+    """
+
+    context: Name
+    target: str
+    name: Name | None = None
+    title: str | None = None
+    version: int | None = None
+    task: Task | None = None
+    id: str | None = None
+    time: str | None = None
+    inputs: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    types: dict[str, ColumnType] | None = None
+    holdout: Holdout | None = None
+    sql: str | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", False, _decode_Name),
+        Field("title", "title", False, _text),
+        Field("context", "context", True, _decode_Name),
+        Field("version", "version", False, _integer),
+        Field("target", "target", True, _text),
+        Field("task", "task", False, _decode_Task),
+        Field("id", "id", False, _text),
+        Field("time", "time", False, _text),
+        Field("inputs", "inputs", False, _items(_text)),
+        Field("exclude", "exclude", False, _items(_text)),
+        Field("types", "types", False, _mapping(_decode_ColumnType)),
+        Field("holdout", "holdout", False, _record(Holdout)),
+        Field("sql", "sql", False, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentCreate(Payload):
+    """The setup, and the models of run 1: the recommended set when left out."""
+
+    context: Name
+    target: str
+    name: Name | None = None
+    title: str | None = None
+    version: int | None = None
+    task: Task | None = None
+    id: str | None = None
+    time: str | None = None
+    inputs: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    types: dict[str, ColumnType] | None = None
+    holdout: Holdout | None = None
+    sql: str | None = None
+    models: tuple[ModelField, ...] | None = None
+    dry_run: bool | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", False, _decode_Name),
+        Field("title", "title", False, _text),
+        Field("context", "context", True, _decode_Name),
+        Field("version", "version", False, _integer),
+        Field("target", "target", True, _text),
+        Field("task", "task", False, _decode_Task),
+        Field("id", "id", False, _text),
+        Field("time", "time", False, _text),
+        Field("inputs", "inputs", False, _items(_text)),
+        Field("exclude", "exclude", False, _items(_text)),
+        Field("types", "types", False, _mapping(_decode_ColumnType)),
+        Field("holdout", "holdout", False, _record(Holdout)),
+        Field("sql", "sql", False, _text),
+        Field("models", "models", False, _items(_decode_ModelField)),
+        Field("dry_run", "dry_run", False, _boolean),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentUpdate(Payload):
+    """The setup fields that change; earlier runs become `stale`."""
+
+    title: str | None = None
+    context: Name | None = None
+    version: int | None = None
+    target: str | None = None
+    task: Task | None = None
+    id: str | None = None
+    time: str | None = None
+    inputs: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    types: dict[str, ColumnType] | None = None
+    holdout: Holdout | None = None
+    sql: str | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("title", "title", False, _text),
+        Field("context", "context", False, _decode_Name),
+        Field("version", "version", False, _integer),
+        Field("target", "target", False, _text),
+        Field("task", "task", False, _decode_Task),
+        Field("id", "id", False, _text),
+        Field("time", "time", False, _text),
+        Field("inputs", "inputs", False, _items(_text)),
+        Field("exclude", "exclude", False, _items(_text)),
+        Field("types", "types", False, _mapping(_decode_ColumnType)),
+        Field("holdout", "holdout", False, _record(Holdout)),
+        Field("sql", "sql", False, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Entry(Payload):
+    """The Entry schema."""
+
+    model: ModelField
+    short: str | None
+    state: Literal["queued", "running", "finished", "failed", "cancelled"]
+    score: float | None
+    interval: tuple[float, ...] | None
+    metrics: dict[str, float]
+    seconds: float
+    rows: int
+    credits: float
+    usd: float
+    error: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("model", "model", True, _decode_ModelField),
+        Field("short", "short", True, _union(_text, _null)),
+        Field(
+            "state",
+            "state",
+            True,
+            _literal("queued", "running", "finished", "failed", "cancelled"),
+        ),
+        Field("score", "score", True, _union(_number, _null)),
+        Field("interval", "interval", True, _union(_items(_number), _null)),
+        Field("metrics", "metrics", True, _mapping(_number)),
+        Field("seconds", "seconds", True, _number),
+        Field("rows", "rows", True, _integer),
+        Field("credits", "credits", True, _number),
+        Field("usd", "usd", True, _number),
+        Field("error", "error", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRun(Payload):
+    """The ExperimentRun schema.
+
+    a run: its models scored on the held-out rows, best first; it pins the context
+    digest, setup digest and model digests, and is `stale` once the setup moved
+    """
+
+    experiment: Name
+    number: int
+    state: Literal["queued", "running", "finished", "failed", "cancelled"]
+    stale: bool
+    models: tuple[ModelId, ...]
+    metric: str
+    lower_is_better: bool
+    held_rows: int
+    context_rows: int
+    repeats: int
+    leaderboard: tuple[Entry, ...]
+    rows: int
+    credits: float
+    usd: float
+    created: str
+    started: str | None
+    finished: str | None
+    origin: Origin
+    error: str | None
+    url: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("experiment", "experiment", True, _decode_Name),
+        Field("number", "number", True, _integer),
+        Field(
+            "state",
+            "state",
+            True,
+            _literal("queued", "running", "finished", "failed", "cancelled"),
+        ),
+        Field("stale", "stale", True, _boolean),
+        Field("models", "models", True, _items(_decode_ModelId)),
+        Field("metric", "metric", True, _text),
+        Field("lower_is_better", "lower_is_better", True, _boolean),
+        Field("held_rows", "held_rows", True, _integer),
+        Field("context_rows", "context_rows", True, _integer),
+        Field("repeats", "repeats", True, _integer),
+        Field("leaderboard", "leaderboard", True, _items(_record(Entry))),
+        Field("rows", "rows", True, _integer),
+        Field("credits", "credits", True, _number),
+        Field("usd", "usd", True, _number),
+        Field("created", "created", True, _text),
+        Field("started", "started", True, _union(_text, _null)),
+        Field("finished", "finished", True, _union(_text, _null)),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("error", "error", True, _union(_text, _null)),
+        Field("url", "url", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunSummary(Payload):
+    """The ExperimentRunSummary schema."""
+
+    number: int
+    state: Literal["queued", "running", "finished", "failed", "cancelled"]
+    models: tuple[ModelId, ...]
+    best: str | None
+    score: float | None
+    origin: Origin
+    created: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("number", "number", True, _integer),
+        Field(
+            "state",
+            "state",
+            True,
+            _literal("queued", "running", "finished", "failed", "cancelled"),
+        ),
+        Field("models", "models", True, _items(_decode_ModelId)),
+        Field("best", "best", True, _union(_text, _null)),
+        Field("score", "score", True, _union(_number, _null)),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("created", "created", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Experiment(Payload):
+    """The Experiment schema.
+
+    models evaluated on one context for one target; `run` is the latest, or the one
+    asked for
+    """
+
+    name: Name
+    title: str
+    context: Name
+    context_version: int
+    target: str
+    task: Task
+    id: str | None
+    time: str | None
+    inputs: tuple[str, ...]
+    types: dict[str, ColumnType]
+    holdout: Holdout
+    sql: str | None
+    metric: str
+    runs: tuple[ExperimentRunSummary, ...]
+    run: ExperimentRun | None
+    origin: Origin
+    created: str
+    updated: str
+    url: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("title", "title", True, _text),
+        Field("context", "context", True, _decode_Name),
+        Field("context_version", "context_version", True, _integer),
+        Field("target", "target", True, _text),
+        Field("task", "task", True, _decode_Task),
+        Field("id", "id", True, _union(_text, _null)),
+        Field("time", "time", True, _union(_text, _null)),
+        Field("inputs", "inputs", True, _items(_text)),
+        Field("types", "types", True, _mapping(_decode_ColumnType)),
+        Field("holdout", "holdout", True, _record(Holdout)),
+        Field("sql", "sql", True, _union(_text, _null)),
+        Field("metric", "metric", True, _text),
+        Field("runs", "runs", True, _items(_record(ExperimentRunSummary))),
+        Field("run", "run", True, _union(_record(ExperimentRun), _null)),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("created", "created", True, _text),
+        Field("updated", "updated", True, _text),
+        Field("url", "url", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentPlan(Payload):
+    """A dry run: the setup as it resolves, and what run 1 would cost."""
+
+    setup: ExperimentSetup
+    estimate: Estimate
+    warnings: tuple[str, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("setup", "setup", True, _record(ExperimentSetup)),
+        Field("estimate", "estimate", True, _record(Estimate)),
+        Field("warnings", "warnings", True, _items(_text)),
+    )
+
+
+ExperimentCreated = Experiment | ExperimentPlan
+_decode_ExperimentCreated: Decoder = _union(
+    _record(Experiment),
+    _record(ExperimentPlan),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentList(Payload):
+    """The experiments, each without its run's leaderboard."""
+
+    experiments: tuple[Experiment, ...]
+    next: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("experiments", "experiments", True, _items(_record(Experiment))),
+        Field("next", "next", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunCreate(Payload):
+    """The ExperimentRunCreate schema."""
+
+    models: tuple[ModelField, ...] | None = None
+    dry_run: bool | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("models", "models", False, _items(_decode_ModelField)),
+        Field("dry_run", "dry_run", False, _boolean),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunEstimate(Payload):
+    """The ExperimentRunEstimate schema."""
+
+    estimate: Estimate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("estimate", "estimate", True, _record(Estimate)),
+    )
+
+
+ExperimentRunCreated = ExperimentRun | ExperimentRunEstimate
+_decode_ExperimentRunCreated: Decoder = _union(
+    _record(ExperimentRun),
+    _record(ExperimentRunEstimate),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunList(Payload):
+    """The ExperimentRunList schema."""
+
+    runs: tuple[ExperimentRun, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("runs", "runs", True, _items(_record(ExperimentRun))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Slice(Payload):
+    """The Slice schema."""
+
+    column: str
+    value: str
+    rows: int
+    score: float
+    delta: float
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("column", "column", True, _text),
+        Field("value", "value", True, _text),
+        Field("rows", "rows", True, _integer),
+        Field("score", "score", True, _number),
+        Field("delta", "delta", True, _number),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SliceList(Payload):
+    """The SliceList schema."""
+
+    slices: tuple[Slice, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("slices", "slices", True, _items(_record(Slice))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class HeldRows(Payload):
+    """The held-out rows with one model's predictions beside them."""
+
+    model: ModelField
+    rows: tuple[Row, ...]
+    next: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("model", "model", True, _decode_ModelField),
+        Field("rows", "rows", True, _items(_decode_Row)),
+        Field("next", "next", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SpecPatch(Payload):
+    """The spec fields that change; `null` clears one."""
+
+    context: str | None = None
+    model: ModelField | None = None
+    target: str | None = None
+    task: Task | None = None
+    id: str | None = None
+    time: str | None = None
+    inputs: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    types: dict[str, ColumnType] | None = None
+    series: tuple[str, ...] | None = None
+    frequency: str | float | None = None
+    horizon: int | None = None
+    quantiles: tuple[float, ...] | None = None
+    past: tuple[str, ...] | None = None
+    future: tuple[str, ...] | None = None
+    selection: Selection | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field(
+            "context",
+            "context",
+            False,
+            _union(_pattern("^[a-z][a-z0-9-]{0,62}(@[1-9][0-9]{0,8})?$"), _null),
+        ),
+        Field("model", "model", False, _union(_decode_ModelField, _null)),
+        Field("target", "target", False, _union(_text, _null)),
+        Field("task", "task", False, _union(_decode_Task, _null)),
+        Field("id", "id", False, _union(_text, _null)),
+        Field("time", "time", False, _union(_text, _null)),
+        Field("inputs", "inputs", False, _union(_items(_text), _null)),
+        Field("exclude", "exclude", False, _union(_items(_text), _null)),
+        Field("types", "types", False, _union(_mapping(_decode_ColumnType), _null)),
+        Field("series", "series", False, _union(_items(_text), _null)),
+        Field("frequency", "frequency", False, _union(_union(_text, _number), _null)),
+        Field("horizon", "horizon", False, _union(_integer, _null)),
+        Field("quantiles", "quantiles", False, _union(_items(_number), _null)),
+        Field("past", "past", False, _union(_items(_text), _null)),
+        Field("future", "future", False, _union(_items(_text), _null)),
+        Field("selection", "selection", False, _union(_record(Selection), _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorUpdate(Payload):
+    """The PredictorUpdate schema."""
+
+    spec: SpecPatch
+    env: Name
+    dry_run: bool | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("spec", "spec", True, _record(SpecPatch)),
+        Field("env", "env", True, _decode_Name),
+        Field("dry_run", "dry_run", False, _boolean),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorDeploy(Payload):
+    """The PredictorDeploy schema."""
+
+    spec: Spec
+    env: Name
+    dry_run: bool | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("spec", "spec", True, _record(Spec)),
+        Field("env", "env", True, _decode_Name),
+        Field("dry_run", "dry_run", False, _boolean),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Change(Payload):
+    """The Change schema."""
+
+    field: str
+    before: str | None
+    after: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("field", "field", True, _text),
+        Field("before", "before", True, _union(_text, _null)),
+        Field("after", "after", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Deploy(Payload):
+    """What a create, update or deploy did; `unchanged` wrote nothing.
+
+    The environment is `starting` until its replica is ready, which `environments.get`
+    reports
+    """
+
+    predictor: Name
+    env: Name
+    action: Literal["created", "updated", "unchanged"]
+    changes: tuple[Change, ...]
+    revision: Revision
+    environment: Environment | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("predictor", "predictor", True, _decode_Name),
+        Field("env", "env", True, _decode_Name),
+        Field("action", "action", True, _literal("created", "updated", "unchanged")),
+        Field("changes", "changes", True, _items(_record(Change))),
+        Field("revision", "revision", True, _record(Revision)),
+        Field("environment", "environment", True, _union(_record(Environment), _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorInfo(Payload):
+    """A named, versioned endpoint: its latest revision's spec and each environment."""
+
+    name: Name
+    spec: Spec
+    resolved: Resolved
+    revision: int
+    environments: dict[str, Environment]
+    origin: Origin
+    created: str
+    url: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("spec", "spec", True, _record(Spec)),
+        Field("resolved", "resolved", True, _record(Resolved)),
+        Field("revision", "revision", True, _integer),
+        Field("environments", "environments", True, _mapping(_record(Environment))),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("created", "created", True, _text),
+        Field("url", "url", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorInfoList(Payload):
+    """The PredictorInfoList schema."""
+
+    predictors: tuple[PredictorInfo, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("predictors", "predictors", True, _items(_record(PredictorInfo))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class EstimateQuery(Payload):
+    """The EstimateQuery schema."""
+
+    model: ModelField
+    context_rows: int
+    queries: int
+    task: Task | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("model", "model", True, _decode_ModelField),
+        Field("task", "task", False, _decode_Task),
+        Field("context_rows", "context_rows", True, _integer),
+        Field("queries", "queries", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceCreate(Payload):
+    """The SourceCreate schema."""
+
+    name: Name
+    kind: SourceKind
+    config: dict[str, str]
+    secret: str | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("kind", "kind", True, _decode_SourceKind),
+        Field("config", "config", True, _mapping(_text)),
+        Field("secret", "secret", False, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceTable(Payload):
+    """The SourceTable schema."""
+
+    name: str
+    rows: int | None
+    bytes: int | None
+    updated: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _text),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("bytes", "bytes", True, _union(_integer, _null)),
+        Field("updated", "updated", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceTables(Payload):
+    """The SourceTables schema."""
+
+    tables: tuple[SourceTable, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("tables", "tables", True, _items(_record(SourceTable))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreview(Payload):
+    """One `table` or a `sql` query; the answer is its first 20 rows."""
+
+    table: str | None = None
+    sql: str | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("table", "table", False, _text),
+        Field("sql", "sql", False, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class KeyDeleted(Payload):
+    """The KeyDeleted schema."""
+
+    id: str
+    deleted: Literal[True] = True
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("id", "id", True, _text),
+        Field("deleted", "deleted", True, _literal(True)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextReply(Payload):
+    """The ContextReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Context
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Context)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextListReply(Payload):
+    """The ContextListReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ContextList
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(ContextList)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextVersionsReply(Payload):
+    """The ContextVersionsReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ContextVersions
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(ContextVersions)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RowsReply(Payload):
+    """The RowsReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Rows
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Rows)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReceivedReply(Payload):
+    """The ReceivedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Received
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Received)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class DeletedReply(Payload):
+    """The DeletedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Deleted
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Deleted)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class CodeReply(Payload):
+    """The CodeReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Code
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Code)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentReply(Payload):
+    """The ExperimentReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Experiment
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Experiment)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentCreatedReply(Payload):
+    """The ExperimentCreatedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ExperimentCreated
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _decode_ExperimentCreated),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentListReply(Payload):
+    """The ExperimentListReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ExperimentList
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(ExperimentList)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunReply(Payload):
+    """The ExperimentRunReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ExperimentRun
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(ExperimentRun)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunCreatedReply(Payload):
+    """The ExperimentRunCreatedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ExperimentRunCreated
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _decode_ExperimentRunCreated),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunListReply(Payload):
+    """The ExperimentRunListReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: ExperimentRunList
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(ExperimentRunList)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SliceListReply(Payload):
+    """The SliceListReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SliceList
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SliceList)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class HeldRowsReply(Payload):
+    """The HeldRowsReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: HeldRows
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(HeldRows)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class DeployReply(Payload):
+    """The DeployReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Deploy
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Deploy)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorInfoReply(Payload):
+    """The PredictorInfoReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: PredictorInfo
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(PredictorInfo)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorInfoListReply(Payload):
+    """The PredictorInfoListReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: PredictorInfoList
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(PredictorInfoList)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class EstimateReply(Payload):
+    """The EstimateReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Estimate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Estimate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceReply(Payload):
+    """The SourceReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Source
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Source)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceTablesReply(Payload):
+    """The SourceTablesReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SourceTables
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SourceTables)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class KeyDeletedReply(Payload):
+    """The KeyDeletedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: KeyDeleted
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(KeyDeleted)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextCreateRequest(Payload):
+    """The ContextCreateRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: ContextCreate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(ContextCreate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextUploadRequest(Payload):
+    """The ContextUploadRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: ContextUpload
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(ContextUpload)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentCreateRequest(Payload):
+    """The ExperimentCreateRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: ExperimentCreate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(ExperimentCreate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentUpdateRequest(Payload):
+    """The ExperimentUpdateRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: ExperimentUpdate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(ExperimentUpdate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperimentRunCreateRequest(Payload):
+    """The ExperimentRunCreateRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: ExperimentRunCreate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(ExperimentRunCreate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorUpdateRequest(Payload):
+    """The PredictorUpdateRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: PredictorUpdate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(PredictorUpdate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PredictorDeployRequest(Payload):
+    """The PredictorDeployRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: PredictorDeploy
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(PredictorDeploy)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class EstimateQueryRequest(Payload):
+    """The EstimateQueryRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: EstimateQuery
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(EstimateQuery)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceCreateRequest(Payload):
+    """The SourceCreateRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: SourceCreate
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(SourceCreate)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreviewRequest(Payload):
+    """The SourcePreviewRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: SourcePreview
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(SourcePreview)),
+    )
+
+
 ROUTES: tuple[Route, ...] = (
     Route(
         "predictors.predict",
@@ -7844,11 +8442,267 @@ ROUTES: tuple[Route, ...] = (
         None,
     ),
     Route(
+        "environments.list",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments",
+        None,
+        EnvironmentListReply,
+        None,
+    ),
+    Route(
+        "environments.get",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}",
+        None,
+        EnvironmentReply,
+        None,
+    ),
+    Route(
+        "environments.promote",
+        "POST",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/promote",
+        PromoteRequest,
+        EnvironmentReply,
+        "application/json",
+    ),
+    Route(
+        "environments.rollback",
+        "POST",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/rollback",
+        PromoteRequest,
+        EnvironmentReply,
+        "application/json",
+    ),
+    Route(
+        "environments.metrics",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/metrics",
+        None,
+        MetricsReply,
+        None,
+    ),
+    Route(
+        "environments.logs",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs",
+        None,
+        LogsReply,
+        None,
+    ),
+    Route(
+        "environments.logs.histogram",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs/histogram",
+        None,
+        LogHistogramReply,
+        None,
+    ),
+    Route(
+        "predictors.delete",
+        "POST",
+        "/v1/projects/{project}/predictors/{name}/delete",
+        EmptyRequest,
+        PredictorDeletedReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.list",
+        "GET",
+        "/v1/projects/{project}/contexts",
+        None,
+        ContextListReply,
+        None,
+    ),
+    Route(
+        "contexts.create",
+        "POST",
+        "/v1/projects/{project}/contexts",
+        ContextCreateRequest,
+        ContextReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.get",
+        "GET",
+        "/v1/projects/{project}/contexts/{name}",
+        None,
+        ContextReply,
+        None,
+    ),
+    Route(
+        "contexts.versions",
+        "GET",
+        "/v1/projects/{project}/contexts/{name}/versions",
+        None,
+        ContextVersionsReply,
+        None,
+    ),
+    Route(
+        "contexts.upload",
+        "POST",
+        "/v1/projects/{project}/contexts/{name}/versions",
+        ContextUploadRequest,
+        ContextReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.bytes",
+        "POST",
+        "/v1/projects/{project}/contexts/{name}/versions/{version}/bytes",
+        None,
+        ReceivedReply,
+        "application/octet-stream",
+    ),
+    Route(
+        "contexts.refresh",
+        "POST",
+        "/v1/projects/{project}/contexts/{name}/refresh",
+        EmptyRequest,
+        ContextReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.append",
+        "POST",
+        "/v1/projects/{project}/contexts/{name}/append",
+        LiveContextAppendRequest,
+        ReceiptReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.label",
+        "POST",
+        "/v1/projects/{project}/contexts/{name}/label",
+        LiveContextLabelRequest,
+        ReceiptReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.rows",
+        "GET",
+        "/v1/projects/{project}/contexts/{name}/rows",
+        None,
+        RowsReply,
+        None,
+    ),
+    Route(
+        "contexts.delete",
+        "POST",
+        "/v1/projects/{project}/contexts/{name}/delete",
+        EmptyRequest,
+        DeletedReply,
+        "application/json",
+    ),
+    Route(
+        "contexts.code",
+        "GET",
+        "/v1/projects/{project}/contexts/{name}/code",
+        None,
+        CodeReply,
+        None,
+    ),
+    Route(
+        "experiments.list",
+        "GET",
+        "/v1/projects/{project}/experiments",
+        None,
+        ExperimentListReply,
+        None,
+    ),
+    Route(
+        "experiments.create",
+        "POST",
+        "/v1/projects/{project}/experiments",
+        ExperimentCreateRequest,
+        ExperimentCreatedReply,
+        "application/json",
+    ),
+    Route(
+        "experiments.get",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}",
+        None,
+        ExperimentReply,
+        None,
+    ),
+    Route(
+        "experiments.update",
+        "POST",
+        "/v1/projects/{project}/experiments/{name}/update",
+        ExperimentUpdateRequest,
+        ExperimentReply,
+        "application/json",
+    ),
+    Route(
+        "experiments.runs",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}/runs",
+        None,
+        ExperimentRunListReply,
+        None,
+    ),
+    Route(
+        "experiments.run",
+        "POST",
+        "/v1/projects/{project}/experiments/{name}/runs",
+        ExperimentRunCreateRequest,
+        ExperimentRunCreatedReply,
+        "application/json",
+    ),
+    Route(
+        "experiments.runs.get",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}/runs/{number}",
+        None,
+        ExperimentRunReply,
+        None,
+    ),
+    Route(
+        "experiments.cancel",
+        "POST",
+        "/v1/projects/{project}/experiments/{name}/runs/{number}/cancel",
+        EmptyRequest,
+        ExperimentRunReply,
+        "application/json",
+    ),
+    Route(
+        "experiments.rows",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}/runs/{number}/rows",
+        None,
+        HeldRowsReply,
+        None,
+    ),
+    Route(
+        "experiments.slices",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}/runs/{number}/slices",
+        None,
+        SliceListReply,
+        None,
+    ),
+    Route(
+        "experiments.delete",
+        "POST",
+        "/v1/projects/{project}/experiments/{name}/delete",
+        EmptyRequest,
+        DeletedReply,
+        "application/json",
+    ),
+    Route(
+        "experiments.code",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}/code",
+        None,
+        CodeReply,
+        None,
+    ),
+    Route(
         "predictors.list",
         "GET",
         "/v1/projects/{project}/predictors",
         None,
-        PredictorListReply,
+        PredictorInfoListReply,
         None,
     ),
     Route(
@@ -7856,7 +8710,7 @@ ROUTES: tuple[Route, ...] = (
         "POST",
         "/v1/projects/{project}/predictors",
         PredictorCreateRequest,
-        PredictorCreatedReply,
+        DeployReply,
         "application/json",
     ),
     Route(
@@ -7864,8 +8718,120 @@ ROUTES: tuple[Route, ...] = (
         "GET",
         "/v1/projects/{project}/predictors/{name}",
         None,
-        PredictorReply,
+        PredictorInfoReply,
         None,
+    ),
+    Route(
+        "predictors.update",
+        "POST",
+        "/v1/projects/{project}/predictors/{name}/update",
+        PredictorUpdateRequest,
+        DeployReply,
+        "application/json",
+    ),
+    Route(
+        "predictors.deploy",
+        "POST",
+        "/v1/projects/{project}/predictors/{name}/deploy",
+        PredictorDeployRequest,
+        DeployReply,
+        "application/json",
+    ),
+    Route(
+        "revisions.list",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/revisions",
+        None,
+        RevisionListReply,
+        None,
+    ),
+    Route(
+        "revisions.get",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/revisions/{number}",
+        None,
+        RevisionReply,
+        None,
+    ),
+    Route(
+        "predictors.code",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/code",
+        None,
+        CodeReply,
+        None,
+    ),
+    Route(
+        "estimate",
+        "POST",
+        "/v1/projects/{project}/estimate",
+        EstimateQueryRequest,
+        EstimateReply,
+        "application/json",
+    ),
+    Route(
+        "sources.list",
+        "GET",
+        "/v1/projects/{project}/sources",
+        None,
+        SourceListReply,
+        None,
+    ),
+    Route(
+        "sources.create",
+        "POST",
+        "/v1/projects/{project}/sources",
+        SourceCreateRequest,
+        SourceReply,
+        "application/json",
+    ),
+    Route(
+        "sources.get",
+        "GET",
+        "/v1/projects/{project}/sources/{source}",
+        None,
+        SourceReply,
+        None,
+    ),
+    Route(
+        "sources.tables",
+        "GET",
+        "/v1/projects/{project}/sources/{source}/tables",
+        None,
+        SourceTablesReply,
+        None,
+    ),
+    Route(
+        "sources.preview",
+        "POST",
+        "/v1/projects/{project}/sources/{source}/preview",
+        SourcePreviewRequest,
+        RowsReply,
+        "application/json",
+    ),
+    Route(
+        "sources.test",
+        "POST",
+        "/v1/projects/{project}/sources/{source}/test",
+        EmptyRequest,
+        SourceReply,
+        "application/json",
+    ),
+    Route(
+        "sources.delete",
+        "POST",
+        "/v1/projects/{project}/sources/{source}/delete",
+        EmptyRequest,
+        DeletedReply,
+        "application/json",
+    ),
+    Route(
+        "keys.delete",
+        "POST",
+        "/v1/projects/{project}/keys/{key}/delete",
+        KeyRefRequest,
+        KeyDeletedReply,
+        "application/json",
     ),
     Route(
         "models.list",
@@ -7960,222 +8926,6 @@ ROUTES: tuple[Route, ...] = (
         "application/json",
     ),
     Route(
-        "predictors.check",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/check",
-        PredictorCheckRequest,
-        PredictorCheckReply,
-        "application/json",
-    ),
-    Route(
-        "evaluations.create",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/evaluations",
-        EvaluationCreateRequest,
-        EvaluationReply,
-        "application/json",
-    ),
-    Route(
-        "evaluations.get",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/evaluations/{evaluation}",
-        None,
-        EvaluationReply,
-        None,
-    ),
-    Route(
-        "revisions.list",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/revisions",
-        None,
-        RevisionListReply,
-        None,
-    ),
-    Route(
-        "revisions.register",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/revisions",
-        RevisionRegisterRequest,
-        RevisionReply,
-        "application/json",
-    ),
-    Route(
-        "revisions.get",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/revisions/{number}",
-        None,
-        RevisionDetailsReply,
-        None,
-    ),
-    Route(
-        "environments.list",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/environments",
-        None,
-        EnvironmentListReply,
-        None,
-    ),
-    Route(
-        "environments.create",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/environments",
-        EnvironmentCreateRequest,
-        EnvironmentReply,
-        "application/json",
-    ),
-    Route(
-        "environments.get",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/environments/{environment}",
-        None,
-        EnvironmentReply,
-        None,
-    ),
-    Route(
-        "environments.promote",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/environments/{environment}/promote",
-        PromoteRequest,
-        EnvironmentReply,
-        "application/json",
-    ),
-    Route(
-        "environments.rollback",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/environments/{environment}/rollback",
-        PromoteRequest,
-        EnvironmentReply,
-        "application/json",
-    ),
-    Route(
-        "environments.metrics",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/environments/{environment}/metrics",
-        None,
-        MetricsReply,
-        None,
-    ),
-    Route(
-        "environments.logs",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs",
-        None,
-        LogsReply,
-        None,
-    ),
-    Route(
-        "environments.logs.histogram",
-        "GET",
-        "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs/histogram",
-        None,
-        LogHistogramReply,
-        None,
-    ),
-    Route(
-        "predictors.delete",
-        "POST",
-        "/v1/projects/{project}/predictors/{name}/delete",
-        EmptyRequest,
-        PredictorDeletedReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.list",
-        "GET",
-        "/v1/projects/{project}/contexts",
-        None,
-        LiveContextListReply,
-        None,
-    ),
-    Route(
-        "contexts.create",
-        "POST",
-        "/v1/projects/{project}/contexts",
-        LiveContextCreateRequest,
-        LiveContextReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.show",
-        "GET",
-        "/v1/projects/{project}/contexts/{name}",
-        None,
-        LiveContextReply,
-        None,
-    ),
-    Route(
-        "contexts.append",
-        "POST",
-        "/v1/projects/{project}/contexts/{name}/append",
-        LiveContextAppendRequest,
-        ReceiptReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.label",
-        "POST",
-        "/v1/projects/{project}/contexts/{name}/label",
-        LiveContextLabelRequest,
-        ReceiptReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.imports",
-        "POST",
-        "/v1/projects/{project}/contexts/{name}/imports",
-        ContextImportRequest,
-        ImportReceiptReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.refresh",
-        "POST",
-        "/v1/projects/{project}/contexts/{name}/refresh",
-        EmptyRequest,
-        ImportReceiptReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.mutate",
-        "POST",
-        "/v1/projects/{project}/contexts/{name}/mutations",
-        MutationRequest,
-        AcceptedWriteReply,
-        "application/json",
-    ),
-    Route(
-        "contexts.snapshot",
-        "POST",
-        "/v1/projects/{project}/contexts/{name}/snapshot",
-        ContextSnapshotQueryRequest,
-        ContextSnapshotReply,
-        "application/json",
-    ),
-    Route(
-        "sources.list",
-        "GET",
-        "/v1/projects/{project}/sources/pins",
-        None,
-        SourceListReply,
-        None,
-    ),
-    Route(
-        "sources.pin",
-        "POST",
-        "/v1/projects/{project}/sources/pins",
-        SourcePinRequest,
-        SourcePinReply,
-        "application/json",
-    ),
-    Route(
-        "sources.get",
-        "GET",
-        "/v1/projects/{project}/sources/pins/{source}",
-        None,
-        SourcePinReply,
-        None,
-    ),
-    Route(
         "sources.prepare",
         "POST",
         "/v1/projects/{project}/sources:prepare",
@@ -8198,6 +8948,14 @@ ROUTES: tuple[Route, ...] = (
         SnapshotCreateRequest,
         SnapshotReply,
         "application/json",
+    ),
+    Route(
+        "snapshots.put",
+        "PUT",
+        "/v1/projects/{project}/snapshots",
+        None,
+        HeldSnapshotReply,
+        "application/vnd.apache.arrow.stream",
     ),
     Route(
         "snapshots.create_synthetic",
@@ -8309,19 +9067,19 @@ ROUTES: tuple[Route, ...] = (
         None,
     ),
     Route(
-        "logins.start",
+        "device.start",
         "POST",
-        "/v1/cli-logins",
-        CliLoginStart,
-        CliLoginGrant,
+        "/v1/device-logins",
+        DeviceLoginStart,
+        DeviceLoginGrant,
         "application/json",
     ),
     Route(
-        "logins.token",
+        "device.token",
         "POST",
-        "/v1/cli-logins/token",
-        CliLoginPoll,
-        CliLoginToken,
+        "/v1/device-logins/token",
+        DeviceLoginPoll,
+        DeviceLoginToken,
         "application/json",
     ),
     Route("onboarding.get", "GET", "/v1/onboarding", None, OnboardingReply, None),
@@ -8497,25 +9255,25 @@ ROUTES: tuple[Route, ...] = (
     Route(
         "device.preview",
         "POST",
-        "/v1/cli-logins/preview",
-        CliLoginCodeRequest,
-        CliLoginPreviewReply,
+        "/v1/device-logins/preview",
+        DeviceLoginCodeRequest,
+        DeviceLoginPreviewReply,
         "application/json",
     ),
     Route(
         "device.approve",
         "POST",
-        "/v1/cli-logins/approve",
-        CliLoginApproveRequest,
-        CliLoginApprovedReply,
+        "/v1/device-logins/approve",
+        DeviceLoginApproveRequest,
+        DeviceLoginApprovedReply,
         "application/json",
     ),
     Route(
         "device.deny",
         "POST",
-        "/v1/cli-logins/deny",
-        CliLoginCodeRequest,
-        CliLoginDeniedReply,
+        "/v1/device-logins/deny",
+        DeviceLoginCodeRequest,
+        DeviceLoginDeniedReply,
         "application/json",
     ),
 )
