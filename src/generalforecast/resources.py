@@ -141,7 +141,11 @@ class Contexts(_Sync):
     def upload(
         self, context: str | Context, data: DataLike, *, wait: bool = True
     ) -> Context:
-        """Uploads a new version; rows whose digest matches the latest add none (`unchanged`)."""
+        """Uploads a new version, creating the context when it has none yet.
+
+        Rows whose digest matches the latest version add none (`unchanged`),
+        so CI and scripts can call it on every run.
+        """
         return self._run(_ops.context_upload(context, data, wait=wait))
 
     def refresh(self, context: str | Context, *, wait: bool = True) -> Context:
@@ -215,6 +219,7 @@ class Experiments(_Sync):
         models: Sequence[str] | None = None,
         wait: bool = True,
         timeout: float | None = None,
+        poll: float | None = None,
     ) -> Experiment:
         """Creates an experiment and starts run 1; with `wait`, returns once it ends.
 
@@ -230,7 +235,7 @@ class Experiments(_Sync):
             name=name, title=title, context=context, target=target, task=task, id=id,
             time=time, inputs=inputs, exclude=exclude, types=types, holdout=holdout, sql=sql,
         )  # fmt: skip
-        return self._run(_ops.experiment_create(values, models, wait, timeout))
+        return self._run(_ops.experiment_create(values, models, wait, timeout, poll))
 
     def estimate(
         self,
@@ -263,9 +268,10 @@ class Experiments(_Sync):
         models: Sequence[str] | None = None,
         wait: bool = True,
         timeout: float | None = None,
+        poll: float | None = None,
     ) -> Experiment:
         """Starts another run with the same setup."""
-        return self._run(_ops.experiment_run(experiment, models, wait, timeout))
+        return self._run(_ops.experiment_run(experiment, models, wait, timeout, poll))
 
     def update(
         self,
@@ -308,9 +314,16 @@ class Experiments(_Sync):
         *,
         run: int | None = None,
         timeout: float | None = None,
+        poll: float | None = None,
     ) -> Experiment:
-        """Waits for a run to end and returns the experiment with it."""
-        return self._run(_ops.experiment_wait(experiment, run=run, timeout=timeout))
+        """Waits for a run to end and returns the experiment with it.
+
+        `poll` is the seconds between checks, as in every method that
+        waits; left out, checks start 1s apart and slow to one every 5s.
+        """
+        return self._run(
+            _ops.experiment_wait(experiment, run=run, timeout=timeout, poll=poll)
+        )
 
     def cancel(
         self, experiment: str | Experiment, *, run: int | None = None
@@ -353,6 +366,7 @@ class Predictors(_Sync):
         env: str = "production",
         wait: bool = True,
         timeout: float = 600,
+        poll: float | None = None,
         **spec_fields: Any,
     ) -> PredictorInfo:
         """Creates a predictor from `gf.Predictor`'s fields and deploys it to `env`.
@@ -361,7 +375,9 @@ class Predictors(_Sync):
             Conflict: When a predictor of that name exists.
             Error: Not recoverable, when the deploy fails to start.
         """
-        return self._run(_ops.predictor_create(name, env, wait, timeout, spec_fields))
+        return self._run(
+            _ops.predictor_create(name, env, wait, timeout, spec_fields, poll)
+        )
 
     def update(
         self,
@@ -370,11 +386,12 @@ class Predictors(_Sync):
         env: str = "production",
         wait: bool = True,
         timeout: float = 600,
+        poll: float | None = None,
         **changed_fields: Any,
     ) -> PredictorInfo:
         """Makes a revision of the given fields over the serving spec (`None` clears one) and deploys it."""
         return self._run(
-            _ops.predictor_update(predictor, env, wait, timeout, changed_fields)
+            _ops.predictor_update(predictor, env, wait, timeout, changed_fields, poll)
         )
 
     def deploy(
@@ -384,6 +401,7 @@ class Predictors(_Sync):
         dry_run: bool = False,
         wait: bool = True,
         timeout: float = 600,
+        poll: float | None = None,
     ) -> builtins.list[Deploy]:
         """Makes `env` serve each spec: creates, revises, or leaves it as it is.
 
@@ -391,7 +409,9 @@ class Predictors(_Sync):
         id. Predictors absent from `specs` are never deleted. `dry_run`
         returns the plan only.
         """
-        return self._run(_ops.predictor_deploy(specs, env, dry_run, wait, timeout))
+        return self._run(
+            _ops.predictor_deploy(specs, env, dry_run, wait, timeout, poll)
+        )
 
     def get(self, predictor: str | PredictorInfo) -> PredictorInfo:
         """A predictor."""
@@ -426,12 +446,15 @@ class Predictors(_Sync):
         env: str = "production",
         revision: int | None = None,
         wait: bool = True,
+        poll: float | None = None,
     ) -> Environment:
         """Points `env` at what `from_env` serves, or at `revision`."""
         payload = (
             {"revision": revision} if revision is not None else {"from_env": from_env}
         )
-        return self._run(_ops.predictor_move(predictor, env, "promote", payload, wait))
+        return self._run(
+            _ops.predictor_move(predictor, env, "promote", payload, wait, poll)
+        )
 
     def rollback(
         self,
@@ -440,10 +463,13 @@ class Predictors(_Sync):
         env: str = "production",
         revision: int | None = None,
         wait: bool = True,
+        poll: float | None = None,
     ) -> Environment:
         """Points `env` back at what it served before, or at `revision`."""
         payload = {"revision": revision} if revision is not None else {}
-        return self._run(_ops.predictor_move(predictor, env, "rollback", payload, wait))
+        return self._run(
+            _ops.predictor_move(predictor, env, "rollback", payload, wait, poll)
+        )
 
     def logs(
         self,
@@ -693,13 +719,16 @@ class AsyncExperiments(_Async):
         models: Sequence[str] | None = None,
         wait: bool = True,
         timeout: float | None = None,
+        poll: float | None = None,
     ) -> Experiment:
         """See `Experiments.create`."""
         values = _setup(
             name=name, title=title, context=context, target=target, task=task, id=id,
             time=time, inputs=inputs, exclude=exclude, types=types, holdout=holdout, sql=sql,
         )  # fmt: skip
-        return await self._run(_ops.experiment_create(values, models, wait, timeout))
+        return await self._run(
+            _ops.experiment_create(values, models, wait, timeout, poll)
+        )
 
     async def estimate(
         self,
@@ -732,9 +761,12 @@ class AsyncExperiments(_Async):
         models: Sequence[str] | None = None,
         wait: bool = True,
         timeout: float | None = None,
+        poll: float | None = None,
     ) -> Experiment:
         """See `Experiments.run`."""
-        return await self._run(_ops.experiment_run(experiment, models, wait, timeout))
+        return await self._run(
+            _ops.experiment_run(experiment, models, wait, timeout, poll)
+        )
 
     async def update(
         self,
@@ -777,10 +809,11 @@ class AsyncExperiments(_Async):
         *,
         run: int | None = None,
         timeout: float | None = None,
+        poll: float | None = None,
     ) -> Experiment:
         """See `Experiments.wait`."""
         return await self._run(
-            _ops.experiment_wait(experiment, run=run, timeout=timeout)
+            _ops.experiment_wait(experiment, run=run, timeout=timeout, poll=poll)
         )
 
     async def cancel(
@@ -826,11 +859,12 @@ class AsyncPredictors(_Async):
         env: str = "production",
         wait: bool = True,
         timeout: float = 600,
+        poll: float | None = None,
         **spec_fields: Any,
     ) -> PredictorInfo:
         """See `Predictors.create`."""
         return await self._run(
-            _ops.predictor_create(name, env, wait, timeout, spec_fields)
+            _ops.predictor_create(name, env, wait, timeout, spec_fields, poll)
         )
 
     async def update(
@@ -840,11 +874,12 @@ class AsyncPredictors(_Async):
         env: str = "production",
         wait: bool = True,
         timeout: float = 600,
+        poll: float | None = None,
         **changed_fields: Any,
     ) -> PredictorInfo:
         """See `Predictors.update`."""
         return await self._run(
-            _ops.predictor_update(predictor, env, wait, timeout, changed_fields)
+            _ops.predictor_update(predictor, env, wait, timeout, changed_fields, poll)
         )
 
     async def deploy(
@@ -854,10 +889,11 @@ class AsyncPredictors(_Async):
         dry_run: bool = False,
         wait: bool = True,
         timeout: float = 600,
+        poll: float | None = None,
     ) -> builtins.list[Deploy]:
         """See `Predictors.deploy`."""
         return await self._run(
-            _ops.predictor_deploy(specs, env, dry_run, wait, timeout)
+            _ops.predictor_deploy(specs, env, dry_run, wait, timeout, poll)
         )
 
     async def get(self, predictor: str | PredictorInfo) -> PredictorInfo:
@@ -895,13 +931,14 @@ class AsyncPredictors(_Async):
         env: str = "production",
         revision: int | None = None,
         wait: bool = True,
+        poll: float | None = None,
     ) -> Environment:
         """See `Predictors.promote`."""
         payload = (
             {"revision": revision} if revision is not None else {"from_env": from_env}
         )
         return await self._run(
-            _ops.predictor_move(predictor, env, "promote", payload, wait)
+            _ops.predictor_move(predictor, env, "promote", payload, wait, poll)
         )
 
     async def rollback(
@@ -911,11 +948,12 @@ class AsyncPredictors(_Async):
         env: str = "production",
         revision: int | None = None,
         wait: bool = True,
+        poll: float | None = None,
     ) -> Environment:
         """See `Predictors.rollback`."""
         payload = {"revision": revision} if revision is not None else {}
         return await self._run(
-            _ops.predictor_move(predictor, env, "rollback", payload, wait)
+            _ops.predictor_move(predictor, env, "rollback", payload, wait, poll)
         )
 
     async def logs(

@@ -150,3 +150,17 @@ def test_holdout_strings_parse(text, holdout):
 def test_bad_holdouts_are_refused(text):
     with pytest.raises(gf.InvalidInput):
         Holdout.parse(text)
+
+
+def test_a_wait_checks_every_poll_seconds(adult, monkeypatch):
+    from generalforecast import _ops
+
+    slept = []
+    real = _ops._poll
+    monkeypatch.setattr(_ops, "_poll", lambda a, p=None: slept.append(real(a, p)) or 0)
+    adult.polls_until_done = 4
+    gf.experiments.create(context="adult", target="income", poll=0.25)
+    assert slept and set(slept) == {0.25}
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.experiments.wait("adult-income", poll=0)
+    assert error.value.param == "poll"

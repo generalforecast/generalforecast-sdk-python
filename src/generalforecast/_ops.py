@@ -120,7 +120,10 @@ POLL_FIRST = 1.0
 POLL_MAX = 5.0
 
 
-def _poll(attempt: int) -> float:
+def _poll(attempt: int, poll: float | None = None) -> float:
+    """Seconds before the next check: `poll`, or from 1s rising to 5s when it is None."""
+    if poll is not None:
+        return poll
     return min(POLL_FIRST * 1.5**attempt, POLL_MAX)
 
 
@@ -202,7 +205,17 @@ def _not_done(what: str, timeout: float | None, hint: str) -> Timeout:
     return Timeout(f"{what} is still going{shown}", hint=hint)
 
 
-def _deadline(timeout: float | None) -> float | None:
+def _deadline(timeout: float | None, poll: float | None = None) -> float | None:
+    """When a wait gives up; checks its `poll` before the wait starts."""
+    if poll is not None and (
+        isinstance(poll, bool)
+        or not isinstance(poll, (int, float))
+        or not 0 < poll <= 3600
+    ):
+        raise InvalidInput(
+            "poll is the seconds between checks, more than 0 and at most 3600",
+            param="poll",
+        )
     return None if timeout is None else time.monotonic() + timeout
 
 
@@ -468,14 +481,23 @@ def _settle(found: Context, wait: bool) -> Op:
 
 
 def context_upload(context: Any, data: Any, *, wait: bool = True) -> Op:
-    """Uploads a new version of a snapshot context, unless its rows are unchanged."""
+    """Uploads a new version of a snapshot context, unless its rows are unchanged.
+
+    A context of that name that does not exist yet is created from the
+    rows, as version 1, so one call serves a first run and every later one.
+    """
     name = name_of(context, "context")
     rows = _data.table(data)
     body = _data.parquet(rows)
     digest = _data.digest(_data.stream(rows))
-    reply = yield _http.contexts_version(
-        name, {"data": _upload_spec(rows, body, digest, data)}
-    )
+    spec = _upload_spec(rows, body, digest, data)
+    try:
+        reply = yield _http.contexts_version(name, {"data": spec})
+    except NotFound:
+        _checked_name(name, "context")
+        reply = yield _http.contexts_create(
+            {"name": name, "kind": "snapshot", "data": spec}
+        )
     found = yield from _upload(name, reply.result, body, rows.num_rows)
     return (yield from _settle(found, wait))
 
@@ -687,7 +709,11 @@ def setup(values: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]
 
 
 def experiment_create(
-    values: Mapping[str, Any], models: Any, wait: bool, timeout: float | None
+    values: Mapping[str, Any],
+    models: Any,
+    wait: bool,
+    timeout: float | None,
+    poll: float | None = None,
 ) -> Op:
     """Creates an experiment and starts run 1."""
     if values.get("name") is not None:
@@ -700,7 +726,9 @@ def experiment_create(
     if not wait or found.run is None:
         return found
     return (
-        yield from experiment_wait(found.name, run=found.run.number, timeout=timeout)
+        yield from experiment_wait(
+            found.name, run=found.run.number, timeout=timeout, poll=poll
+        )
     )
 
 
@@ -718,7 +746,11 @@ def experiment_estimate(values: Mapping[str, Any], models: Any) -> Op:
 
 
 def experiment_run(
-    experiment: Any, models: Any, wait: bool, timeout: float | None
+    experiment: Any,
+    models: Any,
+    wait: bool,
+    timeout: float | None,
+    poll: float | None = None,
 ) -> Op:
     """Starts another run of an experiment."""
     name = name_of(experiment, "experiment")
@@ -728,7 +760,9 @@ def experiment_run(
     reply = yield _http.experiments_run(name, payload)
     run = load(Run, reply.result)
     if wait:
-        return (yield from experiment_wait(name, run=run.number, timeout=timeout))
+        return (
+            yield from experiment_wait(name, run=run.number, timeout=timeout, poll=poll)
+        )
     return (yield from experiment_get(name, run=run.number))
 
 
@@ -770,11 +804,15 @@ def _progress(run: Run) -> str:
 
 
 def experiment_wait(
-    experiment: Any, *, run: int | None = None, timeout: float | None = None
+    experiment: Any,
+    *,
+    run: int | None = None,
+    timeout: float | None = None,
+    poll: float | None = None,
 ) -> Op:
-    """Polls until the run ends; raises when it failed."""
+    """Polls until the run ends, every `poll` seconds; raises when it failed."""
     name = name_of(experiment, "experiment")
-    deadline = _deadline(timeout)
+    deadline = _deadline(timeout, poll)
     attempt = 0
     while True:
         found = yield from experiment_get(name, run=run)
@@ -796,7 +834,7 @@ def experiment_wait(
                 f"gf.experiments.wait({name!r}) picks it up again",
             )
         yield Say(_progress(current))
-        yield Sleep(_poll(attempt))
+        yield Sleep(_poll(attempt, poll))
         attempt += 1
         run = current.number
 
@@ -865,8 +903,14 @@ def predictor_spec(name: str, values: Mapping[str, Any]) -> Predictor:
         raise InvalidInput(f"gf.Predictor(): {error}") from None
 
 
-def _env_wait(name: str, env: str, revision: int | None, timeout: float | None) -> Op:
-    deadline = _deadline(timeout)
+def _env_wait(
+    name: str,
+    env: str,
+    revision: int | None,
+    timeout: float | None,
+    poll: float | None = None,
+) -> Op:
+    deadline = _deadline(timeout, poll)
     attempt = 0
     while True:
         reply = yield _http.predictors_environment(name, env)
@@ -890,27 +934,34 @@ def _env_wait(name: str, env: str, revision: int | None, timeout: float | None) 
             )
         shown = revision if revision is not None else found.revision
         yield Say(f"Deploying {name} revision {shown} to {env}  starting a replica")
-        yield Sleep(_poll(attempt))
+        yield Sleep(_poll(attempt, poll))
         attempt += 1
 
 
-def _deployed(deploy: Deploy, wait: bool, timeout: float | None) -> Op:
+def _deployed(
+    deploy: Deploy, wait: bool, timeout: float | None, poll: float | None = None
+) -> Op:
     if not wait or deploy.action == "unchanged":
         return deploy
     number = deploy.revision.number if deploy.revision else None
-    env = yield from _env_wait(deploy.predictor, deploy.env, number, timeout)
+    env = yield from _env_wait(deploy.predictor, deploy.env, number, timeout, poll)
     return replace(deploy, environment=env)
 
 
 def predictor_create(
-    name: str, env: str, wait: bool, timeout: float, values: Mapping[str, Any]
+    name: str,
+    env: str,
+    wait: bool,
+    timeout: float,
+    values: Mapping[str, Any],
+    poll: float | None = None,
 ) -> Op:
     """Creates a predictor from its fields and deploys it to `env`."""
     spec = predictor_spec(name, values)
     reply = yield _http.predictors_create(
         {"name": name, "spec": spec.to_json(), "env": env}
     )
-    yield from _deployed(_deploy_of(reply.result, name, env), wait, timeout)
+    yield from _deployed(_deploy_of(reply.result, name, env), wait, timeout, poll)
     return (yield from predictor_get(name))
 
 
@@ -927,7 +978,12 @@ def _deploy_of(result: Any, name: str, env: str) -> Deploy:
 
 
 def predictor_update(
-    predictor: Any, env: str, wait: bool, timeout: float, values: Mapping[str, Any]
+    predictor: Any,
+    env: str,
+    wait: bool,
+    timeout: float,
+    values: Mapping[str, Any],
+    poll: float | None = None,
 ) -> Op:
     """Makes a revision of the given fields over the serving spec and deploys it."""
     name = name_of(predictor, "predictor")
@@ -935,12 +991,17 @@ def predictor_update(
         raise InvalidInput("update changes at least one field")
     spec = spec_json(values, partial=True)
     reply = yield _http.predictors_update(name, {"spec": spec, "env": env})
-    yield from _deployed(_deploy_of(reply.result, name, env), wait, timeout)
+    yield from _deployed(_deploy_of(reply.result, name, env), wait, timeout, poll)
     return (yield from predictor_get(name))
 
 
 def predictor_deploy(
-    specs: Sequence[Predictor], env: str, dry_run: bool, wait: bool, timeout: float
+    specs: Sequence[Predictor],
+    env: str,
+    dry_run: bool,
+    wait: bool,
+    timeout: float,
+    poll: float | None = None,
 ) -> Op:
     """Deploys each spec in order, idempotently; one that fails stops the rest."""
     seen: set[str] = set()
@@ -957,7 +1018,7 @@ def predictor_deploy(
         )
         deploy = _deploy_of(reply.result, spec.name, env)
         if not dry_run:
-            deploy = yield from _deployed(deploy, wait, timeout)
+            deploy = yield from _deployed(deploy, wait, timeout, poll)
         out.append(deploy)
     return out
 
@@ -1140,7 +1201,12 @@ def predictor_predict(predictor: Any, queries: Any, *, env: str, as_of: Any) -> 
 
 
 def predictor_move(
-    predictor: Any, env: str, verb: str, payload: Mapping[str, Any], wait: bool
+    predictor: Any,
+    env: str,
+    verb: str,
+    payload: Mapping[str, Any],
+    wait: bool,
+    poll: float | None = None,
 ) -> Op:
     """Promotes or rolls back an environment, then waits for it."""
     name = name_of(predictor, "predictor")
@@ -1148,7 +1214,7 @@ def predictor_move(
     found = load(Environment, {"name": env, **(reply.result or {})})
     if not wait:
         return found
-    return (yield from _env_wait(name, env, found.revision, None))
+    return (yield from _env_wait(name, env, found.revision, None, poll))
 
 
 def predictor_logs(predictor: Any, env: str, params: Mapping[str, Any]) -> Op:
