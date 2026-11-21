@@ -4,21 +4,19 @@
 """Terminal output for the `gf` command.
 
 One renderer draws every surface the CLI shows: status lines with a
-right-aligned verb, progress lines for work still going, lock change lines,
-errors as cargo writes them, tables, and the interactive prompts `gf init`
-uses. Results go to stdout and only `generalforecast.render` writes them;
-status lines, prompts and errors go to stderr. Colour is on only when the
-stream is a terminal and `NO_COLOR` is unset.
+right-aligned verb, progress lines for work still going, change lines,
+errors as cargo writes them, tables, and the `[y/N]` question a delete
+asks. Results go to stdout; status lines, questions and errors go to
+stderr. Colour is on only when the stream is a terminal and `NO_COLOR` is
+unset, or `FORCE_COLOR` asks for it.
 
-Every line is laid out for the terminal's width (`size`), so the terminal
-never breaks one in the middle of a word: `wrap` folds text after a comma or
-at a space and `layout` places a row's key, value and quiet note, which
-`Output.details`, `Output.collapsed`, the status lines and the last column
-of `Output.table` all go through. A list of names takes at most `LIST_LINES`
-lines and counts the rest as `and N more`; `-v` shows every name. A stream
-that is not a terminal is laid out `WIDTH` columns wide, so a log reads the
-same wherever it was written, and there a status line stays one line, to be
-searched for.
+Every line is laid out for the width (`size`): `COLUMNS` when set, else the
+terminal's, else `WIDTH`. On a terminal nothing breaks in the middle of a
+word: `wrap` folds text after a comma or at a space and `layout` places a
+row's key, value and quiet note. A table drops the columns it names, lowest
+priority first, while a row does not fit, then folds its last text column.
+Off a terminal nothing folds, so a log reads the same wherever it was
+written and a status line stays one line, to be searched for.
 """
 
 from __future__ import annotations
@@ -26,25 +24,19 @@ from __future__ import annotations
 import contextlib
 import os
 import re
-import select
 import sys
 import threading
 import time
 import unicodedata
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import IO, Any
+from typing import IO, NamedTuple
 
-from generalforecast.errors import Error, InvalidInput, printable
+from generalforecast.errors import Error, printable
 
 # Status verbs are right-aligned in this many columns.
 VERB_WIDTH = 12
-# Collapsed prompt labels are padded to this width so values start at column 14.
-LABEL_WIDTH = 13
-# Ends every frame a raw prompt draws. The cursor stays hidden while a frame is
-# up, and whatever reads the terminal knows the frame is whole once it arrives.
-FRAME_END = "\x1b[?25l"
-# The rendering size when the terminal does not report one.
+# The rendering size when neither `COLUMNS` nor the terminal gives one.
 WIDTH = 100
 HEIGHT = 24
 # A line stops this many columns short of the width: a terminal that wraps as
@@ -57,10 +49,8 @@ TICK_SECONDS = 1.0
 # The fewest columns a wrapped value is given. A terminal too narrow for them
 # wraps the line itself, which reads better than a column of single words.
 MIN_VALUE = 16
-# Lock change keys (model, input, selection, target, context) share one column.
-LOCK_KEY_WIDTH = len("selection")
-# Seconds a raw prompt waits for the rest of an escape sequence.
-ESCAPE_SECONDS = 0.05
+# What progress lines are timed with; a test puts a clock of its own here.
+clock: Callable[[], float] = time.monotonic
 
 _CODES = {
     "bold": "1",
@@ -89,20 +79,30 @@ def color_enabled(
         return force != "0"
     if env.get("TERM") == "dumb":
         return False
-    return bool(stream is not None and getattr(stream, "isatty", lambda: False)())
+    return tty(stream)
 
 
-def seconds(value: float) -> str:
-    """Formats a duration as the status lines show it: `0.21s`, `6.8s`, `41s`."""
+def tty(stream: IO[str] | None) -> bool:
+    """Whether a stream is a terminal."""
+    try:
+        return bool(stream is not None and getattr(stream, "isatty", bool)())
+    except ValueError:
+        return False
+
+
+def duration(value: float) -> str:
+    """A duration as status lines show it: `0.21s`, `6.8s`, `41s`, `1m12s`, `1h05m`."""
     if value < 1:
         return f"{value:.2f}s"
     if value < 10:
         return f"{value:.1f}s"
-    return f"{value:.0f}s"
+    if value < 59.5:
+        return f"{value:.0f}s"
+    return elapsed(round(value))
 
 
 def elapsed(value: float) -> str:
-    """Formats a time waited so far, to the second: `45s`, `2m10s`, `1h05m`."""
+    """A time waited so far, to the second: `45s`, `2m10s`, `1h05m`."""
     total = int(value)
     if total < 60:
         return f"{total}s"
@@ -124,11 +124,17 @@ def plural(value: int, noun: str) -> str:
 
 
 def size(stream: IO[str] | None = None) -> os.terminal_size:
-    """The terminal's columns and lines, or `WIDTH` by `HEIGHT` when unknown."""
-    try:
-        return os.get_terminal_size((stream or sys.stderr).fileno())
-    except (OSError, ValueError, AttributeError):
-        return os.terminal_size((WIDTH, HEIGHT))
+    """The columns and lines to lay out for: `COLUMNS`, else the terminal's, else `WIDTH` by `HEIGHT`."""
+    columns = os.environ.get("COLUMNS", "")
+    if columns.isdigit() and int(columns) > 0:
+        return os.terminal_size((int(columns), HEIGHT))
+    stream = stream or sys.stderr
+    if tty(stream):
+        try:
+            return os.get_terminal_size(stream.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+    return os.terminal_size((WIDTH, HEIGHT))
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\")
@@ -199,13 +205,19 @@ def _words(text: str, width: int, line: str = "") -> list[str]:
 
     A word wider than a line is broken after a separator in it, starting on
     the line it follows where one is in reach, and where it has none at the
-    line's end.
+    line's end. A command between backticks is never broken: it starts a
+    line of its own, and runs past the edge when even that is too narrow.
     """
     lines = []
     for word in text.split(" "):
         joined = f"{line} {word}" if line else word
         if visible(joined) <= width:
             line = joined
+            continue
+        if "`" in word:
+            if line.strip():
+                lines.append(line.rstrip())
+            line = word
             continue
         if line.strip() and visible(word) > width:
             at = _separator(word, width - visible(line) - 1)
@@ -230,7 +242,8 @@ def wrap(text: str | Sequence[str], width: int) -> list[str]:
     when it has none. In text, such an item carries on from the line before
     it; in a list it starts its own, so a name is never split to fill a
     line. Text between backticks, a command or a name to copy, is one word
-    to the fold. Text that fits comes back as one line, unchanged. Style
+    to the fold that is never broken: it starts a line of its own instead,
+    and runs past the edge when even that is too narrow. Text that fits comes back as one line, unchanged. Style
     the lines after folding: an ANSI code is not kept whole.
     """
     width = max(width, 1)
@@ -386,41 +399,97 @@ def _drawn(source: str) -> str:
     )
 
 
+class Laid(NamedTuple):
+    """A table's lines, and how many of its columns did not fit."""
+
+    lines: list[str]
+    hidden: int
+
+
+def columns(
+    header: Sequence[str] | None,
+    rows: Sequence[Sequence[str]],
+    *,
+    align: str = "",
+    drop: Sequence[int] = (),
+    width: int = WIDTH,
+    fold: bool = False,
+    indent: int = 2,
+    gap: int = 2,
+) -> Laid:
+    """Rows of cells as aligned lines no wider than `width`, where that can be.
+
+    `align` holds `<` or `>` per column (left by default). While a line is
+    too wide, the columns in `drop` go, in that order; then, with `fold`, the
+    last column folds under itself when it is left-aligned plain text. A
+    line that still does not fit runs past the edge. Cells are plain text.
+    """
+    every = (
+        [list(header), *map(list, rows)]
+        if header is not None
+        else list(map(list, rows))
+    )
+    if not every:
+        return Laid([], 0)
+    count_ = max(len(row) for row in every)
+    for row in every:
+        row.extend([""] * (count_ - len(row)))
+    kinds = align.ljust(count_, "<")
+    widths = [max(visible(row[i]) for row in every) for i in range(count_)]
+    room = width - MARGIN
+
+    def span(kept: list[int]) -> int:
+        return indent + sum(widths[i] for i in kept) + gap * (len(kept) - 1)
+
+    kept = list(range(count_))
+    for column in drop:
+        if span(kept) <= room:
+            break
+        if column in kept and len(kept) > 1:
+            kept.remove(column)
+    last = kept[-1]
+    start = span(kept[:-1]) + (gap if len(kept) > 1 else 0)
+    folds = fold and kinds[last] == "<" and room - start >= MIN_VALUE
+    lines = []
+    for row in every:
+        cells = []
+        for i in kept:
+            fill = " " * (widths[i] - visible(row[i]))
+            cells.append(fill + row[i] if kinds[i] == ">" else row[i] + fill)
+        under: list[str] = []
+        if folds and visible(row[last]) > room - start:
+            cells[-1], *under = wrap(row[last], room - start)
+        lines.append((" " * indent + (" " * gap).join(cells)).rstrip())
+        lines.extend(" " * start + line for line in under)
+    return Laid(lines, count_ - len(kept))
+
+
 def change_lines(
-    items: Sequence[tuple[str, str, Any, Any]],
+    items: Sequence[tuple[int, str, str, str]],
     *,
     style: Callable[..., str] = lambda text, *styles: text,
     width: int | None = None,
 ) -> list[str]:
-    """Lock changes as lines: ` + key  value`, ` - key  value` or ` ~ key  old → new`.
+    """Change lines: `+ key  value`, `~ key  old → new`, `- key  old`, `= key  value`.
 
-    Keys are padded to the longest in the block; `style` colours the sign.
-    With a `width`, a value too long for it is folded under itself.
+    Each item is `(indent, sign, key, value)`; the values of a block share
+    one column, after its widest key. `style` colours the sign: `+` green,
+    `~` yellow, `-` red, `=` dim. With a `width`, a value too long for it
+    folds under itself.
     """
     if not items:
         return []
-    keys = max(LOCK_KEY_WIDTH, *(len(key) for _, key, _, _ in items))
-    start = 3 + keys + 2
+    start = max(indent + 2 + visible(key) for indent, _, key, _ in items) + 2
+    colours = {"+": ("green",), "~": ("yellow",), "-": ("red",), "=": ("dim",)}
     lines = []
-
-    def shown(value: Any) -> str:
-        # As gf.yaml and gf.lock write it: `true`, not Python's `True`.
-        return str(value).lower() if isinstance(value, bool) else f"{value}"
-
-    for op, key, old, new in items:
-        colour = {"+": "green", "-": "red", "~": "yellow"}.get(op, "bold")
-        if op == "+" or old is None:
-            value = shown(new)
-        elif op == "-" or new is None:
-            value = shown(old)
-        else:
-            value = f"{shown(old)} → {shown(new)}"
+    for indent, sign, key, value in items:
         folded = (
             [value]
             if width is None
             else wrap(value, max(width - MARGIN - start, MIN_VALUE))
         )
-        lines.append(f" {style(op, 'bold', colour)} {key.ljust(keys)}  {folded[0]}")
+        head = " " * indent + style(sign, "bold", *colours.get(sign, ()))
+        lines.append(pad(f"{head} {key}", start) + folded[0])
         lines.extend(" " * start + line for line in folded[1:])
     return lines
 
@@ -452,26 +521,16 @@ class Aborted(Error):
 
 
 class Declined(Aborted):
-    """The person said no, or pressed Escape: nothing changed, and nothing went wrong.
+    """The person said no: nothing changed, and nothing went wrong.
 
     `said` is the one line that tells them so in the command's terms, such
-    as `Nothing was pushed.`; the message is what `--json` reports.
+    as `Nothing was deleted.`; the message is what `--json` reports.
     """
 
     def __init__(self, message: str, *, said: str) -> None:
         """Keeps the sentence for a person beside the message for a program."""
         super().__init__(message)
         self.said = said
-
-
-@dataclass(frozen=True)
-class Option:
-    """One row of a selector: the value, the shown text and a quiet detail."""
-
-    value: Any
-    text: str
-    detail: str = ""
-    shown: str = ""
 
 
 class Output:
@@ -484,12 +543,14 @@ class Output:
         verbose: bool = False,
         out: IO[str] | None = None,
         err: IO[str] | None = None,
+        stdin: IO[str] | None = None,
         environ: Mapping[str, str] | None = None,
     ) -> None:
         """Binds the renderer to its streams and colour setting."""
         self.quiet, self.verbose = quiet, verbose
         self.out = out if out is not None else sys.stdout
         self.err = err if err is not None else sys.stderr
+        self.stdin = stdin if stdin is not None else sys.stdin
         self._environ = environ
         self._color = {
             id(self.out): color_enabled(self.out, environ),
@@ -521,6 +582,10 @@ class Output:
         """Text in the quiet colour."""
         return self.style(text, "dim", stream=stream)
 
+    def width(self, stream: IO[str] | None = None) -> int:
+        """The columns a stream's lines are laid out for."""
+        return size(self.err if stream is None else stream).columns
+
     def _write(self, text: str, stream: IO[str]) -> None:
         with self._lock:
             if stream is self.err and self._progress is not None:
@@ -534,10 +599,10 @@ class Output:
 
     def _live(self) -> bool:
         """Whether stderr is a terminal, where a progress line is redrawn in place."""
-        return bool(getattr(self.err, "isatty", lambda: False)())
+        return tty(self.err)
 
     def line(self, text: str = "") -> None:
-        """One line of a result on stdout; only `generalforecast.render` calls it."""
+        """One line of a result on stdout."""
         self._write(text, self.out)
 
     def say(self, text: str = "", *, force: bool = False) -> None:
@@ -569,7 +634,7 @@ class Output:
         """
         if self.quiet:
             return
-        tail = "" if seconds is None else f" in {globals()['seconds'](seconds)}"
+        tail = "" if seconds is None else f" in {duration(seconds)}"
         for line in self._status(verb, message, tail):
             self._write(line, self.err)
 
@@ -581,121 +646,81 @@ class Output:
         a link, is left whole, and so is the `tail`, a duration: it ends the
         last line or takes one of its own.
         """
-        head = self.style(verb.rjust(VERB_WIDTH), "bold", "green")
+        head = (
+            self.style(verb.rjust(VERB_WIDTH), "bold", "green")
+            if verb
+            else " " * VERB_WIDTH
+        )
         lines = [message]
         if self._live() and "\x1b" not in message:
-            room = max(size(self.err).columns - MARGIN - VERB_WIDTH - 1, MIN_VALUE)
+            room = max(self.width() - MARGIN - VERB_WIDTH - 1, MIN_VALUE)
             lines = wrap(message, room)
             if visible(lines[-1]) + visible(tail) > room:
                 lines.append("")
                 tail = tail.lstrip()
         lines[-1] += tail
         under = " " * (VERB_WIDTH + 1)
-        return [f"{head} {lines[0]}", *(under + line for line in lines[1:])]
+        return [f"{head} {lines[0]}".rstrip(), *(under + line for line in lines[1:])]
+
+    def view(self, url: str | None) -> None:
+        """The `View` line that ends a command about one resource: its console URL.
+
+        A URL never folds; on a terminal it is a link, and it may run past the edge.
+        """
+        if url:
+            self.status("View", self.link(url))
 
     def progress(
-        self, verb: str, message: str, *, log: bool = True, trail: str = ""
+        self, verb: str, message: str, *, log: str | None = None, trail: str = ""
     ) -> None:
         """A status line for work still going, such as a wait, drawn as `status` draws one.
 
         On a terminal each call redraws the line in place and the next line
-        written to stderr replaces it; on any other stream the first call
-        writes it and the calls after it with the same verb write nothing,
-        so a log holds one line. Without `log` it holds none: a step too
-        short to be worth a line of a log still shows on a terminal. A
-        terminal's line is cut to its width, since a line the terminal
-        wrapped could not be redrawn; `trail`, such as the time taken so
-        far, ends the line and is never what is cut. Dropped under `-q`.
+        written to stderr replaces it; `trail`, such as the time taken so
+        far, ends the line and is never what is cut to fit. On any other
+        stream the first call with a verb writes `log` (by default the
+        message), and the calls after it with the same verb write nothing,
+        so a log holds one line. Dropped under `-q`.
         """
         if self.quiet:
             return
         head = self.style(verb.rjust(VERB_WIDTH), "bold", "green")
         with self._lock:
             if not self._live():
-                if log and self._progress != verb:
-                    self._write(f"{head} {message}{trail}", self.err)
+                if self._progress != verb:
+                    text = message if log is None else log
+                    self._write(f"{head} {text}".rstrip(), self.err)
                     self._progress = verb
                 return
-            room = size(self.err).columns - MARGIN - visible(trail)
+            room = self.width() - MARGIN - visible(trail)
             line = shorten(f"{head} {message}", max(room, 1)) + trail
             self.err.write(f"\r\x1b[K{line}")
             self.err.flush()
             self._progress = verb
 
     @contextlib.contextmanager
-    def working(self, *, log: bool = True) -> Generator[Activity]:
+    def working(self) -> Generator[Activity]:
         """Progress lines for work that takes a while, kept current until the block ends.
 
         The `Activity` it yields shows a line with `show(verb, message)`. On
         a terminal the line is redrawn every `TICK_SECONDS` with how long
-        that verb has been showing, as `Loading the model  12s`, so a person
-        sees which step the time is going on. A log gets each verb's line
-        once, without the time, or no line without `log`.
+        that verb has been showing, as `Waiting for approval  12s`, so a
+        person sees which step the time is going on. A log gets each verb's
+        line once, without the time.
         """
-        activity = Activity(self, log=log)
+        activity = Activity(self)
         try:
             yield activity
         finally:
             activity.close()
 
-    def verb(self, verb: str, text: str, detail: str | None = None) -> None:
-        """`status` with an optional two-space-separated detail."""
-        self.status(verb, text if detail is None else f"{text}  {detail}")
-
-    def changes(self, items: Sequence[tuple[str, str, Any, Any]]) -> None:
-        """Lock change lines, keys padded to the longest key in the block."""
+    def changes(self, items: Sequence[tuple[int, str, str, str]]) -> None:
+        """Change lines on stderr (`change_lines`), folded on a terminal; dropped under `-q`."""
         if self.quiet:
             return
-        width = size(self.err).columns
+        width = self.width() if self._live() else None
         for line in change_lines(items, style=self.style, width=width):
             self._write(line, self.err)
-
-    def answer(
-        self,
-        label: str,
-        value: str | Sequence[str],
-        note: str = "",
-        *,
-        noun: str | None = None,
-        columns: int | None = None,
-        style: Callable[[str], str] | None = None,
-    ) -> list[str]:
-        """A prompt's answer as lines: the label padded to column 14, the value, a note.
-
-        `layout` places them, so a long list of names folds under itself and
-        a note with no room beside the value goes under it. A list too long
-        for one line is followed by its count in `noun`s, as `19 columns`,
-        when it has no other note. `style` colours the note, quiet by default.
-        """
-        columns = size(self.err).columns if columns is None else columns
-        if noun is not None and not note and not isinstance(value, str):
-            room = columns - MARGIN - LABEL_WIDTH
-            if visible(", ".join(value)) > room:
-                note = plural(len(value), noun)
-        return layout(
-            [(label, value, note)],
-            columns,
-            indent=0,
-            start=LABEL_WIDTH,
-            limit=None if self.verbose else LIST_LINES,
-            quiet=self.quiet_text if style is None else style,
-        )
-
-    def collapsed(
-        self,
-        label: str,
-        value: str | Sequence[str],
-        note: str = "",
-        *,
-        noun: str | None = None,
-    ) -> None:
-        """A finished prompt: the label padded to column 14, then the value and a quiet note.
-
-        A summary, so dropped under `-q`; the manifest holds every answer.
-        """
-        if not self.quiet:
-            for line in self.answer(label, value, note, noun=noun):
-                self._write(line, self.err)
 
     def details(
         self,
@@ -705,39 +730,70 @@ class Output:
         stream: IO[str] | None = None,
         force: bool = False,
     ) -> None:
-        """Rows of key, value and quiet note, laid out for the terminal's width.
+        """Rows of key, value and quiet note, laid out for the width (`layout`).
 
-        `layout` says where each part goes. A value given as a list is a list
-        of names: past `LIST_LINES` lines the rest are counted as `and N
-        more`, and `-v` shows them all. On stderr this is commentary, dropped
-        under `-q` unless forced.
+        A value given as a list is a list of names: on a terminal, past
+        `LIST_LINES` lines the rest are counted as `and N more`, and `-v`
+        shows them all. Off a terminal nothing folds. On stderr this is
+        commentary, dropped under `-q` unless forced.
         """
         stream = self.err if stream is None else stream
         if stream is self.err and self.quiet and not force:
             return
+        folds = tty(stream)
         lines = layout(
             rows,
-            size(stream).columns,
+            self.width(stream) if folds else sys.maxsize,
             indent=indent,
-            limit=None if self.verbose else LIST_LINES,
+            limit=None if self.verbose or not folds else LIST_LINES,
             quiet=lambda text: self.quiet_text(text, stream),
         )
         for line in lines:
             self._write(line, stream)
 
+    def table(
+        self,
+        header: Sequence[str] | None,
+        rows: Sequence[Sequence[str]],
+        *,
+        align: str = "",
+        drop: Sequence[int] = (),
+        stream: IO[str] | None = None,
+    ) -> int:
+        """A table on stdout (`columns`): it drops columns to fit and folds only on a terminal.
+
+        Returns how many columns did not fit.
+        """
+        stream = self.out if stream is None else stream
+        laid = columns(
+            header,
+            rows,
+            align=align,
+            drop=drop,
+            width=self.width(stream),
+            fold=tty(stream),
+        )
+        for line in laid.lines:
+            self._write(line, stream)
+        return laid.hidden
+
     def _diagnostic(self, lines: list[str]) -> None:
         for line in lines:
             self._write(line, self.err)
 
-    def _styled(self, text: str, kind: str) -> str:
-        """A diagnostic label in its colour: errors red, warnings yellow, the rest bold."""
-        if kind == "error":
-            return self.style(text, "bold", "red")
-        if kind == "warning":
-            return self.style(text, "bold", "yellow")
-        if kind == "location":
-            return self.quiet_text(text)
-        return self.style(text, "bold")
+    def _styler(self, failure: bool) -> Callable[[str, str], str]:
+        """Diagnostic labels in their colours: a real failure's `error:` red, a recoverable one's bold."""
+
+        def styled(text: str, kind: str) -> str:
+            if kind == "error":
+                return self.style(text, "bold", *(("red",) if failure else ()))
+            if kind == "warning":
+                return self.style(text, "bold", "yellow")
+            if kind == "location":
+                return self.quiet_text(text)
+            return self.style(text, "bold")
+
+        return styled
 
     def error(
         self,
@@ -747,19 +803,22 @@ class Output:
         hint: str | None = None,
         tip: str | None = None,
         pointer: Pointer | None = None,
+        failure: bool = False,
     ) -> None:
         """An error as cargo writes one (`generalforecast.diagnostics`).
 
         `error: message`, with no code; a `-->` pointer into a file, with
         its source line and carets; a `note:` for each of `notes`, such as
-        why, what a service answered and the request's id; a `help:` for
-        what to do instead, and one naming a near miss. On a terminal a
-        line too long for it folds under its own text.
+        why, what a service answered and the request's id; a `help:` naming
+        a near miss (`tip`), and one for what to do instead. A real `failure`
+        (the service failed, or a run or deploy did) has its `error:` in
+        red; one the person can fix, bold. On a terminal a line too long
+        for it folds under its own text.
         """
         from generalforecast.diagnostics import lines
 
-        written = lines("error", self._fold("error", message), style=self._styled)
-        self._diagnostic(written)
+        styled = self._styler(failure)
+        self._diagnostic(lines("error", self._fold("error", message), style=styled))
         if pointer is not None:
             self.pointer(pointer)
         self._diagnostic(
@@ -767,8 +826,8 @@ class Output:
                 "error",
                 "",
                 notes=[self._fold("note", note) for note in notes],
-                help=[self._fold("help", text or "") for text in (hint, tip)],
-                style=self._styled,
+                help=[self._fold("help", text or "") for text in (tip, hint)],
+                style=styled,
             )[1:]
         )
 
@@ -781,7 +840,7 @@ class Output:
         """
         if not text or not self._live() or "\x1b" in text:
             return text
-        room = size(self.err).columns - MARGIN - len(label) - 2
+        room = self.width() - MARGIN - len(label) - 2
         return "\n".join(
             line for part in text.split("\n") for line in wrap(part, max(room, 1))
         )
@@ -814,7 +873,7 @@ class Output:
         label = [where.label] if where.label else []
         start = len(gutter) + 3 + len(lead) + marks + 1
         if label and self._live():
-            label = wrap(where.label, max(size(self.err).columns - MARGIN - start, 1))
+            label = wrap(where.label, max(self.width() - MARGIN - start, 1))
         self._write(
             f"{bar} {lead}{carets}{''.join(' ' + t for t in label[:1])}", self.err
         )
@@ -845,108 +904,74 @@ class Output:
                     "warning",
                     self._fold("warning", text),
                     help=self._fold("help", help or ""),
-                    style=self._styled,
+                    style=self._styler(False),
                 )
             )
 
-    def hint(self, text: str) -> None:
-        """A `help:` line on its own."""
-        from generalforecast.diagnostics import lines
+    def confirm(self, question: str, *, yes: bool, flag: str = "--yes") -> None:
+        """Asks `question [y/N]` on a terminal; goes on only if the answer is yes.
 
-        self._diagnostic(
-            lines("error", "", help=self._fold("help", text), style=self._styled)[1:]
-        )
+        `yes` goes on without asking. With no terminal to ask on, it is an
+        error to go on: the command needs `flag`.
 
-    def table(
-        self,
-        rows: Sequence[Sequence[str]],
-        *,
-        indent: int = 2,
-        gap: int = 2,
-        align: Sequence[str] | None = None,
-        header: Sequence[str] | None = None,
-        stream: IO[str] | None = None,
-        force: bool = False,
-    ) -> None:
-        """Rows of cells, each column padded to its widest cell.
-
-        `align` gives `<` or `>` per column (default left). A header row is
-        aligned like the values beneath it. A table on stderr is commentary,
-        dropped under `-q` unless forced; one on stdout is a result.
-
-        A row wider than the terminal folds its last cell under itself, when
-        that cell is left-aligned plain text. A result piped to a program is
-        never folded: its lines are what the program reads.
+        Raises:
+            Declined: The answer was anything but yes.
+            Aborted: There was nobody to ask.
         """
-        stream = self.err if stream is None else stream
-        if stream is self.err and self.quiet and not force:
+        if yes:
             return
-        every = [list(header), *map(list, rows)] if header else list(map(list, rows))
-        if not every:
-            return
-        ncol = max(len(row) for row in every)
-        widths = [
-            max(visible(row[i]) if i < len(row) else 0 for row in every)
-            for i in range(ncol)
-        ]
-        kinds = list(align or []) + ["<"] * (ncol - len(align or []))
-        start = indent + sum(widths[:-1]) + gap * (ncol - 1)
-        room = size(stream).columns - MARGIN - start
-        folds = (
-            kinds[-1] == "<"
-            and room >= MIN_VALUE
-            and (stream is self.err or getattr(stream, "isatty", lambda: False)())
-        )
-        for row in every:
-            cells = []
-            for i in range(ncol):
-                cell = row[i] if i < len(row) else ""
-                fill = " " * (widths[i] - visible(cell))
-                cells.append(fill + cell if kinds[i] == ">" else cell + fill)
-            last = row[ncol - 1] if len(row) == ncol else ""
-            under: list[str] = []
-            if folds and visible(last) > room and "\x1b" not in last:
-                cells[-1], *under = wrap(last, room)
-            self._write(" " * indent + (" " * gap).join(cells).rstrip(), stream)
-            for line in under:
-                self._write(" " * start + line, stream)
-
-    def fields(self, pairs: Sequence[tuple[str, str]], *, indent: int = 2) -> None:
-        """A two-column key/value table on stdout."""
-        self.table(pairs, indent=indent, stream=self.out)
+        if not (tty(self.stdin) and tty(self.err)):
+            raise Aborted(
+                "there is no terminal to ask before changing anything",
+                hint=f"pass {flag} to go ahead without asking",
+            )
+        with self._lock:
+            if self._progress is not None:
+                self.err.write("\r\x1b[K")
+                self._progress = None
+            self.err.write(f"  {question} [y/N] ")
+            self.err.flush()
+            self._asking = True
+        answer = self.stdin.readline()
+        with self._lock:
+            # A terminal echoed the Enter that ended the answer; Ctrl-D has none.
+            if not answer.endswith("\n"):
+                self.err.write("\n")
+                self.err.flush()
+            self._asking = False
+        if answer.strip().lower() not in ("y", "yes"):
+            raise Declined(
+                "cancelled; nothing was changed", said="Nothing was changed."
+            )
 
 
 class Activity:
     """The progress line of work in hand, from `Output.working`.
 
-    `show` names the work; a thread redraws the line as its time passes.
-    `done` ends a piece of work with a status line that stays, and says how
-    long it took. A message may be a function of the seconds its verb has
-    been showing, to say the time in words of its own: it is given None
-    where the line is written once, in a log.
+    `show` names the work; on a terminal a thread redraws the line as its
+    time passes. `done` ends a piece of work with a status line that stays,
+    and says how long it took.
     """
 
-    def __init__(
-        self,
-        out: Output,
-        *,
-        log: bool = True,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
+    def __init__(self, out: Output) -> None:
         """Binds the line to its renderer; nothing is drawn until `show`."""
-        self.out, self.log, self.clock = out, log, clock
+        self.out = out
         self._verb: str | None = None
-        self._message: str | Callable[[float | None], str] = ""
+        self._message = ""
+        self._log: str | None = None
         self._since = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def show(self, verb: str, message: str | Callable[[float | None], str]) -> None:
-        """Draws `verb message`, and keeps its time from the first call with this verb."""
+    def show(self, verb: str, message: str, *, log: str | None = None) -> None:
+        """Draws `verb message`, and keeps its time from the first call with this verb.
+
+        A log gets `log`, by default the message, once per verb.
+        """
         with self.out._lock:
             if verb != self._verb:
-                self._verb, self._since = verb, self.clock()
-            self._message = message
+                self._verb, self._since = verb, clock()
+            self._message, self._log = message, log
             self._draw()
         if self._thread is None and self.out._live() and not self.out.quiet:
             self._thread = threading.Thread(target=self._tick, daemon=True)
@@ -954,7 +979,7 @@ class Activity:
 
     def seconds(self) -> float:
         """How long the verb showing has been showing."""
-        return self.clock() - self._since if self._verb is not None else 0.0
+        return clock() - self._since if self._verb is not None else 0.0
 
     def done(self, verb: str, message: str) -> None:
         """Replaces the line with a status line that says how long its work took."""
@@ -974,410 +999,10 @@ class Activity:
         with self.out._lock:
             if self._verb is None or self._stop.is_set():
                 return
-            waited, live = int(self.seconds()), self.out._live()
-            message = self._message
-            if isinstance(message, str):
-                trail = f"  {elapsed(waited)}" if waited >= 1 and live else ""
-                self.out.progress(self._verb, message, log=self.log, trail=trail)
-            else:
-                text = message(waited if live else None)
-                self.out.progress(self._verb, text, log=self.log)
+            waited = int(self.seconds())
+            trail = f"  {elapsed(waited)}" if waited >= 1 else ""
+            self.out.progress(self._verb, self._message, log=self._log, trail=trail)
 
     def _tick(self) -> None:
         while not self._stop.wait(TICK_SECONDS):
             self._draw()
-
-
-class Prompter:
-    """Asks `gf init`'s questions one at a time, and asks to confirm a change.
-
-    On a terminal the prompt is a selector drawn in raw mode: `>` marks the
-    cursor, up and down move it, space toggles a multi-select row, Enter
-    confirms and Escape aborts. Without a terminal the prompt falls back to
-    numbered lines read from stdin. `yes` takes the first option everywhere
-    and `no_input` raises instead of asking.
-    """
-
-    def __init__(
-        self,
-        out: Output,
-        *,
-        stdin: IO[str] | None = None,
-        yes: bool = False,
-        no_input: bool = False,
-        interactive: bool | None = None,
-    ) -> None:
-        """Binds the prompter to the renderer and the input stream."""
-        self.out = out
-        self.stdin = stdin if stdin is not None else sys.stdin
-        self.yes, self.no_input = yes, no_input
-        if interactive is None:
-            interactive = (
-                getattr(self.stdin, "isatty", lambda: False)()
-                and getattr(out.err, "isatty", lambda: False)()
-                and os.name == "posix"
-            )
-        self.interactive = interactive and not yes and not no_input
-
-    def _unavailable(self, label: str, flag: str) -> Error:
-        return InvalidInput(
-            f"{label.lower()} could not be inferred and no terminal is attached",
-            hint=f"pass '{flag}', or run without --no-input in a terminal",
-            param=flag.lstrip("-"),
-        )
-
-    def choose(
-        self, label: str, options: Sequence[Option], *, flag: str, default: int = 0
-    ) -> Any:
-        """One value from `options`, with the row at `default` pre-selected."""
-        if not options:
-            raise InvalidInput(
-                f"no column can be the {label.lower()}",
-                hint=f"pass '{flag}' with a column of the table",
-                param=flag.lstrip("-"),
-            )
-        if self.yes:
-            chosen = options[default]
-        elif not self.interactive:
-            if self.no_input:
-                raise self._unavailable(label, flag)
-            chosen = self._plain(label, options, default)
-        else:
-            chosen = options[self._raw(label, options, default, multi=None)[0]]
-        self.out.collapsed(label, chosen.shown or chosen.text)
-        return chosen.value
-
-    def choose_many(
-        self,
-        label: str,
-        options: Sequence[Option],
-        *,
-        flag: str,
-        selected: Iterable[int] = (),
-        noun: str | None = None,
-    ) -> list[Any]:
-        """Several values from `options`, with `selected` rows toggled on first.
-
-        With no options there is nothing to ask, and the answer is none.
-        `noun` names what is chosen, to count an answer too long for a line.
-        """
-        picked = set(selected)
-        if not options:
-            indexes: list[int] = []
-        elif self.yes:
-            indexes = sorted(picked)
-        elif not self.interactive:
-            if self.no_input:
-                raise self._unavailable(label, flag)
-            indexes = self._plain_many(label, options, picked)
-        else:
-            indexes = self._raw(label, options, 0, multi=picked)
-        values = [options[i] for i in indexes]
-        self.out.collapsed(
-            label, [option.text for option in values] or "none", noun=noun
-        )
-        return [option.value for option in values]
-
-    def ask(
-        self,
-        label: str,
-        default: str,
-        *,
-        flag: str,
-        note: Callable[[str], str] | None = None,
-        check: Callable[[str], str | None] | None = None,
-    ) -> str:
-        """One typed line, pre-filled with `default`.
-
-        `check` names what is wrong with a value, or returns None for a good
-        one: a terminal shows the problem beside the line and keeps editing,
-        and typed input raises it. `note` is a quiet aside on a good value.
-        """
-
-        def problem(value: str) -> str | None:
-            return check(value) if check is not None else None
-
-        def aside(value: str) -> str:
-            return note(value) if note is not None and problem(value) is None else ""
-
-        if self.yes:
-            value = default
-        elif not self.interactive:
-            if self.no_input:
-                raise self._unavailable(label, flag)
-            value = self._answer(
-                f"{label} [{default}]: ",
-                Aborted(
-                    f"{label.lower()} was not answered",
-                    hint=f"pass '{flag}', or answer on stdin",
-                ),
-            )
-            value = value or default
-            wrong = problem(value)
-            if wrong is not None:
-                raise InvalidInput(
-                    f"{label.lower()} {wrong}",
-                    hint=f"pass '{flag}'",
-                    param=label.lower(),
-                )
-        else:
-            value = self._edit(label, default, aside, problem)
-        self.out.collapsed(label, value, aside(value))
-        return value
-
-    def confirm(
-        self,
-        question: str,
-        *,
-        flag: str = "--yes",
-        declined: str = "Nothing was changed.",
-    ) -> None:
-        """Asks `question [y/N]` on stderr; goes on only if the answer is yes.
-
-        Raises:
-            Declined: The answer was anything else; `declined` is the line
-                that says what did not happen.
-            Aborted: There was nobody to ask, which is an error.
-        """
-        if self.yes:
-            return
-        unanswered = Aborted(
-            f"`{question}` needs an answer",
-            hint=f"pass {flag} to go ahead without asking",
-        )
-        if self.no_input:
-            raise unanswered
-        answer = self._answer(f"{question} [y/N] ", unanswered)
-        if answer.lower() not in ("y", "yes"):
-            raise Declined("cancelled; nothing was changed", said=declined)
-
-    def _answer(self, prompt: str, unanswered: Aborted) -> str:
-        """One line read from stdin after `prompt`; `unanswered` when stdin ends.
-
-        The prompt's line is ended either way, so what follows starts a line.
-        """
-        self.out.err.write(prompt)
-        self.out.err.flush()
-        # Until Enter ends it, the line the question is on is still open.
-        self.out._asking = True
-        read = self.stdin.readline()
-        self.out._asking = False
-        if not read:
-            self.out.err.write("\n")
-            self.out.err.flush()
-            raise unanswered
-        return read.strip()
-
-    def _plain(self, label: str, options: Sequence[Option], default: int) -> Option:
-        err = self.out.err
-        err.write(f"{label}\n")
-        for i, option in enumerate(options, 1):
-            err.write(
-                f"  {i}. {option.text}{'  ' + option.detail if option.detail else ''}\n"
-            )
-        text = self._answer(
-            f"Choose [{default + 1}]: ",
-            Aborted(
-                f"{label.lower()} was not chosen", hint="answer on stdin, or pass --yes"
-            ),
-        )
-        if not text:
-            return options[default]
-        if text.isdigit() and 1 <= int(text) <= len(options):
-            return options[int(text) - 1]
-        for option in options:
-            if option.text == text:
-                return option
-        raise InvalidInput(f"`{text}` is not one of the {label.lower()} choices")
-
-    def _plain_many(
-        self, label: str, options: Sequence[Option], picked: set[int]
-    ) -> list[int]:
-        err = self.out.err
-        err.write(f"{label}\n")
-        for i, option in enumerate(options, 1):
-            mark = "x" if i - 1 in picked else " "
-            err.write(f"  {i}. [{mark}] {option.text}\n")
-        text = self._answer(
-            "Choose (comma-separated numbers or names, Enter keeps the marked rows): ",
-            Aborted(
-                f"{label.lower()} were not chosen",
-                hint="answer on stdin, or pass --yes",
-            ),
-        )
-        if not text:
-            return sorted(picked)
-        names = {option.text: i for i, option in enumerate(options)}
-        chosen = []
-        for part in [p.strip() for p in text.split(",") if p.strip()]:
-            if part.isdigit() and 1 <= int(part) <= len(options):
-                chosen.append(int(part) - 1)
-            elif part in names:
-                chosen.append(names[part])
-            else:
-                raise InvalidInput(
-                    f"`{part}` is not one of the {label.lower()} choices"
-                )
-        return sorted(set(chosen))
-
-    def _byte(self, fd: int, *, wait: bool) -> bytes:
-        if not wait and not select.select([fd], [], [], ESCAPE_SECONDS)[0]:
-            return b""
-        return os.read(fd, 1)
-
-    def _key(self) -> str:
-        """One key: a character, `up`, `down`, `escape` or `other`.
-
-        A character is read whole, however many UTF-8 bytes it takes. An
-        escape sequence is read to its final byte, so keys such as Delete or
-        Home leave nothing behind.
-        """
-        fd = self.stdin.fileno()
-        first = self._byte(fd, wait=True)
-        if first != b"\x1b":
-            lead = first[0] if first else 0
-            extra = (
-                3 if lead >= 0xF0 else 2 if lead >= 0xE0 else 1 if lead >= 0xC0 else 0
-            )
-            data = first
-            for _ in range(extra):
-                data += self._byte(fd, wait=False)
-            return data.decode("utf-8", "replace")
-        kind = self._byte(fd, wait=False)
-        if not kind:
-            return "escape"
-        sequence = kind
-        if kind in (b"[", b"O"):
-            while True:
-                byte = self._byte(fd, wait=False)
-                sequence += byte
-                if not byte or 0x40 <= byte[0] <= 0x7E:
-                    break
-        return {b"[A": "up", b"OA": "up", b"[B": "down", b"OB": "down"}.get(
-            sequence, "other"
-        )
-
-    def _raw_session(
-        self, draw: Callable[[int, int], list[str]], handle: Callable[[str], bool]
-    ) -> None:
-        import termios
-        import tty
-
-        fd = self.stdin.fileno()
-        saved = termios.tcgetattr(fd)
-        err = self.out.err
-        try:
-            tty.setcbreak(fd)
-            while True:
-                columns, lines = size(err)
-                # Every line fits the width, so the cursor climbs exactly
-                # as many lines as the frame took.
-                frame = [
-                    clip(line, max(columns - 1, 1)) for line in draw(columns, lines)
-                ]
-                err.write("".join(f"{line}\n" for line in frame) + FRAME_END)
-                err.flush()
-                key = self._key()
-                err.write(f"\x1b[{len(frame)}A\r\x1b[J" if frame else "\r\x1b[J")
-                if key == "\x03":
-                    raise KeyboardInterrupt
-                if key in ("escape", "\x04"):
-                    raise Declined(
-                        "cancelled; nothing was written", said="Nothing was written."
-                    )
-                if handle(key):
-                    break
-        finally:
-            err.write("\x1b[?25h")
-            err.flush()
-            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-
-    def _raw(
-        self,
-        label: str,
-        options: Sequence[Option],
-        default: int,
-        *,
-        multi: set[int] | None,
-    ) -> list[int]:
-        state = {"cursor": default}
-
-        def draw(columns: int, lines: int) -> list[str]:
-            # The rows that fit under the label, scrolled to keep the cursor in view.
-            room = max(lines - 2, 1)
-            first = min(
-                max(state["cursor"] - room // 2, 0), max(len(options) - room, 0)
-            )
-            marks = 0 if multi is None else 4
-            across = max(columns - MARGIN - 4 - marks, 1)
-            # Details share a column, set by the widest name that leaves them
-            # room; a name wider than that keeps its detail only if it fits.
-            column = _shared(
-                [(visible(o.text), visible(o.detail)) for o in options], across, 4
-            )
-            head = label
-            if multi is not None:
-                chosen = f"{len(multi)} of {len(options)} selected"
-                head = f"{label}  {self.out.quiet_text(chosen)}"
-            frame = [head]
-            for i in range(first, min(first + room, len(options))):
-                option = options[i]
-                cursor = ">" if i == state["cursor"] else " "
-                mark = "" if multi is None else ("[x] " if i in multi else "[ ] ")
-                text = shorten(option.text, across)
-                detail = self.out.quiet_text(option.detail)
-                if detail and visible(text) <= column:
-                    text = f"{pad(text, column)}    {detail}"
-                elif detail and visible(text) + 4 + visible(detail) <= across:
-                    text = f"{text}    {detail}"
-                frame.append(f"  {cursor} {mark}{text}")
-            return frame
-
-        def handle(key: str) -> bool:
-            if key in ("up", "k"):
-                state["cursor"] = (state["cursor"] - 1) % len(options)
-            elif key in ("down", "j", "\t"):
-                state["cursor"] = (state["cursor"] + 1) % len(options)
-            elif key == " " and multi is not None:
-                multi.symmetric_difference_update({state["cursor"]})
-            elif key in ("\r", "\n"):
-                return True
-            return False
-
-        self._raw_session(draw, handle)
-        return sorted(multi) if multi is not None else [state["cursor"]]
-
-    def _edit(
-        self,
-        label: str,
-        default: str,
-        aside: Callable[[str], str],
-        problem: Callable[[str], str | None],
-    ) -> str:
-        state = {"text": default}
-
-        def draw(columns: int, lines: int) -> list[str]:
-            wrong = problem(state["text"])
-            if wrong is None:
-                return self.out.answer(
-                    label, state["text"], aside(state["text"]), columns=columns
-                )
-
-            def red(text: str) -> str:
-                return self.out.style(text, "red", stream=self.out.err)
-
-            return self.out.answer(
-                label, state["text"], wrong, columns=columns, style=red
-            )
-
-        def handle(key: str) -> bool:
-            if key in ("\r", "\n"):
-                return problem(state["text"]) is None
-            if key in ("\x7f", "\b"):
-                state["text"] = state["text"][:-1]
-            elif len(key) == 1 and key.isprintable():
-                state["text"] += key
-            return False
-
-        self._raw_session(draw, handle)
-        return state["text"]

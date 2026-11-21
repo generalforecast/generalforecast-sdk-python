@@ -1,0 +1,18 @@
+--- 100 columns, not a terminal
+$ gf predictors delete churn
+error: there is no terminal to ask before changing anything
+help: pass --yes to go ahead without asking
+[exit 2]
+--- 100 columns, a terminal
+$ gf predictors delete churn
+  Delete predictor churn and its 5 revisions? Production serves 18,330 calls a day [y/N] y
+[1;32m     Deleted[0m predictor churn
+--- 44 columns, not a terminal
+$ gf predictors delete churn
+error: there is no terminal to ask before changing anything
+help: pass --yes to go ahead without asking
+[exit 2]
+--- 44 columns, a terminal
+$ gf predictors delete churn
+  Delete predictor churn and its 5 revisions? Production serves 18,330 calls a day [y/N] y
+[1;32m     Deleted[0m predictor churn

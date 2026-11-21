@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: General Forecast, Inc.
 # SPDX-License-Identifier: MIT
 
-from generalforecast import _render, types
+from generalforecast import _render, term, types
 from generalforecast.types import (
     Column,
     Context,
@@ -57,11 +57,20 @@ def test_predictor_reprs():
 
 
 def test_formats():
-    assert [_render.seconds(v) for v in (0.21, 6.8, 41, 72)] == [
+    assert [term.duration(v) for v in (0.21, 6.8, 41, 72, 3900)] == [
         "0.21s",
         "6.8s",
         "41s",
         "1m12s",
+        "1h05m",
+    ]
+    assert [_render.credits(v) for v in (0.4, 13, 52.06, 1204, 0.004, 0)] == [
+        "0.4 credits",
+        "13.0 credits",
+        "52.1 credits",
+        "1,204 credits",
+        "0.004 credits",
+        "0.0 credits",
     ]
     assert [types.money(v) for v in (0.013, 0.0391, 12.5, 0)] == [
         "$0.013",

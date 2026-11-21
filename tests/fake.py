@@ -33,6 +33,7 @@ TOKEN = "gf_test_0123456789abcdefghijklmnopqrstuv"
 CONSOLE = "https://app.generalforecast.com"
 NOW = "2026-11-21T09:12:04Z"
 EPOCH = 1795252324.0  # NOW, in Unix seconds
+DAY = 86400.0
 ARROW = "application/vnd.apache.arrow.stream"
 
 ORIGIN = contract.example("contexts.get")["origin"]
@@ -165,6 +166,7 @@ class Fake:
     log_entries: list[dict[str, Any]] = field(
         default_factory=lambda: contract.example("environments.logs")["logs"]
     )
+    source_errors: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def calls_to(self, method: str, pattern: str) -> list[Call]:
         """The calls whose path matches `pattern`."""
@@ -207,6 +209,13 @@ def ok(
     result: Any, status: int = 200, **headers: str
 ) -> tuple[int, Any, dict[str, str]]:
     return status, result, headers
+
+
+def _named(count: int) -> list[dict[str, Any]]:
+    return [
+        {"name": f"c{i}", "type": "number", "missing": 0, "distinct": None}
+        for i in range(count)
+    ]
 
 
 def _columns(table: pa.Table) -> list[dict[str, Any]]:
@@ -309,9 +318,14 @@ def contexts_create(fake: Fake, call: Call) -> Any:
     if payload.get("data"):
         _new_context(fake, payload, "uploading")
         return _open_upload(fake, payload["name"], payload["data"])
-    if payload.get("source") and payload["kind"] == "snapshot":
+    if payload.get("source"):
         ctx = _new_context(fake, payload, "importing")
         ctx["_polls"] = fake.polls_until_done
+        if payload["kind"] == "snapshot":
+            ctx["_final"] = {"version": 1, "versions": 1, "digest": digest("customers@1"), "rows": 48210,
+                             "columns": _named(9)}  # fmt: skip
+        else:
+            ctx["_final"] = {"rows": 12804, "columns": _named(11), "read_at": NOW}
         return ok(fake.context_json(payload["name"]))
     ctx = _new_context(fake, payload, "ready")
     ctx["rows"] = 0
@@ -334,7 +348,7 @@ def contexts_bytes(fake: Fake, call: Call, name: str, version: str) -> Any:
         ctx = fake.contexts[name]
         ctx.update(state="verifying", version=upload["version"], versions=upload["version"],
                    digest=upload["digest"], rows=table.num_rows, columns=_columns(table),
-                   _polls=1)  # fmt: skip
+                   updated=NOW, _polls=1)  # fmt: skip
         ctx["_versions"].append({"version": upload["version"], "digest": upload["digest"],
                                  "rows": table.num_rows})  # fmt: skip
         ctx["_rows"] = table.to_pylist()
@@ -347,12 +361,10 @@ def contexts_get(fake: Fake, call: Call, name: str) -> Any:
     ctx = fake.contexts[name]
     if ctx.get("_polls"):
         ctx["_polls"] -= 1
+        if ctx["state"] == "importing":
+            ctx["rows"] = 31200 if ctx["_polls"] else ctx["_final"]["rows"]
         if not ctx["_polls"]:
-            if ctx["state"] == "importing":
-                ctx.update(
-                    version=1, versions=1, digest=digest("customers@1"), rows=48210
-                )
-            ctx["state"] = "ready"
+            ctx.update(ctx.pop("_final", {}), state="ready")
     version = call.query.get("version")
     return ok(fake.context_json(name, int(version) if version else None))
 
@@ -363,7 +375,14 @@ def contexts_list(fake: Fake, call: Call) -> Any:
 
 def contexts_refresh(fake: Fake, call: Call, name: str) -> Any:
     ctx = fake.contexts[name]
+    version = (ctx["version"] or 0) + 1
     ctx["state"], ctx["_polls"] = "importing", fake.polls_until_done
+    ctx["_final"] = {
+        "version": version,
+        "versions": version,
+        "digest": digest(f"{name}@{version}"),
+        "rows": 48377,
+    }
     return ok(fake.context_json(name))
 
 
@@ -445,16 +464,18 @@ def _experiment_json(fake: Fake, name: str, number: int | None) -> dict[str, Any
         if run["_polls"] <= 0:
             count = len(run["leaderboard"])
             run.update(state="finished", leaderboard=_entries(run["models"]), rows=6513 * count,
-                       credits=13.0 * count, usd=0.013 * count, finished=NOW)  # fmt: skip
+                       credits=13.0 * count, usd=0.013 * count, started="2026-11-21T09:10:52Z",
+                       finished=NOW)  # fmt: skip
         else:
             run["state"] = "running"
-            run["leaderboard"][0] = _entries(run["models"])[0]
+            if len(run["leaderboard"]) > 1:
+                run["leaderboard"][0] = _entries(run["models"])[0]
     out["run"] = (
         {k: v for k, v in run.items() if not k.startswith("_")} if run else None
     )
     out["runs"] = [{"number": r["number"], "state": r["state"], "models": r["models"],
-                    "best": "tabicl-v2", "score": 0.931, "origin": origin(),
-                    "created": NOW} for r in runs]  # fmt: skip
+                    "best": r.get("_best", "tabicl-v2"), "score": r.get("_score", 0.931),
+                    "origin": origin(), "created": NOW} for r in runs]  # fmt: skip
     return out
 
 
@@ -533,7 +554,9 @@ def experiments_run(fake: Fake, call: Call, name: str) -> Any:
 
 def experiments_cancel(fake: Fake, call: Call, name: str, number: str) -> Any:
     run = fake.experiments[name]["_runs"][int(number) - 1]
-    run.update(state="cancelled", _polls=0)
+    run.update(state="cancelled", _polls=0, credits=4.0, usd=0.004)
+    run["leaderboard"] = [e if e["state"] == "finished" else dict(e, state="cancelled")
+                          for e in run["leaderboard"]]  # fmt: skip
     return ok({k: v for k, v in run.items() if not k.startswith("_")})
 
 
@@ -874,6 +897,9 @@ def sources_action(fake: Fake, call: Call, name: str, verb: str) -> Any:
     if verb == "delete":
         del fake.sources[name]
         return ok({"name": name, "deleted": True})
+    if name in fake.source_errors:
+        refused = dict(fake.source_errors[name])
+        raise Refusal(422, refused.pop("code"), refused.pop("message"), **refused)
     return sources_get(fake, call, name)
 
 

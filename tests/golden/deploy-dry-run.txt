@@ -1,0 +1,69 @@
+--- 100 columns, not a terminal
+$ gf deploy predictors.py --dry-run
+     Loading predictors.py  4 predictors
+    Planning production
+
+  + adult-income  revision 1
+      + model     tabicl-v2, general-forecast/tabicl-v2-classifier@sha256:b511d97d7214
+      + context   adult version 1, 32,561 rows
+      + target    income
+  ~ churn         revision 4 → 5
+      ~ model     kumo-small → kumo-medium
+      ~ context   customers version 7 → 8
+  = demand-us     revision 12, unchanged
+  = demand-eu     revision 9, unchanged
+
+    Finished plan only; nothing deployed
+--- 100 columns, a terminal
+$ gf deploy predictors.py --dry-run
+[1;32m     Loading[0m predictors.py  4 predictors
+[1;32m    Planning[0m production
+
+  [1;32m+[0m adult-income  revision 1
+      [1;32m+[0m model     tabicl-v2, general-forecast/tabicl-v2-classifier@sha256:b511d97d7214
+      [1;32m+[0m context   adult version 1, 32,561 rows
+      [1;32m+[0m target    income
+  [1;33m~[0m churn         revision 4 → 5
+      [1;33m~[0m model     kumo-small → kumo-medium
+      [1;33m~[0m context   customers version 7 → 8
+  [1;2m=[0m demand-us     revision 12, unchanged
+  [1;2m=[0m demand-eu     revision 9, unchanged
+
+[1;32m    Finished[0m plan only; nothing deployed
+--- 44 columns, not a terminal
+$ gf deploy predictors.py --dry-run
+     Loading predictors.py  4 predictors
+    Planning production
+
+  + adult-income  revision 1
+      + model     tabicl-v2, general-forecast/tabicl-v2-classifier@sha256:b511d97d7214
+      + context   adult version 1, 32,561 rows
+      + target    income
+  ~ churn         revision 4 → 5
+      ~ model     kumo-small → kumo-medium
+      ~ context   customers version 7 → 8
+  = demand-us     revision 12, unchanged
+  = demand-eu     revision 9, unchanged
+
+    Finished plan only; nothing deployed
+--- 44 columns, a terminal
+$ gf deploy predictors.py --dry-run
+[1;32m     Loading[0m predictors.py  4 predictors
+[1;32m    Planning[0m production
+
+  [1;32m+[0m adult-income  revision 1
+      [1;32m+[0m model     tabicl-v2, general-
+                  forecast/
+                  tabicl-v2-
+                  classifier@sha256:
+                  b511d97d7214
+      [1;32m+[0m context   adult version 1,
+                  32,561 rows
+      [1;32m+[0m target    income
+  [1;33m~[0m churn         revision 4 → 5
+      [1;33m~[0m model     kumo-small → kumo-medium
+      [1;33m~[0m context   customers version 7 → 8
+  [1;2m=[0m demand-us     revision 12, unchanged
+  [1;2m=[0m demand-eu     revision 9, unchanged
+
+[1;32m    Finished[0m plan only; nothing deployed

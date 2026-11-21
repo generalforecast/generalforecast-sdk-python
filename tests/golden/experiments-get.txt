@@ -1,0 +1,28 @@
+--- 100 columns, not a terminal
+$ gf experiments get adult-income
+     Model        AUROC  Interval        Time  Cost
+  1  tabicl-v2    0.931  0.925 to 0.937  38s   $0.013
+  2  kumo-medium  0.929  0.923 to 0.935  51s   $0.013
+  3  mitra-2      0.918  0.911 to 0.925  44s   $0.013
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 100 columns, a terminal
+$ gf experiments get adult-income
+     Model        AUROC  Interval        Time  Cost
+  1  tabicl-v2    0.931  0.925 to 0.937  38s   $0.013
+  2  kumo-medium  0.929  0.923 to 0.935  51s   $0.013
+  3  mitra-2      0.918  0.911 to 0.925  44s   $0.013
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf experiments get adult-income
+     Model        AUROC  Time  Cost
+  1  tabicl-v2    0.931  38s   $0.013
+  2  kumo-medium  0.929  51s   $0.013
+  3  mitra-2      0.918  44s   $0.013
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 44 columns, a terminal
+$ gf experiments get adult-income
+     Model        AUROC  Time  Cost
+  1  tabicl-v2    0.931  38s   $0.013
+  2  kumo-medium  0.929  51s   $0.013
+  3  mitra-2      0.918  44s   $0.013
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\

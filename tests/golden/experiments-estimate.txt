@@ -1,0 +1,13 @@
+--- 100 columns, not a terminal
+$ gf experiments estimate --context adult --target income
+   Estimated 198 calls on 19,539 rows  39.1 credits ($0.039)
+--- 100 columns, a terminal
+$ gf experiments estimate --context adult --target income
+[1;32m   Estimated[0m 198 calls on 19,539 rows  39.1 credits ($0.039)
+--- 44 columns, not a terminal
+$ gf experiments estimate --context adult --target income
+   Estimated 198 calls on 19,539 rows  39.1 credits ($0.039)
+--- 44 columns, a terminal
+$ gf experiments estimate --context adult --target income
+[1;32m   Estimated[0m 198 calls on 19,539 rows  39.1
+             credits ($0.039)

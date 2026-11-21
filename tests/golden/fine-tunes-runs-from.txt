@@ -1,0 +1,208 @@
+--- 100 columns, not a terminal
+$ gf fine-tunes runs create credit-default --from run.py --dry-run
+{
+  "name": "credit-default",
+  "base": "tabicl-v2",
+  "method": {
+    "type": "lora",
+    "rank": 16,
+    "input_adapter": true
+  },
+  "phases": [
+    {
+      "name": "warmup",
+      "data": [
+        {
+          "tag": "synthetic-credit-warmup"
+        }
+      ],
+      "plan": {
+        "steps": 200
+      }
+    },
+    {
+      "name": "credit",
+      "data": [
+        "credit-2026-01",
+        {
+          "context": "adult",
+          "version": 1
+        }
+      ],
+      "plan": {
+        "steps": 800,
+        "episode_sampling": {
+          "rows": 4096
+        }
+      }
+    }
+  ],
+  "architecture": [
+    {
+      "component": "row_encoder",
+      "to": {
+        "layers": 4
+      }
+    }
+  ],
+  "budget": {
+    "credits": 500
+  },
+  "target": "income"
+}
+--- 100 columns, a terminal
+$ gf fine-tunes runs create credit-default --from run.py --dry-run
+{
+  "name": "credit-default",
+  "base": "tabicl-v2",
+  "method": {
+    "type": "lora",
+    "rank": 16,
+    "input_adapter": true
+  },
+  "phases": [
+    {
+      "name": "warmup",
+      "data": [
+        {
+          "tag": "synthetic-credit-warmup"
+        }
+      ],
+      "plan": {
+        "steps": 200
+      }
+    },
+    {
+      "name": "credit",
+      "data": [
+        "credit-2026-01",
+        {
+          "context": "adult",
+          "version": 1
+        }
+      ],
+      "plan": {
+        "steps": 800,
+        "episode_sampling": {
+          "rows": 4096
+        }
+      }
+    }
+  ],
+  "architecture": [
+    {
+      "component": "row_encoder",
+      "to": {
+        "layers": 4
+      }
+    }
+  ],
+  "budget": {
+    "credits": 500
+  },
+  "target": "income"
+}
+--- 44 columns, not a terminal
+$ gf fine-tunes runs create credit-default --from run.py --dry-run
+{
+  "name": "credit-default",
+  "base": "tabicl-v2",
+  "method": {
+    "type": "lora",
+    "rank": 16,
+    "input_adapter": true
+  },
+  "phases": [
+    {
+      "name": "warmup",
+      "data": [
+        {
+          "tag": "synthetic-credit-warmup"
+        }
+      ],
+      "plan": {
+        "steps": 200
+      }
+    },
+    {
+      "name": "credit",
+      "data": [
+        "credit-2026-01",
+        {
+          "context": "adult",
+          "version": 1
+        }
+      ],
+      "plan": {
+        "steps": 800,
+        "episode_sampling": {
+          "rows": 4096
+        }
+      }
+    }
+  ],
+  "architecture": [
+    {
+      "component": "row_encoder",
+      "to": {
+        "layers": 4
+      }
+    }
+  ],
+  "budget": {
+    "credits": 500
+  },
+  "target": "income"
+}
+--- 44 columns, a terminal
+$ gf fine-tunes runs create credit-default --from run.py --dry-run
+{
+  "name": "credit-default",
+  "base": "tabicl-v2",
+  "method": {
+    "type": "lora",
+    "rank": 16,
+    "input_adapter": true
+  },
+  "phases": [
+    {
+      "name": "warmup",
+      "data": [
+        {
+          "tag": "synthetic-credit-warmup"
+        }
+      ],
+      "plan": {
+        "steps": 200
+      }
+    },
+    {
+      "name": "credit",
+      "data": [
+        "credit-2026-01",
+        {
+          "context": "adult",
+          "version": 1
+        }
+      ],
+      "plan": {
+        "steps": 800,
+        "episode_sampling": {
+          "rows": 4096
+        }
+      }
+    }
+  ],
+  "architecture": [
+    {
+      "component": "row_encoder",
+      "to": {
+        "layers": 4
+      }
+    }
+  ],
+  "budget": {
+    "credits": 500
+  },
+  "target": "income"
+}

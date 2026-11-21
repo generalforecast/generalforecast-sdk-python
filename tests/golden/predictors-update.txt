@@ -1,0 +1,31 @@
+--- 100 columns, not a terminal
+$ gf predictors update adult-income --model kumo-medium
+     Updated predictor adult-income revision 2
+              ~ model  tabicl-v2 → kumo-medium
+   Deploying adult-income revision 2 to production
+    Deployed adult-income revision 2 to production in 2.0s
+        View https://app.generalforecast.com/?project=acme#/predictors/adult-income
+--- 100 columns, a terminal
+$ gf predictors update adult-income --model kumo-medium
+[1;32m     Updated[0m predictor adult-income revision 2
+              [1;33m~[0m model  tabicl-v2 → kumo-medium
+[1;32m   Deploying[0m adult-income revision 2 to production  starting a replica
+[1;32m    Deployed[0m adult-income revision 2 to production in 2.0s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/adult-income\https://app.generalforecast.com/?project=acme#/predictors/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf predictors update adult-income --model kumo-medium
+     Updated predictor adult-income revision 2
+              ~ model  tabicl-v2 → kumo-medium
+   Deploying adult-income revision 2 to production
+    Deployed adult-income revision 2 to production in 2.0s
+        View https://app.generalforecast.com/?project=acme#/predictors/adult-income
+--- 44 columns, a terminal
+$ gf predictors update adult-income --model kumo-medium
+[1;32m     Updated[0m predictor adult-income
+             revision 2
+              [1;33m~[0m model  tabicl-v2 →
+                       kumo-medium
+[1;32m   Deploying[0m adult-income revision 2 to pr[0m…
+[1;32m    Deployed[0m adult-income revision 2 to
+             production in 2.0s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/adult-income\https://app.generalforecast.com/?project=acme#/predictors/adult-income]8;;\

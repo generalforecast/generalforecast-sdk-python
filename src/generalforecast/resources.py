@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from generalforecast import _ops
 from generalforecast._ops import UNSET
 from generalforecast.types import (
+    DEFAULT_METHOD,
     STANDARD_PERMISSIONS,
     ArchitectureChange,
     Budget,
@@ -32,7 +33,6 @@ from generalforecast.types import (
     Holdout,
     Key,
     Logs,
-    LoRA,
     Method,
     Missing,
     Model,
@@ -89,10 +89,6 @@ __all__ = [
     "Snapshots",
     "Sources",
 ]
-
-
-DEFAULT_METHOD = LoRA(rank=16)
-"""A run's method when none is given: LoRA of rank 16."""
 
 
 def _setup(**values: Any) -> dict[str, Any]:

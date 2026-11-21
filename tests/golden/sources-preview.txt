@@ -1,0 +1,16 @@
+--- 100 columns, not a terminal
+$ gf sources preview bigquery-acme --table acme.analytics.customers
+  customer_id  churned
+  C-100481     false
+--- 100 columns, a terminal
+$ gf sources preview bigquery-acme --table acme.analytics.customers
+  customer_id  churned
+  C-100481     false
+--- 44 columns, not a terminal
+$ gf sources preview bigquery-acme --table acme.analytics.customers
+  customer_id  churned
+  C-100481     false
+--- 44 columns, a terminal
+$ gf sources preview bigquery-acme --table acme.analytics.customers
+  customer_id  churned
+  C-100481     false

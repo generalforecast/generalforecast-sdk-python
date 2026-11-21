@@ -1,0 +1,23 @@
+--- 100 columns, not a terminal
+$ gf contexts refresh customers
+  Refreshing customers from bigquery-acme
+   Refreshed context customers version 9  48,377 rows, 9 columns in 3.3s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/customers
+--- 100 columns, a terminal
+$ gf contexts refresh customers
+[1;32m  Refreshing[0m customers from bigquery-acme  48,210 rows
+[1;32m  Refreshing[0m customers from bigquery-acme  31,200 rows  1s
+[1;32m   Refreshed[0m context customers version 9  48,377 rows, 9 columns in 3.3s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/customers\https://app.generalforecast.com/?project=acme#/data/contexts/customers]8;;\
+--- 44 columns, not a terminal
+$ gf contexts refresh customers
+  Refreshing customers from bigquery-acme
+   Refreshed context customers version 9  48,377 rows, 9 columns in 3.3s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/customers
+--- 44 columns, a terminal
+$ gf contexts refresh customers
+[1;32m  Refreshing[0m customers from bigquery-acme [0m…
+[1;32m  Refreshing[0m customers from bigquery-a[0m…  1s
+[1;32m   Refreshed[0m context customers version 9
+             48,377 rows, 9 columns in 3.3s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/customers\https://app.generalforecast.com/?project=acme#/data/contexts/customers]8;;\

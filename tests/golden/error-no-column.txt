@@ -1,0 +1,21 @@
+--- 100 columns, not a terminal
+$ gf experiments create --context adult --target incme
+error: the context adult has no column `incme`
+help: a similar column exists: `income`
+[exit 1]
+--- 100 columns, a terminal
+$ gf experiments create --context adult --target incme
+[1merror:[0m the context adult has no column `incme`
+[1mhelp:[0m a similar column exists: `income`
+[exit 1]
+--- 44 columns, not a terminal
+$ gf experiments create --context adult --target incme
+error: the context adult has no column `incme`
+help: a similar column exists: `income`
+[exit 1]
+--- 44 columns, a terminal
+$ gf experiments create --context adult --target incme
+[1merror:[0m the context adult has no column
+       `incme`
+[1mhelp:[0m a similar column exists: `income`
+[exit 1]

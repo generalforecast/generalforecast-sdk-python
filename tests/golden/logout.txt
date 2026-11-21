@@ -1,0 +1,13 @@
+--- 100 columns, not a terminal
+$ gf logout
+  Logged out maya@acme.com; removed the key cli-maya-mbp from this machine
+--- 100 columns, a terminal
+$ gf logout
+[1;32m  Logged out[0m maya@acme.com; removed the key cli-maya-mbp from this machine
+--- 44 columns, not a terminal
+$ gf logout
+  Logged out maya@acme.com; removed the key cli-maya-mbp from this machine
+--- 44 columns, a terminal
+$ gf logout
+[1;32m  Logged out[0m maya@acme.com; removed the key
+             cli-maya-mbp from this machine

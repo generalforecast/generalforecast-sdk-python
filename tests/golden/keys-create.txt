@@ -1,0 +1,18 @@
+--- 100 columns, not a terminal
+$ gf keys create ci-deploy --expires 90d
+     Created key ci-deploy  standard permissions, expires Feb 19 2027; shown once
+gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa
+--- 100 columns, a terminal
+$ gf keys create ci-deploy --expires 90d
+[1;32m     Created[0m key ci-deploy  standard permissions, expires Feb 19 2027; shown once
+gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa
+--- 44 columns, not a terminal
+$ gf keys create ci-deploy --expires 90d
+     Created key ci-deploy  standard permissions, expires Feb 19 2027; shown once
+gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa
+--- 44 columns, a terminal
+$ gf keys create ci-deploy --expires 90d
+[1;32m     Created[0m key ci-deploy  standard
+             permissions, expires Feb 19
+             2027; shown once
+gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa

@@ -186,7 +186,7 @@ def test_wait_reports_progress_and_the_published_version(fake):
     assert run.curve == ((500, 0.45, 0.43), (1000, 0.41, 0.398))
     assert repr(run) == (
         "credit-default@ft1  finished  step 1,000/1,000  loss 0.410  "
-        "val 0.398 (base 0.421)  2m 10s  260 credits"
+        "val 0.398 (base 0.421)  2m 10s  260.0 credits"
     )
     assert "<polyline" in run._repr_html_()
     second = gf.fine_tunes.runs.create(
@@ -218,7 +218,8 @@ def test_watch_yields_each_event_once_and_a_failed_run_raises(fake):
     with pytest.raises(gf.Error) as error:
         gf.fine_tunes.runs.wait("b")
     assert error.value.code == "RunFailed" and not error.value.recoverable
-    assert "out of memory" in error.value.message
+    assert error.value.message == "run b@ft1 failed"
+    assert error.value.note == "the trainer ran out of memory"
 
 
 def test_cancel_with_save_publishes(fake):

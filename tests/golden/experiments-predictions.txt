@@ -1,0 +1,12 @@
+--- 100 columns, not a terminal
+$ gf experiments predictions adult-income --model tabicl-v2 --output held.csv
+       Wrote held.csv  4 rows
+--- 100 columns, a terminal
+$ gf experiments predictions adult-income --model tabicl-v2 --output held.csv
+[1;32m       Wrote[0m held.csv  4 rows
+--- 44 columns, not a terminal
+$ gf experiments predictions adult-income --model tabicl-v2 --output held.csv
+       Wrote held.csv  4 rows
+--- 44 columns, a terminal
+$ gf experiments predictions adult-income --model tabicl-v2 --output held.csv
+[1;32m       Wrote[0m held.csv  4 rows

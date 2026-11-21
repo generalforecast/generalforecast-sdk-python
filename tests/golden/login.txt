@@ -1,0 +1,40 @@
+--- 100 columns, not a terminal
+$ gf login
+       Visit https://app.generalforecast.com/device?code=WXHG-PTRB
+             Confirm the code WXHG-PTRB in the browser where you are signed in
+     Waiting for approval
+   Logged in maya@acme.com, project acme
+             Saved key cli-maya-mbp to ~/.config/gf/credentials.toml, expires Feb 19 2027
+        View https://app.generalforecast.com/?project=acme
+--- 100 columns, a terminal
+$ gf login
+[1;32m     Opening[0m ]8;;https://app.generalforecast.com/device?code=WXHG-PTRB\https://app.generalforecast.com/device?code=WXHG-PTRB]8;;\
+             Confirm the code WXHG-PTRB in the browser where you are signed in
+[1;32m     Waiting[0m for approval
+[1;32m     Waiting[0m for approval  5s
+[1;32m     Waiting[0m for approval  10s
+[1;32m   Logged in[0m maya@acme.com, project acme
+             Saved key cli-maya-mbp to ~/.config/gf/credentials.toml, expires Feb 19 2027
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme\https://app.generalforecast.com/?project=acme]8;;\
+--- 44 columns, not a terminal
+$ gf login
+       Visit https://app.generalforecast.com/device?code=WXHG-PTRB
+             Confirm the code WXHG-PTRB in the browser where you are signed in
+     Waiting for approval
+   Logged in maya@acme.com, project acme
+             Saved key cli-maya-mbp to ~/.config/gf/credentials.toml, expires Feb 19 2027
+        View https://app.generalforecast.com/?project=acme
+--- 44 columns, a terminal
+$ gf login
+[1;32m     Opening[0m ]8;;https://app.generalforecast.com/device?code=WXHG-PTRB\https://app.generalforecast.com/device?code=WXHG-PTRB]8;;\
+             Confirm the code WXHG-PTRB in
+             the browser where you are
+             signed in
+[1;32m     Waiting[0m for approval
+[1;32m     Waiting[0m for approval  5s
+[1;32m     Waiting[0m for approval  10s
+[1;32m   Logged in[0m maya@acme.com, project acme
+             Saved key cli-maya-mbp to
+             ~/.config/gf/credentials.toml,
+             expires Feb 19 2027
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme\https://app.generalforecast.com/?project=acme]8;;\

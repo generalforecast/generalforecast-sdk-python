@@ -1,0 +1,17 @@
+--- 100 columns, not a terminal
+$ gf sources create pg-replica --kind postgres --config host=10.2.0.4,port=5432,database=app,user=gf_read --secret-stdin
+     Created source pg-replica  Postgres, tested in 0.40s
+        View https://app.generalforecast.com/?project=acme#/data/sources/pg-replica
+--- 100 columns, a terminal
+$ gf sources create pg-replica --kind postgres --config host=10.2.0.4,port=5432,database=app,user=gf_read --secret-stdin
+[1;32m     Created[0m source pg-replica  Postgres, tested in 0.40s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/sources/pg-replica\https://app.generalforecast.com/?project=acme#/data/sources/pg-replica]8;;\
+--- 44 columns, not a terminal
+$ gf sources create pg-replica --kind postgres --config host=10.2.0.4,port=5432,database=app,user=gf_read --secret-stdin
+     Created source pg-replica  Postgres, tested in 0.40s
+        View https://app.generalforecast.com/?project=acme#/data/sources/pg-replica
+--- 44 columns, a terminal
+$ gf sources create pg-replica --kind postgres --config host=10.2.0.4,port=5432,database=app,user=gf_read --secret-stdin
+[1;32m     Created[0m source pg-replica  Postgres,
+             tested in 0.40s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/sources/pg-replica\https://app.generalforecast.com/?project=acme#/data/sources/pg-replica]8;;\

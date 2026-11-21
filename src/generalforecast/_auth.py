@@ -50,7 +50,11 @@ SESSION: Session | None = None
 
 @dataclass
 class Stored:
-    """A login the credentials file holds for one server."""
+    """A login the credentials file holds for one server.
+
+    `name` is the key's name; `minted` says `gf login` made the key, so
+    `gf logout` revokes it, where a key pasted in is only forgotten.
+    """
 
     server: str
     key_id: str
@@ -60,6 +64,8 @@ class Stored:
     expires: str | None = None
     store: str = "file"
     key: str | None = None
+    name: str | None = None
+    minted: bool = False
 
 
 def config_dir(environ: Mapping[str, str] | None = None) -> Path:
@@ -115,7 +121,9 @@ class CredentialStore:
         for server, values in sorted(servers.items()):
             lines.append(f"[servers.{_toml(server)}]")
             lines += [
-                f"{k} = {_toml(str(v))}" for k, v in values.items() if v is not None
+                f"{k} = {str(v).lower() if isinstance(v, bool) else _toml(str(v))}"
+                for k, v in values.items()
+                if v is not None
             ]
             lines.append("")
         write_private(self.path, "\n".join(lines).encode())
@@ -136,6 +144,8 @@ class CredentialStore:
             expires=values.get("expires"),
             store=store,
             key=key,
+            name=values.get("name"),
+            minted=values.get("minted") is True,
         )
 
     def save(self, login: Stored) -> Stored:

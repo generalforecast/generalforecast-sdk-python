@@ -1,0 +1,31 @@
+--- 100 columns, not a terminal
+$ gf predictors promote churn --from staging --env production
+    Promoted churn revision 5 to production in 0.80s  was revision 4
+        View https://app.generalforecast.com/?project=acme#/predictors/churn
+$ gf predictors rollback churn
+ Rolled back churn in production to revision 4 in 0.80s  was revision 5
+        View https://app.generalforecast.com/?project=acme#/predictors/churn
+--- 100 columns, a terminal
+$ gf predictors promote churn --from staging --env production
+[1;32m    Promoted[0m churn revision 5 to production in 0.80s  was revision 4
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/churn\https://app.generalforecast.com/?project=acme#/predictors/churn]8;;\
+$ gf predictors rollback churn
+[1;32m Rolled back[0m churn in production to revision 4 in 0.80s  was revision 5
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/churn\https://app.generalforecast.com/?project=acme#/predictors/churn]8;;\
+--- 44 columns, not a terminal
+$ gf predictors promote churn --from staging --env production
+    Promoted churn revision 5 to production in 0.80s  was revision 4
+        View https://app.generalforecast.com/?project=acme#/predictors/churn
+$ gf predictors rollback churn
+ Rolled back churn in production to revision 4 in 0.80s  was revision 5
+        View https://app.generalforecast.com/?project=acme#/predictors/churn
+--- 44 columns, a terminal
+$ gf predictors promote churn --from staging --env production
+[1;32m    Promoted[0m churn revision 5 to production
+             in 0.80s  was revision 4
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/churn\https://app.generalforecast.com/?project=acme#/predictors/churn]8;;\
+$ gf predictors rollback churn
+[1;32m Rolled back[0m churn in production to
+             revision 4 in 0.80s  was
+             revision 5
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/churn\https://app.generalforecast.com/?project=acme#/predictors/churn]8;;\

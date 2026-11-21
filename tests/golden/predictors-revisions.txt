@@ -1,0 +1,32 @@
+--- 100 columns, not a terminal
+$ gf predictors revisions churn
+  Revision  Model        Context       Origin   Created       Serving in
+         5  kumo-medium  customers v8  cli      3m ago        staging
+         4  kumo-small   customers v7  console  Nov 18 14:40  production
+         3  kumo-small   customers v7  console  Nov 18 14:40
+         2  kumo-small   customers v7  console  Nov 18 14:40
+         1  kumo-small   customers v7  console  Nov 18 14:40
+--- 100 columns, a terminal
+$ gf predictors revisions churn
+  Revision  Model        Context       Origin   Created       Serving in
+         5  kumo-medium  customers v8  cli      3m ago        staging
+         4  kumo-small   customers v7  console  Nov 18 14:40  production
+         3  kumo-small   customers v7  console  Nov 18 14:40
+         2  kumo-small   customers v7  console  Nov 18 14:40
+         1  kumo-small   customers v7  console  Nov 18 14:40
+--- 44 columns, not a terminal
+$ gf predictors revisions churn
+  Revision  Model        Context       Serving in
+         5  kumo-medium  customers v8  staging
+         4  kumo-small   customers v7  production
+         3  kumo-small   customers v7
+         2  kumo-small   customers v7
+         1  kumo-small   customers v7
+--- 44 columns, a terminal
+$ gf predictors revisions churn
+  Revision  Model        Context       Serving in
+         5  kumo-medium  customers v8  staging
+         4  kumo-small   customers v7  production
+         3  kumo-small   customers v7
+         2  kumo-small   customers v7
+         1  kumo-small   customers v7

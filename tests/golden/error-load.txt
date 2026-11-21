@@ -1,0 +1,37 @@
+--- 100 columns, not a terminal
+$ gf deploy predictors.py
+error: predictors.py could not be loaded
+  --> predictors.py:9:5
+   |
+ 9 |     modle="kumo-medium",
+   |     ^^^^^ gf.Predictor() has no argument `modle`
+help: a similar argument exists: `model`
+[exit 1]
+--- 100 columns, a terminal
+$ gf deploy predictors.py
+[1merror:[0m predictors.py could not be loaded
+  [2m-->[0m predictors.py:9:5
+   [2m|[0m
+[2m 9[0m [2m|[0m     modle="kumo-medium",
+   [2m|[0m     [1;31m^^^^^[0m gf.Predictor() has no argument `modle`
+[1mhelp:[0m a similar argument exists: `model`
+[exit 1]
+--- 44 columns, not a terminal
+$ gf deploy predictors.py
+error: predictors.py could not be loaded
+  --> predictors.py:9:5
+   |
+ 9 |     modle="kumo-medium",
+   |     ^^^^^ gf.Predictor() has no argument `modle`
+help: a similar argument exists: `model`
+[exit 1]
+--- 44 columns, a terminal
+$ gf deploy predictors.py
+[1merror:[0m predictors.py could not be loaded
+  [2m-->[0m predictors.py:9:5
+   [2m|[0m
+[2m 9[0m [2m|[0m     modle="kumo-medium",
+   [2m|[0m     [1;31m^^^^^[0m gf.Predictor() has no
+   [2m|[0m           argument `modle`
+[1mhelp:[0m a similar argument exists: `model`
+[exit 1]

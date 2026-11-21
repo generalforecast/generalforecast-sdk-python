@@ -1,0 +1,17 @@
+--- 100 columns, not a terminal
+$ gf contexts upload adult adult.csv
+   Unchanged context adult version 1  same rows as before
+        View https://app.generalforecast.com/?project=acme#/data/contexts/adult
+--- 100 columns, a terminal
+$ gf contexts upload adult adult.csv
+[1;32m   Unchanged[0m context adult version 1  same rows as before
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/adult\https://app.generalforecast.com/?project=acme#/data/contexts/adult]8;;\
+--- 44 columns, not a terminal
+$ gf contexts upload adult adult.csv
+   Unchanged context adult version 1  same rows as before
+        View https://app.generalforecast.com/?project=acme#/data/contexts/adult
+--- 44 columns, a terminal
+$ gf contexts upload adult adult.csv
+[1;32m   Unchanged[0m context adult version 1  same
+             rows as before
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/adult\https://app.generalforecast.com/?project=acme#/data/contexts/adult]8;;\

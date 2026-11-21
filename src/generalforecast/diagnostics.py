@@ -7,27 +7,23 @@ One `error:` or `warning:` line, then optionally where it points,
 `  --> path:line:col`, then `note:` lines for why and `help:` lines for what
 to do instead:
 
-    error: gf.yaml has no `target`
-      --> gf.yaml:3:1
-    note: a classifier learns the target column
-    help: add `target: <column>`
+    error: predictors.py could not be loaded
+      --> predictors.py:9:5
+    help: a similar argument exists: `model`
 
 That is the gf CLI's shape (`term.Output.error`): its first line says what
-failed in the person's terms and carries no code. A code is information
-only for an error a service sent back, and there it is a note beside the
-service's own words, under a first line that says what gf was asking for:
+failed in the person's terms and carries no code. What a service said
+about a failure is a note under it, with the request's id:
 
-    error: the service refused the snapshot upload
-    note: ValidationError (422): application/json required
-    note: request r-524a763d64e2
+    error: churn revision 5 failed to start in production
+    note: the replica exited loading the model (request r-8f2c41d0)
+    help: production still serves revision 4
 
 `head` can still put a code in brackets on the first line,
-`error[ValidationError]: ...`. `Error.__str__` writes it that way, since
-what an SDK caller reads in a traceback is the name to catch.
+`error[ValidationError]: ...`.
 
 Messages start lowercase, unless with a name such as GF_API_KEY or
-Parquet, and end without a period; tests/test_repository.py holds every
-message literal in gf to that. Wire codes and reasons are not messages.
+Parquet, and end without a period. Wire codes and reasons are not messages.
 """
 
 from __future__ import annotations

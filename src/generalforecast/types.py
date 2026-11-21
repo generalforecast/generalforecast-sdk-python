@@ -47,6 +47,7 @@ __all__ = [
     "Evaluation",
     "Experiment",
     "FineTuneRun",
+    "FineTuneSpec",
     "Full",
     "Holdout",
     "InputAdapter",
@@ -277,8 +278,8 @@ class Context:
     """A context: data a model learns from, uploaded, imported or live.
 
     `file` names the file an uploaded version came from, when it came from
-    one. `unchanged` is true on an upload whose rows matched the latest version,
-    which then stays the latest.
+    one. `unchanged` is true on an upload whose rows matched the latest
+    version, which then stays the latest.
     """
 
     name: str
@@ -1040,7 +1041,9 @@ class Predictions:
 
     def __repr__(self) -> str:
         """`Predictions 5 rows with tabicl-v2-classifier  0.01 credits ($0.00001)`."""
-        model = self.model.split("/")[-1].split("@")[0]
+        from generalforecast._render import model_name
+
+        model = model_name(self.model)
         text = f"Predictions {self.rows:,} rows with {model}  {self.credits:g} credits ({money(self.usd)})"
         if self.gpu_seconds:
             text += f"  {self.gpu_seconds:g} GPU seconds"
@@ -1299,6 +1302,8 @@ class Full:
 
 
 Method = LoRA | InputAdapter | Full
+DEFAULT_METHOD = LoRA(rank=16)
+"""A run's method when none is given: LoRA of rank 16."""
 
 
 @dataclass(frozen=True)
@@ -1410,6 +1415,36 @@ class Budget:
             k: getattr(self, k)
             for k in ("credits", "hours")
             if getattr(self, k) is not None
+        }
+
+
+@dataclass(frozen=True)
+class FineTuneSpec:
+    """A fine-tuning run's settings, kept in a file: `gf fine-tunes runs create NAME --from FILE`.
+
+    The fields are `fine_tunes.runs.create`'s keyword arguments, `wait`
+    and `progress` aside; constructing one is local and makes no call.
+    """
+
+    base: str
+    _: KW_ONLY
+    data: Sequence[Any] | None = None
+    target: str | None = None
+    method: Method = DEFAULT_METHOD
+    plan: Plan | None = None
+    phases: Sequence[Phase] | None = None
+    architecture: Sequence[ArchitectureChange] = ()
+    evaluation: Evaluation | None = None
+    budget: Budget | None = None
+    seed: int | None = None
+    tags: Sequence[str] = ()
+
+    def arguments(self) -> dict[str, Any]:
+        """The keyword arguments `fine_tunes.runs.create` takes."""
+        return {
+            item.name: getattr(self, item.name)
+            for item in fields(self)
+            if item.name != "_"
         }
 
 

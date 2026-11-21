@@ -1,0 +1,12 @@
+--- 100 columns, not a terminal
+$ gf keys delete key-02cd0c1d2e3f40516273 --yes
+     Deleted key old-laptop
+--- 100 columns, a terminal
+$ gf keys delete key-02cd0c1d2e3f40516273 --yes
+[1;32m     Deleted[0m key old-laptop
+--- 44 columns, not a terminal
+$ gf keys delete key-02cd0c1d2e3f40516273 --yes
+     Deleted key old-laptop
+--- 44 columns, a terminal
+$ gf keys delete key-02cd0c1d2e3f40516273 --yes
+[1;32m     Deleted[0m key old-laptop

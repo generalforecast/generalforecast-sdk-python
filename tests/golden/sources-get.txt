@@ -1,0 +1,25 @@
+--- 100 columns, not a terminal
+$ gf sources get bigquery-acme
+  Name   bigquery-acme
+  Kind   BigQuery, project acme-prod, dataset analytics
+  State  ready, tested Nov 21 08:02
+        View https://app.generalforecast.com/?project=acme#/data/sources/bigquery-acme
+--- 100 columns, a terminal
+$ gf sources get bigquery-acme
+  Name   bigquery-acme
+  Kind   BigQuery, project acme-prod, dataset analytics
+  State  ready, tested Nov 21 08:02
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/sources/bigquery-acme\https://app.generalforecast.com/?project=acme#/data/sources/bigquery-acme]8;;\
+--- 44 columns, not a terminal
+$ gf sources get bigquery-acme
+  Name   bigquery-acme
+  Kind   BigQuery, project acme-prod, dataset analytics
+  State  ready, tested Nov 21 08:02
+        View https://app.generalforecast.com/?project=acme#/data/sources/bigquery-acme
+--- 44 columns, a terminal
+$ gf sources get bigquery-acme
+  Name   bigquery-acme
+  Kind   BigQuery, project acme-prod,
+         dataset analytics
+  State  ready, tested Nov 21 08:02
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/sources/bigquery-acme\https://app.generalforecast.com/?project=acme#/data/sources/bigquery-acme]8;;\

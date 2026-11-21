@@ -1,0 +1,29 @@
+--- 100 columns, not a terminal
+$ gf experiments wait adult-income
+     Running run 3 of adult-income  1 model
+    Finished run 3 in 1m12s  6,513 rows, $0.013
+     Model       AUROC  Interval        Time  Cost
+  1  kumo-large  0.900  0.911 to 0.925  44s   $0.013
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 100 columns, a terminal
+$ gf experiments wait adult-income
+[1;32m     Running[0m run 3 of adult-income  0 of 1 model finished
+[1;32m    Finished[0m run 3 in 1m12s  6,513 rows, $0.013
+     Model       AUROC  Interval        Time  Cost
+  1  kumo-large  0.900  0.911 to 0.925  44s   $0.013
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf experiments wait adult-income
+     Running run 3 of adult-income  1 model
+    Finished run 3 in 1m12s  6,513 rows, $0.013
+     Model       AUROC  Time  Cost
+  1  kumo-large  0.900  44s   $0.013
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 44 columns, a terminal
+$ gf experiments wait adult-income
+[1;32m     Running[0m run 3 of adult-income  0 of 1[0m…
+[1;32m    Finished[0m run 3 in 1m12s  6,513 rows,
+             $0.013
+     Model       AUROC  Time  Cost
+  1  kumo-large  0.900  44s   $0.013
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\
