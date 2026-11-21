@@ -1105,7 +1105,8 @@ def runs_post(fake: Fake, call: Call) -> Any:
         "created": 1761200000.0, "updated": 1761200000.0, "usage": None, "published": None,
         "origin": origin(), "url": fake.link(f"fine-tunes/{p['name']}"),
         "_polls": fake.polls_until_done, "_events": [
-            {"at": 1761200000.0, "kind": "state", "body": {"state": "queued"}}],
+            {"at": 1761200000.0, "kind": "created", "body": {"name": p["name"], "base": p["base"]}},
+            {"at": 1761200000.0, "kind": "state", "body": {"state": "queued", "reason": None}}],
         "_payload": p,
     }  # fmt: skip
     versions.append(run)
@@ -1125,14 +1126,26 @@ def _advance(fake: Fake, run: dict[str, Any]) -> None:
         return
     run["_polls"] -= 1
     steps = run["plan"].get("steps", 100)
+    if run["attempt"] == 0:
+        run["attempt"] = 1
+        run["_events"] += [
+            {"at": 1761200002.0, "kind": "attempt", "body": {"attempt": 1}},
+            {"at": 1761200010.0, "kind": "state", "body": {"state": "training", "reason": None}},
+            {"at": 1761200030.0, "kind": "calibration", "body": {"base_loss": 0.47, "start_loss": 0.47}},
+        ]  # fmt: skip
     if run["_polls"] > 0:
+        # The attempt is still running, so its seconds are pending, not yet charged.
         run.update(state="training", progress={"step": steps // 2, "loss": 0.45},
-                   usage=_usage(60.0))  # fmt: skip
+                   usage=_usage(60.0, charged=0.0))  # fmt: skip
         run["_events"].append({"at": 1761200060.0, "kind": "metrics",
                                "body": {"steps": steps // 2, "loss": 0.45, "validation_loss": 0.43}})  # fmt: skip
         return
     if fake.run_ends == "failed":
         run.update(state="failed", reason="the trainer ran out of memory")
+        run["_events"] += [
+            {"at": 1761200090.0, "kind": "failure", "body": {"error": "oom", "message": "the trainer ran out of memory"}},
+            {"at": 1761200090.0, "kind": "state", "body": {"state": "failed", "reason": "oom"}},
+        ]  # fmt: skip
         return
     run.update(state="finished", progress={"step": steps, "loss": 0.41},
                usage=_usage(130.0),
@@ -1144,11 +1157,13 @@ def _advance(fake: Fake, run: dict[str, Any]) -> None:
     run["_events"] += [
         {"at": 1761200120.0, "kind": "metrics", "body": {"steps": steps, "loss": 0.41, "validation_loss": 0.398}},
         {"at": 1761200130.0, "kind": "published", "body": {"model": run["model"]}},
+        {"at": 1761200130.0, "kind": "state", "body": {"state": "finished", "reason": None}},
     ]  # fmt: skip
 
 
-def _usage(seconds: float) -> dict[str, float]:
-    return {"gpu_seconds": seconds, "charged_gpu_seconds": seconds, "voided_gpu_seconds": 0.0,
+def _usage(seconds: float, charged: float | None = None) -> dict[str, float]:
+    charged = seconds if charged is None else charged
+    return {"gpu_seconds": seconds, "charged_gpu_seconds": charged, "voided_gpu_seconds": 0.0,
             "credits": 2.0 * seconds}  # fmt: skip
 
 

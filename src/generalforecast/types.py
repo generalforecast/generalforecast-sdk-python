@@ -75,6 +75,7 @@ __all__ = [
     "Revision",
     "Run",
     "RunEvent",
+    "RunEventKind",
     "RunSummary",
     "Selection",
     "Slice",
@@ -1608,12 +1609,36 @@ class DataPin:
         )
 
 
+RunEventKind = Literal[
+    "created",
+    "data",
+    "attempt",
+    "state",
+    "metrics",
+    "resumed",
+    "published",
+    "failure",
+    "calibration",
+    "kept_nothing",
+    "orphaned",
+]
+
+
 @dataclass(frozen=True)
 class RunEvent:
-    """One event of a run: a change of state, a stretch of metrics, or publishing."""
+    """One event of a run's lineage, as the service records it.
+
+    `kind` says what happened: `created`, the run as created; `data`, the
+    data a waiting run pinned; `attempt`, an attempt started; `state`, a
+    change of state; `metrics`, a chunk of training; `resumed`, an attempt
+    picked up again; `published`, the version it published; `failure`,
+    why it failed; `calibration`, the losses it started from;
+    `kept_nothing`, a run that ended publishing nothing, with what the
+    trainer kept; `orphaned`, an attempt its trainer stopped answering for.
+    """
 
     at: datetime | None = None
-    kind: Literal["state", "metrics", "published"] = "state"
+    kind: RunEventKind = "state"
     body: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -1623,6 +1648,13 @@ class FineTuneRun:
 
     `curve` holds `(step, loss, validation_loss)` points for the loss chart,
     read from the run's metrics events. In the API, CLI and console it is a run.
+
+    `attempt` counts the run's attempts (a preempted one starts another).
+    `seconds` are the GPU seconds its budget counts, charged or still
+    pending; `charged_seconds` those of attempts that ended charged,
+    `pending_seconds` those not yet settled, and `voided_seconds` those
+    lost on the service's side, never charged. `credits` and `usd` are
+    what `seconds` cost.
     """
 
     model: str
@@ -1650,7 +1682,11 @@ class FineTuneRun:
     seed: int | None = None
     tags: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    attempt: int = 0
     seconds: float = 0.0
+    charged_seconds: float = 0.0
+    voided_seconds: float = 0.0
+    pending_seconds: float = 0.0
     credits: float = 0.0
     usd: float = 0.0
     error: str | None = None
@@ -1687,6 +1723,8 @@ class FineTuneRun:
         state = str(data.get("state") or "queued")
         error = data.get("error") or (data.get("reason") if state == "failed" else None)
         credits = float(usage.get("credits", data.get("credits")) or 0.0)
+        seconds = float(usage.get("gpu_seconds", data.get("seconds")) or 0.0)
+        charged = float(usage.get("charged_gpu_seconds") or 0.0)
         warnings = tuple(
             str(w.get("code") or w.get("message") or w)
             if isinstance(w, Mapping)
@@ -1724,7 +1762,11 @@ class FineTuneRun:
             seed=data.get("seed"),
             tags=tuple(data.get("tags") or ()),
             warnings=warnings,
-            seconds=float(usage.get("gpu_seconds", data.get("seconds")) or 0.0),
+            attempt=int(data.get("attempt") or 0),
+            seconds=seconds,
+            charged_seconds=charged,
+            voided_seconds=float(usage.get("voided_gpu_seconds") or 0.0),
+            pending_seconds=max(seconds - charged, 0.0),
             credits=credits,
             usd=float(usage.get("usd", data.get("usd", credits / 1000)) or 0.0),
             error=error.get("message") if isinstance(error, Mapping) else error,
