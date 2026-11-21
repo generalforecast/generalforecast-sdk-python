@@ -728,6 +728,7 @@ class Runs(_Sync):
         *,
         base: str,
         data: Sequence[str | Snapshot | SyntheticBatch | Context | Tag] | None = None,
+        target: str | None = None,
         method: Method = DEFAULT_METHOD,
         plan: Plan | None = None,
         phases: Sequence[Phase] | None = None,
@@ -746,15 +747,19 @@ class Runs(_Sync):
         `"adult@3"`, a `Context`; the run pins that version's snapshot) and
         `gf.Tag`s; a bare name is looked up as each. `phases` in its place
         trains a curriculum. A batch still generating makes the run wait.
+        `target` is the column a context's rows train to predict, and the
+        task is read from it; a run on a context needs one, while a snapshot
+        keeps the target its metadata names.
 
         Raises:
+            InvalidInput: For a context in the data and no `target`.
             Error: Not recoverable, with `wait`, when the run fails.
         """
         return self._run(
             _ops.run_create(
                 name, base=base, data=data, method=method, plan=plan, phases=phases,
                 architecture=architecture, evaluation=evaluation, budget=budget,
-                seed=seed, tags=tags, wait=wait, progress=progress, poll=poll,
+                seed=seed, tags=tags, wait=wait, progress=progress, poll=poll, target=target,
             )
         )  # fmt: skip
 
@@ -1369,6 +1374,7 @@ class AsyncRuns(_Async):
         *,
         base: str,
         data: Sequence[str | Snapshot | SyntheticBatch | Context | Tag] | None = None,
+        target: str | None = None,
         method: Method = DEFAULT_METHOD,
         plan: Plan | None = None,
         phases: Sequence[Phase] | None = None,
@@ -1386,7 +1392,7 @@ class AsyncRuns(_Async):
             _ops.run_create(
                 name, base=base, data=data, method=method, plan=plan, phases=phases,
                 architecture=architecture, evaluation=evaluation, budget=budget,
-                seed=seed, tags=tags, wait=wait, progress=progress, poll=poll,
+                seed=seed, tags=tags, wait=wait, progress=progress, poll=poll, target=target,
             )
         )  # fmt: skip
 

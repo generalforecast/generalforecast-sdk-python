@@ -835,7 +835,8 @@ export interface RunDataTag {
 
 /**
  * a context version a run trains on: `version`, or the latest when it is left out,
- * pinned to that version's snapshot digest when the run is created
+ * pinned to that version's snapshot digest when the run is created. Its rows train to
+ * predict the run's `target`
  */
 export interface RunDataContext {
   context: Name;
@@ -1051,6 +1052,7 @@ export interface Run {
   attempt: number;
   base: ModelId;
   data: RunData[];
+  target?: string;
   data_digest: Digest | null;
   waiting?: RunWaiting;
   phases?: RunPinnedPhase[];
@@ -1117,6 +1119,7 @@ export interface RunCreate {
   name: Name;
   base: ModelField;
   data?: RunDataItem[];
+  target?: string;
   method: RunMethod;
   plan?: RunPlan | RunCurriculumPlan;
   phases?: RunPhase[];

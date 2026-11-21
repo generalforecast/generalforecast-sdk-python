@@ -5430,6 +5430,7 @@ paths:
                     - credit-2026-01
                     - context: adult
                       version: 3
+                    target: income
                     method:
                       type: lora
                       rank: 16
@@ -9324,7 +9325,7 @@ components:
       description: |
         a context version a run trains on: `version`, or the latest when it
         is left out, pinned to that version's snapshot digest when the run
-        is created
+        is created. Its rows train to predict the run's `target`
       required: [context]
       additionalProperties: false
       properties:
@@ -9414,6 +9415,10 @@ components:
             phase order, each with the `phase` that reads it
           items:
             $ref: '#/components/schemas/RunData'
+        target:
+          type: string
+          minLength: 1
+          description: the column the run's context data trains to predict, as its create named it; absent for a run that named none
         data_digest:
           description: |
             the digest of the data's digests, in order; runs of the same data
@@ -10078,6 +10083,17 @@ components:
             Never sent with `phases`.
           items:
             $ref: '#/components/schemas/RunDataItem'
+        target:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: |
+            the column a context's rows are trained to predict, for every
+            context item of `data` or of a phase; the task is read from the
+            column, as an experiment reads it, and must be the base's. A run
+            with a context item and no `target` is refused with 422
+            `ValidationError` (param `target`). A snapshot keeps the target its
+            metadata names.
         method:
           $ref: '#/components/schemas/RunMethod'
         plan:
