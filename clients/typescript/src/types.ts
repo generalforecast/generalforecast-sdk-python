@@ -538,8 +538,9 @@ export interface ModelArchitecture {
 
 /**
  * the catalog's description of a served model: `model` is the resolved id with its
- * content digest, `limits` what one call may send here, `warm_shapes` the shapes
- * compiled at startup
+ * content digest, `limits` the model's own sizes as the catalog gives them (the same
+ * from gf serve and the hosted plane), and `warm_shapes` the shapes compiled at
+ * startup, empty where none were
  */
 export interface Model {
   short: string | null;
@@ -1460,6 +1461,9 @@ export interface SyntheticBatchCreated {
   count: number;
   snapshots: Name[];
   state: SyntheticBatchState;
+  created: number;
+  origin: Origin;
+  url: string;
 }
 
 /**
@@ -1489,6 +1493,9 @@ export interface SyntheticBatch {
   count: number;
   snapshots: Name[];
   state: SyntheticBatchState;
+  created: number;
+  origin: Origin;
+  url: string;
   seed: number;
   options: SyntheticBatchCreate;
   tables: SyntheticTable[];
@@ -1638,10 +1645,12 @@ export interface ServingContext {
  * serving facts: `context` is the context the environment is serving now,
  * `accepted_version`/`serving_version` compare the newest accepted write of a live
  * context with the one being served, `fresh` says whether they agree (null without a
- * context)
+ * context); `error` is set while the environment serves its last good view and a
+ * rebuild of it keeps failing, else null
  */
 export interface Metrics {
   status: State;
+  error: string | null;
   context: ServingContext | null;
   accepted_version: number | string | null;
   serving_version: number | string | null;
@@ -1817,17 +1826,22 @@ export type SourceKind = "bigquery" | "gcs" | "snowflake" | "databricks" | "s3" 
 export interface Source {
   name: Name;
   kind: SourceKind;
-  state: "ready" | "failing" | "expired";
+  access: "service_account" | "secret";
+  state: "untested" | "connected" | "unauthorized" | "not_found" | "unavailable" | "expired";
   config: Record<string, string>;
   secret_expires: string | null;
   tested_at: string | null;
+  tables: number | null;
+  contexts: number;
   error: string | null;
   origin: Origin;
   created: string;
   url: string;
 }
 
+/** `available` says whether this plane can connect sources at all */
 export interface SourceList {
+  available: boolean;
   sources: Source[];
 }
 
@@ -2984,15 +2998,22 @@ export interface SourceCreate {
   secret?: string;
 }
 
+/** a table of the source's location, as the warehouse lists it */
 export interface SourceTable {
   name: string;
-  rows: number | null;
-  bytes: number | null;
-  updated: string | null;
+  type: string;
+  readable: boolean;
 }
 
+/**
+ * the tables of the source's location, the BigQuery `project` and `dataset`, whose
+ * names start with `prefix`; `more` says the warehouse holds more than were listed
+ */
 export interface SourceTables {
+  project: string;
+  dataset: string;
   tables: SourceTable[];
+  more: boolean;
 }
 
 /** one `table` or a `sql` query; the answer is its first 20 rows */

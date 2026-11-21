@@ -83,7 +83,10 @@ __all__ = [
     "Snapshot",
     "Source",
     "SourceKind",
+    "SourceList",
+    "SourceState",
     "SourceTable",
+    "SourceTables",
     "SyntheticBatch",
     "Tag",
     "Task",
@@ -1072,29 +1075,87 @@ class Logs:
     previous: str | None = None
 
 
+SourceState = Literal[
+    "untested", "connected", "unauthorized", "not_found", "unavailable", "expired"
+]
+SOURCE_STATES: tuple[str, ...] = typing.get_args(SourceState)
+
+
 @dataclass(frozen=True)
 class Source:
-    """A workspace connection to a warehouse or bucket."""
+    """A workspace connection to a warehouse or bucket.
+
+    `access` says how the service reads it: as the workspace's
+    `service_account`, or with the source's `secret`. `state` is what the
+    last test found: `connected`, or why not (`unauthorized`, `not_found`,
+    `unavailable`, `expired`), and `untested` before any test. `tables` is
+    how many tables that test found, `contexts` how many of the project's
+    contexts were made from it.
+    """
 
     name: str
     kind: SourceKind | None = None
-    state: Literal["ready", "failing", "expired"] = "ready"
+    access: Literal["service_account", "secret"] | None = None
+    state: SourceState = "untested"
     config: Mapping[str, str] = field(default_factory=dict)
     secret_expires: datetime | None = None
     tested_at: datetime | None = None
+    tables: int | None = None
+    contexts: int = 0
     error: str | None = None
+    origin: Origin | None = None
     created: datetime | None = None
     url: str | None = None
 
 
+class SourceList(builtins.list[Source]):
+    """The project's sources; `available` is False on a service that connects none."""
+
+    available: bool = True
+
+    def __init__(self, sources: Sequence[Source] = (), *, available: bool = True):
+        """The sources listed, and whether the service connects any."""
+        super().__init__(sources)
+        self.available = available
+
+
 @dataclass(frozen=True)
 class SourceTable:
-    """A table a source holds."""
+    """A table of a source's location, as the warehouse lists it.
+
+    `type` is the warehouse's kind of table, such as `TABLE`, `VIEW` or
+    `MODEL`; `readable` whether a context can be made of it.
+    """
 
     name: str
-    rows: int | None = None
-    bytes: int | None = None
-    updated: datetime | None = None
+    type: str = "TABLE"
+    readable: bool = True
+
+
+@dataclass(frozen=True)
+class SourceTables:
+    """The tables of a source's location: its BigQuery `project` and `dataset`.
+
+    `more` says the warehouse holds more than were listed; a `prefix`
+    narrows them. It iterates, indexes and counts as its tables do.
+    """
+
+    project: str = ""
+    dataset: str = ""
+    tables: tuple[SourceTable, ...] = ()
+    more: bool = False
+
+    def __iter__(self) -> typing.Iterator[SourceTable]:
+        """The tables listed."""
+        return iter(self.tables)
+
+    def __len__(self) -> int:
+        """How many tables were listed."""
+        return len(self.tables)
+
+    def __getitem__(self, index: int) -> SourceTable:
+        """A listed table by its position."""
+        return self.tables[index]
 
 
 @dataclass(frozen=True)
@@ -1553,6 +1614,7 @@ class SyntheticBatch:
     counts: Mapping[str, int] = field(default_factory=dict)
     tables: tuple[BatchTable, ...] = ()
     created: datetime | None = None
+    origin: Origin | None = None
     url: str | None = None
 
     @classmethod
@@ -1563,7 +1625,7 @@ class SyntheticBatch:
                 {"name": n, "state": "pending"} for n in data.get("snapshots") or ()
             ]
         known = {"name", "tag", "count", "seed", "state", "counts", "tables", "snapshots",
-                 "created", "url", "options", "tags", "schema_from"}  # fmt: skip
+                 "created", "origin", "url", "options", "tags", "schema_from"}  # fmt: skip
         options = data.get("options")
         if options is None:
             options = {k: v for k, v in data.items() if k not in known}
@@ -1577,6 +1639,7 @@ class SyntheticBatch:
             counts=dict(data.get("counts") or {}),
             tables=tuple(load(BatchTable, t) for t in tables),
             created=instant(data.get("created")),
+            origin=load(Origin, data["origin"]) if data.get("origin") else None,
             url=data.get("url"),
         )
 

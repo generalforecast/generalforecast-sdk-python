@@ -32,17 +32,10 @@ BASE = "urn:gf-openapi"
 # What the contract requires that the plane does not serve yet, so the fake
 # leaves it out as the plane does: a model's pinned `model`, `limits` and
 # `warm_shapes` (the plane sends `bounds` alone).
-UNSERVED = {"Model": ("model", "limits", "warm_shapes")}
-
-
 @cache
 def spec() -> dict[str, Any]:
-    """The contract, with what the plane does not serve yet (`UNSERVED`) not required."""
-    found = yaml.safe_load(SPEC_PATH.read_text())
-    for name, fields in UNSERVED.items():
-        schema = found["components"]["schemas"][name]
-        schema["required"] = [f for f in schema["required"] if f not in fields]
-    return found
+    """The contract."""
+    return yaml.safe_load(SPEC_PATH.read_text())
 
 
 @dataclass(frozen=True)

@@ -78,7 +78,8 @@ from generalforecast.types import (
     Slice,
     Snapshot,
     Source,
-    SourceTable,
+    SourceList,
+    SourceTables,
     SyntheticBatch,
     Tag,
     Timing,
@@ -1509,9 +1510,13 @@ def source_get(source: Any) -> Op:
 
 
 def source_list() -> Op:
-    """Lists sources."""
+    """Lists sources, and whether the service connects any."""
     reply = yield _http.sources_list()
-    return loads(Source, (reply.result or {}).get("sources"))
+    result = reply.result or {}
+    return SourceList(
+        loads(Source, result.get("sources")),
+        available=result.get("available") is not False,
+    )
 
 
 def source_test(source: Any) -> Op:
@@ -1523,7 +1528,7 @@ def source_test(source: Any) -> Op:
 def source_tables(source: Any, prefix: str | None) -> Op:
     """Lists a source's tables."""
     reply = yield _http.sources_tables(name_of(source, "source"), prefix)
-    return loads(SourceTable, (reply.result or {}).get("tables"))
+    return load(SourceTables, reply.result or {})
 
 
 def source_preview(source: Any, table: str | None, sql: str | None) -> Op:

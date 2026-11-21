@@ -43,7 +43,7 @@ if TYPE_CHECKING:
         Slice,
         Snapshot,
         Source,
-        SourceTable,
+        SourceTables,
         SyntheticBatch,
         WriteReceipt,
     )
@@ -700,32 +700,52 @@ def predictor_question(call: Call) -> str:
 
 
 def sources_list(call: Call, sources: list[Source]) -> None:
-    """Name, kind, state and when each was last tested."""
-    rows = [[s.name, kind_name(s.kind), s.state, when(s.tested_at)] for s in sources]
-    call.out.table(["Name", "Kind", "State", "Tested"], rows)
+    """Name, kind, state, tables and contexts, and when each was last tested."""
+    if getattr(sources, "available", True) is False:
+        call.out.say("This service connects no sources.")
+    rows = [
+        [s.name, kind_name(s.kind), words(s.state),
+         "" if s.tables is None else count(s.tables), count(s.contexts), when(s.tested_at)]
+        for s in sources
+    ]  # fmt: skip
+    call.out.table(["Name", "Kind", "State", "Tables", "Contexts", "Tested"], rows,
+                   align="<<<>><", drop=(5, 4, 3))  # fmt: skip
 
 
 def sources_get(call: Call, source: Source) -> None:
-    """The source's kind and settings, and its state."""
+    """The source's kind and settings, how it is read, its state and what it holds."""
     kind = ", ".join(
         [
             kind_name(source.kind),
             *(f"{k} {v}" for k, v in source.config.items()),
         ]
     )
-    state = source.state + (
+    state = words(source.state) + (
         f", tested {when(source.tested_at)}" if source.tested_at else ""
     )
-    rows = [("Name", source.name), ("Kind", kind), ("State", state)]
+    rows = [("Name", source.name), ("Kind", kind)]
+    if source.access:
+        rows.append(("Access", ACCESS.get(source.access, source.access)))
+    rows.append(("State", state))
+    holds = [] if source.tables is None else [plural(source.tables, "table")]
+    rows.append(("Holds", ", ".join([*holds, plural(source.contexts, "context")])))
     if source.error:
         rows.append(("Error", source.error))
     fields(call, rows)
 
 
+ACCESS = {"service_account": "the workspace's service account", "secret": "its secret"}
+
+
+def words(state: str) -> str:
+    """A state as words: `not_found` is `not found`."""
+    return state.replace("_", " ")
+
+
 def source_tested(call: Call, source: Source) -> None:
     """`Tested source bigquery-acme  ready in 0.4s`."""
     call.out.status(
-        "Tested", f"source {source.name}  {source.state}", seconds=call.seconds()
+        "Tested", f"source {source.name}  {words(source.state)}", seconds=call.seconds()
     )
 
 
@@ -737,20 +757,12 @@ def source_created(call: Call, source: Source) -> None:
     )
 
 
-def sources_tables(call: Call, tables: list[SourceTable]) -> None:
-    """Name, rows, bytes and when each table changed."""
-    from generalforecast._data import size
-
-    rows = [
-        [
-            t.name,
-            "" if t.rows is None else count(t.rows),
-            "" if t.bytes is None else size(t.bytes),
-            when(t.updated),
-        ]
-        for t in tables
-    ]
-    call.out.table(["Table", "Rows", "Size", "Updated"], rows, align="<>>", drop=(3, 2))
+def sources_tables(call: Call, tables: SourceTables) -> None:
+    """Each table's name and type, and whether a context can be made of it."""
+    rows = [[t.name, t.type, "yes" if t.readable else "no"] for t in tables]
+    call.out.table(["Table", "Type", "Readable"], rows)
+    if tables.more:
+        call.out.say("The warehouse holds more tables; narrow them with --prefix.")
 
 
 def permissions(key: Key) -> str:

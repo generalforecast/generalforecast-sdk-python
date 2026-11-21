@@ -30,9 +30,11 @@ from tests.fake import NOW, TOKEN, Fake
 def _model(
     full: str, short: str, task: str, rows: int, queries: int = 100
 ) -> dict[str, Any]:
+    """A catalog entry with the engine catalog's limits: a forecaster takes 8 inputs, a tabular model 10,000."""
     family = short.split("-")[0]
+    inputs = 8 if task == "forecast" else 10000
     return service.model(f"general-forecast/{full}", short, task, family=family,
-                         context_rows=rows, queries=queries, inputs=32)  # fmt: skip
+                         context_rows=rows, queries=queries, inputs=inputs)  # fmt: skip
 
 
 CATALOG = [
@@ -273,12 +275,15 @@ class Sample:
 
 
 def _sources(fake: Fake) -> None:
-    for name, kind, config, tested in (
-        ("bigquery-acme", "bigquery", {"project": "acme-prod", "dataset": "analytics"}, "2026-11-21T08:02:00Z"),
-        ("snowflake-prod", "snowflake", {"account": "acme-xy12", "warehouse": "ANALYTICS_XS"}, "2026-11-20T16:10:00Z"),
+    for name, kind, access, config, tested, tables, contexts in (
+        ("bigquery-acme", "bigquery", "service_account", {"project": "acme-prod", "dataset": "analytics"},
+         "2026-11-21T08:02:00Z", 42, 3),
+        ("snowflake-prod", "snowflake", "secret", {"account": "acme-xy12", "warehouse": "ANALYTICS_XS"},
+         "2026-11-20T16:10:00Z", 18, 0),
     ):  # fmt: skip
-        fake.sources[name] = {"name": name, "kind": kind, "state": "ready", "config": config,
-                              "secret_expires": None, "tested_at": tested, "error": None,
+        fake.sources[name] = {"name": name, "kind": kind, "access": access, "state": "connected",
+                              "config": config, "secret_expires": None, "tested_at": tested,
+                              "tables": tables, "contexts": contexts, "error": None,
                               "origin": service.origin("console"), "created": NOW,
                               "url": fake.link(f"data/sources/{name}")}  # fmt: skip
 

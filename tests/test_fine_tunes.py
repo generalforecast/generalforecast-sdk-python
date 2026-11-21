@@ -89,6 +89,8 @@ def test_synthesize_checks_settings_before_sending(fake):
     )
     assert batch.state == "pending" and batch.tag == "synthetic-credit-warmup"
     assert len(batch.tables) == 4
+    assert batch.created and batch.origin.surface == "notebook"
+    assert batch.url == f"{fake.url}/?project=acme#/fine-tunes"
     sent = fake.calls_to("POST", r".*/snapshots/synthetic")[0].payload
     assert sent["rows"] == {"min": 1024, "max": 8192} and sent["graph_nodes"] == 16
     assert sent["missing"] == {"rate": 0.05, "patterns": ["random", "censored"]}

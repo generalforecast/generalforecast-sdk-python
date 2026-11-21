@@ -17,7 +17,10 @@ def test_sources_take_the_config_keys_of_their_kind(fake):
         port="5432",
         database="app",
     )
-    assert source.kind == "postgres" and source.state == "ready" and source.tested_at
+    assert (
+        source.kind == "postgres" and source.state == "connected" and source.tested_at
+    )
+    assert source.access == "secret" and source.tables == 3 and source.contexts == 0
     sent = fake.calls_to("POST", r".*/sources")[0].payload
     assert sent["secret"] == "pw" and sent["config"]["port"] == "5432"
     with pytest.raises(gf.InvalidInput) as error:
@@ -25,9 +28,21 @@ def test_sources_take_the_config_keys_of_their_kind(fake):
     assert error.value.hint == "a similar name exists: `project`"
     with pytest.raises(gf.InvalidInput):
         gf.sources.create("x", kind="mysql")
-    assert [s.name for s in gf.sources.list()] == ["pg-replica"]
+    listed = gf.sources.list()
+    assert [s.name for s in listed] == ["pg-replica"] and listed.available
     assert gf.sources.test(source).name == "pg-replica"
-    assert gf.sources.tables("pg-replica")[0].rows == 48210
+    tables = gf.sources.tables("pg-replica", prefix="customers")
+    assert (tables.project, tables.dataset, tables.more) == (
+        "acme-prod",
+        "analytics",
+        False,
+    )
+    assert [(t.name, t.type, t.readable) for t in tables][2] == (
+        "customers_model",
+        "MODEL",
+        False,
+    )
+    assert len(tables) == 3 and tables[0].name == "customers"
     preview = gf.sources.preview("pg-replica", table="acme.analytics.customers")
     assert list(preview.columns) == ["customer_id", "churned"]
     with pytest.raises(gf.InvalidInput):

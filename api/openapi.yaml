@@ -696,6 +696,7 @@ paths:
                     resource: {kind: predictor, name: churn}
                     result:
                       status: ready
+                      error: null
                       context: {source: live/churn-history, version: 312, rows: 1840, as_of: "2026-01-01T00:00:00Z", accepted_version: 312, serving_version: 312, freshness_lag_seconds: 0.0}
                       accepted_version: 312
                       serving_version: 312
@@ -3496,13 +3497,17 @@ paths:
                     request_id: r-4a33c4dfc75b2873b429a268b4f2239b
                     resource: {kind: source, name: sources}
                     result:
+                      available: true
                       sources:
                       - name: bigquery-acme
                         kind: bigquery
-                        state: ready
+                        access: service_account
+                        state: connected
                         config: {project: acme-prod, dataset: analytics}
                         secret_expires: null
                         tested_at: "2026-11-21T08:02:00Z"
+                        tables: 42
+                        contexts: 3
                         error: null
                         origin:
                           surface: console
@@ -3556,7 +3561,8 @@ paths:
                     result:
                       name: pg-replica
                       kind: postgres
-                      state: ready
+                      access: secret
+                      state: connected
                       config:
                         host: "10.2.0.4"
                         port: "5432"
@@ -3564,6 +3570,8 @@ paths:
                         user: gf_read
                       secret_expires: null
                       tested_at: "2026-11-21T09:12:04Z"
+                      tables: 18
+                      contexts: 0
                       error: null
                       origin:
                         surface: cli
@@ -3597,10 +3605,13 @@ paths:
                     result:
                       name: bigquery-acme
                       kind: bigquery
-                      state: ready
+                      access: service_account
+                      state: connected
                       config: {project: acme-prod, dataset: analytics}
                       secret_expires: null
                       tested_at: "2026-11-21T08:02:00Z"
+                      tables: 42
+                      contexts: 3
                       error: null
                       origin:
                         surface: console
@@ -3620,6 +3631,7 @@ paths:
       - name: prefix
         in: query
         required: false
+        description: only the tables whose names start with it
         schema: {type: string}
       responses:
         "200":
@@ -3636,11 +3648,13 @@ paths:
                     request_id: r-b3e1af2cef65a512a63e1b610d255d96
                     resource: {kind: source, name: bigquery-acme}
                     result:
+                      project: acme-prod
+                      dataset: analytics
                       tables:
-                      - name: acme.analytics.customers
-                        rows: 48210
-                        bytes: 9122816
-                        updated: "2026-11-20T17:03:00Z"
+                      - {name: customers, type: TABLE, readable: true}
+                      - {name: customers_daily, type: VIEW, readable: true}
+                      - {name: customers_model, type: MODEL, readable: false}
+                      more: false
   /v1/projects/{project}/sources/{source}/preview:
     post:
       operationId: sources.preview
@@ -3730,10 +3744,13 @@ paths:
                     result:
                       name: bigquery-acme
                       kind: bigquery
-                      state: ready
+                      access: service_account
+                      state: connected
                       config: {project: acme-prod, dataset: analytics}
                       secret_expires: null
                       tested_at: "2026-11-21T08:02:00Z"
+                      tables: 42
+                      contexts: 3
                       error: null
                       origin:
                         surface: console
@@ -4984,6 +5001,9 @@ paths:
                       count: 3
                       snapshots: [credit-warmup-0, credit-warmup-1, credit-warmup-2]
                       state: pending
+                      created: 1761200000.0
+                      origin: {surface: cli, notebook: null, client: generalforecast/1.0.0, by: "maya@acme.com"}
+                      url: "https://app.generalforecast.com/?project=acme#/fine-tunes"
                 schema_from:
                   value:
                     api_version: gf/v1
@@ -4998,6 +5018,9 @@ paths:
                       count: 2
                       snapshots: [credit-shaped-0, credit-shaped-1]
                       state: pending
+                      created: 1761200000.0
+                      origin: {surface: cli, notebook: null, client: generalforecast/1.0.0, by: "maya@acme.com"}
+                      url: "https://app.generalforecast.com/?project=acme#/fine-tunes"
         '200':
           description: the same create sent again, answered with the batch it made
           content:
@@ -5098,6 +5121,9 @@ paths:
                       count: 2
                       snapshots: [credit-shaped-0, credit-shaped-1]
                       state: done
+                      created: 1761200000.0
+                      origin: {surface: cli, notebook: null, client: generalforecast/1.0.0, by: "maya@acme.com"}
+                      url: "https://app.generalforecast.com/?project=acme#/fine-tunes"
                       seed: 81234
                       options:
                         name: credit-shaped
@@ -8529,8 +8555,9 @@ components:
       type: object
       description: |
         the catalog's description of a served model: `model` is the resolved
-        id with its content digest, `limits` what one call may send here,
-        `warm_shapes` the shapes compiled at startup
+        id with its content digest, `limits` the model's own sizes as the
+        catalog gives them (the same from gf serve and the hosted plane), and
+        `warm_shapes` the shapes compiled at startup, empty where none were
       required: [model, name, short, kind, base, trained_on, task, artifact, bounds, capabilities, runtime, license, repository, revision, limits, warm_shapes]
       additionalProperties: false
       properties:
@@ -11049,6 +11076,9 @@ components:
       - count
       - snapshots
       - state
+      - created
+      - origin
+      - url
       additionalProperties: false
       properties:
         name:
@@ -11067,6 +11097,14 @@ components:
             $ref: '#/components/schemas/Name'
         state:
           $ref: '#/components/schemas/SyntheticBatchState'
+        created:
+          type: number
+          description: when the batch was created, in seconds since the epoch
+        origin:
+          $ref: '#/components/schemas/Origin'
+        url:
+          type: string
+          description: the console page its tables are on
     SyntheticTable:
       type: object
       description: one table of a batch, by its snapshot name, with its state and, once rejected, why
@@ -11108,7 +11146,7 @@ components:
         a batch as `snapshots.synthetic` reads it: its create's answer, and
         the seed, options, tables and counts. Its fields are listed whole, as
         `SyntheticBatchCreated` allows no other fields.
-      required: [name, tag, count, snapshots, state, seed, options, tables, counts]
+      required: [name, tag, count, snapshots, state, created, origin, url, seed, options, tables, counts]
       additionalProperties: false
       properties:
         name:
@@ -11127,6 +11165,14 @@ components:
             $ref: '#/components/schemas/Name'
         state:
           $ref: '#/components/schemas/SyntheticBatchState'
+        created:
+          type: number
+          description: when the batch was created, in seconds since the epoch
+        origin:
+          $ref: '#/components/schemas/Origin'
+        url:
+          type: string
+          description: the console page its tables are on
         seed:
           type: integer
           minimum: 0
@@ -11305,11 +11351,14 @@ components:
         serving facts: `context` is the context the environment is serving
         now, `accepted_version`/`serving_version` compare the newest accepted
         write of a live context with the one being served, `fresh` says
-        whether they agree (null without a context)
-      required: [status, context, accepted_version, serving_version, fresh, requests, errors, mean_latency_seconds]
+        whether they agree (null without a context); `error` is set while
+        the environment serves its last good view and a rebuild of it keeps
+        failing, else null
+      required: [status, error, context, accepted_version, serving_version, fresh, requests, errors, mean_latency_seconds]
       additionalProperties: false
       properties:
         status: {$ref: "#/components/schemas/State"}
+        error: {type: [string, "null"], description: why the environment's rebuild is failing}
         context:
           oneOf:
             - $ref: "#/components/schemas/ServingContext"
@@ -11629,9 +11678,11 @@ components:
 
     SourceList:
       type: object
-      required: [sources]
+      description: "`available` says whether this plane can connect sources at all"
+      required: [sources, available]
       additionalProperties: false
       properties:
+        available: {type: boolean}
         sources:
           type: array
           items:
@@ -13777,16 +13828,25 @@ components:
     Source:
       type: object
       description: "a workspace connection to a warehouse or bucket. Config keys by kind: bigquery `project, dataset`; gcs `bucket, prefix`; snowflake `account, warehouse, database, role`; databricks `host, warehouse, client_id`; s3 `role_arn, region, bucket, prefix`; postgres `host, port, database, user, tls`"
-      required: [name, kind, state, config, secret_expires, tested_at, error, origin, created, url]
+      required: [name, kind, access, state, config, secret_expires, tested_at, tables, contexts, error, origin, created, url]
       additionalProperties: false
       properties:
         name:
           $ref: "#/components/schemas/Name"
         kind:
           $ref: "#/components/schemas/SourceKind"
+        access:
+          type: string
+          enum: [service_account, secret]
+          description: how the plane reads it, as the workspace's service account or with the source's secret
         state:
           type: string
-          enum: [ready, failing, expired]
+          enum: [untested, connected, unauthorized, not_found, unavailable, expired]
+          description: |
+            what the last test found: `connected`, or why not, `unauthorized`
+            (the reader has no grant), `not_found` (no such location),
+            `unavailable` (the warehouse did not answer) or `expired` (the
+            secret has); `untested` before any test
         config:
           type: object
           additionalProperties: {type: string}
@@ -13800,10 +13860,19 @@ components:
           - string
           - "null"
           format: date-time
+        tables:
+          type: [integer, "null"]
+          minimum: 0
+          description: how many tables the last test found; null before one
+        contexts:
+          type: integer
+          minimum: 0
+          description: how many of the project's contexts were made from it
         error:
           type:
           - string
           - "null"
+          description: why the last test failed, else null
         origin:
           $ref: "#/components/schemas/Origin"
         created: {type: string, format: date-time}
@@ -13827,33 +13896,30 @@ components:
 
     SourceTable:
       type: object
-      required: [name, rows, bytes, updated]
+      description: a table of the source's location, as the warehouse lists it
+      required: [name, type, readable]
       additionalProperties: false
       properties:
-        name: {type: string}
-        rows:
-          type:
-          - integer
-          - "null"
-        bytes:
-          type:
-          - integer
-          - "null"
-        updated:
-          type:
-          - string
-          - "null"
-          format: date-time
+        name: {type: string, description: the table's name within the dataset}
+        type: {type: string, description: "the warehouse's kind of table, such as `TABLE`, `VIEW` or `MODEL`"}
+        readable: {type: boolean, description: whether a context can be made of it}
 
     SourceTables:
       type: object
-      required: [tables]
+      description: |
+        the tables of the source's location, the BigQuery `project` and
+        `dataset`, whose names start with `prefix`; `more` says the
+        warehouse holds more than were listed
+      required: [project, dataset, tables, more]
       additionalProperties: false
       properties:
+        project: {type: string}
+        dataset: {type: string}
         tables:
           type: array
           items:
             $ref: "#/components/schemas/SourceTable"
+        more: {type: boolean}
 
     SourcePreview:
       type: object

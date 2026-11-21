@@ -1,20 +1,20 @@
 --- 100 columns, not a terminal
 $ gf sources list
-  Name            Kind       State  Tested
-  bigquery-acme   BigQuery   ready  Nov 21 08:02
-  snowflake-prod  Snowflake  ready  Nov 20 16:10
+  Name            Kind       State      Tables  Contexts  Tested
+  bigquery-acme   BigQuery   connected      42         3  Nov 21 08:02
+  snowflake-prod  Snowflake  connected      18         0  Nov 20 16:10
 --- 100 columns, a terminal
 $ gf sources list
-  Name            Kind       State  Tested
-  bigquery-acme   BigQuery   ready  Nov 21 08:02
-  snowflake-prod  Snowflake  ready  Nov 20 16:10
+  Name            Kind       State      Tables  Contexts  Tested
+  bigquery-acme   BigQuery   connected      42         3  Nov 21 08:02
+  snowflake-prod  Snowflake  connected      18         0  Nov 20 16:10
 --- 44 columns, not a terminal
 $ gf sources list
-  Name            Kind       State  Tested
-  bigquery-acme   BigQuery   ready  Nov 21 08:02
-  snowflake-prod  Snowflake  ready  Nov 20 16:10
+  Name            Kind       State
+  bigquery-acme   BigQuery   connected
+  snowflake-prod  Snowflake  connected
 --- 44 columns, a terminal
 $ gf sources list
-  Name            Kind       State  Tested
-  bigquery-acme   BigQuery   ready  Nov 21 08:02
-  snowflake-prod  Snowflake  ready  Nov 20 16:10
+  Name            Kind       State
+  bigquery-acme   BigQuery   connected
+  snowflake-prod  Snowflake  connected

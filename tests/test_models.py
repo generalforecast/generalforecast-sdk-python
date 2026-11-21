@@ -30,8 +30,9 @@ def test_list_and_get_return_the_same_model_shape(fake):
     }
     one = gf.models.get("tabicl-v2", task="classification")
     assert one == next(m for m in models if m.id == one.id)
-    # The plane serves a model's caps as `bounds`, without the contract's `limits`.
-    assert one.kind == "catalog" and one.limits is None
+    # `limits` are the model's own, as the engine's catalog gives them.
+    assert one.kind == "catalog" and one.limits == gf.types.Limits(100000, 100, 10000)
+    assert one.digest and one.digest.startswith("sha256:")
     assert one.trained_on.rows == 100000
     with pytest.raises(gf.AmbiguousReference):
         gf.models.get("tabicl-v2")

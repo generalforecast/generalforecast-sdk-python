@@ -286,11 +286,16 @@ def _connect(call: Call) -> Client:
 
 def as_json(call: Call, result: Any) -> Any:
     """A command's result as `--json` prints it: the SDK's dataclass, a list under its noun."""
+    from generalforecast.types import SourceList
+
     if result is None:
         return {"name": call.name, "deleted": True}
     if isinstance(result, list):
         key = call.command.key or call.command.words[-2].replace("-", "_")
-        return {key: [jsonable(item) for item in result]}
+        listed: dict[str, Any] = {key: [jsonable(item) for item in result]}
+        if isinstance(result, SourceList):
+            listed["available"] = result.available
+        return listed
     return jsonable(result)
 
 

@@ -70,20 +70,20 @@ def model(
     family: str | None = None,
     context_rows: int = 100000,
     queries: int = 100,
-    inputs: int = 500,
+    inputs: int = 10000,
 ) -> dict[str, Any]:
-    """A catalog entry as the plane serves one: the contract's `models.list` example without what it leaves out.
+    """A catalog entry as the plane serves one, shaped as the contract's `models.list` example.
 
-    The plane sends a model's caps as `bounds`, and no `model`, `limits` or
-    `warm_shapes` (`contract.UNSERVED`).
+    `limits` are the model's own, the engine catalog's `limits` of it, and
+    the plane names no warm shapes.
     """
     entry = contract.example("models.list")["models"][0]
-    for unserved in contract.UNSERVED["Model"]:
-        del entry[unserved]
     pinned = digest(full)
     entry.update(
-        name=full, short=short, task=task, family=family or short, repository=full
-    )
+        model=f"{full}@{pinned}", name=full, short=short, task=task, family=family or short,
+        repository=full, limits={"context_rows": context_rows, "queries": queries, "inputs": inputs},
+        warm_shapes=[],
+    )  # fmt: skip
     entry["bounds"] = {**entry["bounds"], "context_rows": context_rows, "query_rows": queries,
                        "features": inputs}  # fmt: skip
     entry["artifact"] = {**entry["artifact"], "repository": full, "digest": pinned}
@@ -96,19 +96,19 @@ CATALOG = [
     model("general-forecast/tabicl-v2-classifier", "tabicl-v2", "classification", family="tabicl"),
     model("general-forecast/tabicl-v2-regressor", "tabicl-v2", "regression", family="tabicl"),
     model("general-forecast/kumo-tabular-medium-classifier", "kumo-medium", "classification",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-medium-regressor", "kumo-medium", "regression",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-small-classifier", "kumo-small", "classification",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-small-regressor", "kumo-small", "regression",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-large-classifier", "kumo-large", "classification",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/mitra-2-classifier", "mitra-2", "classification", context_rows=5120),
     model("general-forecast/mitra-2-regressor", "mitra-2", "regression", context_rows=5120),
-    model("general-forecast/chronos-2", "chronos-2", "forecast", queries=8),
-    model("general-forecast/timestral-209m", "timestral-209m", "forecast", queries=8),
+    model("general-forecast/chronos-2", "chronos-2", "forecast", queries=8, inputs=8),
+    model("general-forecast/timestral-209m", "timestral-209m", "forecast", queries=8, inputs=8),
 ]  # fmt: skip
 
 
@@ -165,6 +165,8 @@ class Fake:
     chunk_loss: int = 0
     polls_until_done: int = 2
     accept_predictions: int = 0
+    # False answers `available: false` to `sources.list`, as a plane that connects no sources.
+    sources_available: bool = True
     fail: dict[str, int] = field(default_factory=dict)
     # The reasons of the 429s a handler answers, one a call, before it answers.
     throttle: dict[str, list[str]] = field(default_factory=dict)
@@ -1007,14 +1009,18 @@ def models_get(fake: Fake, call: Call, name: str) -> Any:
 
 
 def sources_list(fake: Fake, call: Call) -> Any:
-    return ok({"sources": [_shown(s) for s in fake.sources.values()]})
+    return ok({"sources": [_shown(s) for s in fake.sources.values()],
+               "available": fake.sources_available})  # fmt: skip
 
 
 def sources_create(fake: Fake, call: Call) -> Any:
     p = call.payload
-    fake.sources[p["name"]] = {"name": p["name"], "kind": p["kind"], "state": "ready",
-                               "config": p["config"], "secret_expires": None,
-                               "tested_at": NOW, "error": None, "origin": origin("cli"),
+    tables = contract.example("sources.tables")["tables"]
+    fake.sources[p["name"]] = {"name": p["name"], "kind": p["kind"],
+                               "access": "secret" if p.get("secret") else "service_account",
+                               "state": "connected", "config": p["config"], "secret_expires": None,
+                               "tested_at": NOW, "tables": len(tables), "contexts": 0,
+                               "error": None, "origin": origin("cli"),
                                "created": NOW, "url": fake.link(f"data/sources/{p['name']}"),
                                "_secret": p.get("secret")}  # fmt: skip
     return ok(_shown(fake.sources[p["name"]]))
@@ -1198,9 +1204,10 @@ def synthetic_post(fake: Fake, call: Call) -> Any:
         "options": {k: v for k, v in p.items() if k != "tags"}, "state": "pending",
         "counts": {"pending": count, "ready": 0, "rejected": 0},
         "tables": [{"name": f"{name}-{i}", "state": "pending", "error": None} for i in range(count)],
+        "created": 1761200000.0, "origin": origin(), "url": fake.link("fine-tunes"),
         "_polls": 1,
     }  # fmt: skip
-    created = ("name", "tag", "count", "snapshots", "state")
+    created = ("name", "tag", "count", "snapshots", "state", "created", "origin", "url")
     return ok({k: fake.batches[name][k] for k in created})
 
 

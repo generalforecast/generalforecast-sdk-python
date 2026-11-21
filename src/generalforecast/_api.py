@@ -1312,8 +1312,9 @@ class Model(Payload):
     """The Model schema.
 
     the catalog's description of a served model: `model` is the resolved id with its
-    content digest, `limits` what one call may send here, `warm_shapes` the shapes
-    compiled at startup
+    content digest, `limits` the model's own sizes as the catalog gives them (the same
+    from gf serve and the hosted plane), and `warm_shapes` the shapes compiled at
+    startup, empty where none were
     """
 
     short: str | None
@@ -3687,6 +3688,9 @@ class SyntheticBatchCreated(Payload):
     count: int
     snapshots: tuple[Name, ...]
     state: SyntheticBatchState
+    created: float
+    origin: Origin
+    url: str
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_SyntheticBatchName),
@@ -3694,6 +3698,9 @@ class SyntheticBatchCreated(Payload):
         Field("count", "count", True, _integer),
         Field("snapshots", "snapshots", True, _items(_decode_Name)),
         Field("state", "state", True, _decode_SyntheticBatchState),
+        Field("created", "created", True, _number),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("url", "url", True, _text),
     )
 
 
@@ -3744,6 +3751,9 @@ class SyntheticBatch(Payload):
     count: int
     snapshots: tuple[Name, ...]
     state: SyntheticBatchState
+    created: float
+    origin: Origin
+    url: str
     seed: int
     options: SyntheticBatchCreate
     tables: tuple[SyntheticTable, ...]
@@ -3755,6 +3765,9 @@ class SyntheticBatch(Payload):
         Field("count", "count", True, _integer),
         Field("snapshots", "snapshots", True, _items(_decode_Name)),
         Field("state", "state", True, _decode_SyntheticBatchState),
+        Field("created", "created", True, _number),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("url", "url", True, _text),
         Field("seed", "seed", True, _integer),
         Field("options", "options", True, _record(SyntheticBatchCreate)),
         Field("tables", "tables", True, _items(_record(SyntheticTable))),
@@ -4159,10 +4172,12 @@ class Metrics(Payload):
     serving facts: `context` is the context the environment is serving now,
     `accepted_version`/`serving_version` compare the newest accepted write of a live
     context with the one being served, `fresh` says whether they agree (null without a
-    context)
+    context); `error` is set while the environment serves its last good view and a
+    rebuild of it keeps failing, else null
     """
 
     status: State
+    error: str | None
     context: ServingContext | None
     accepted_version: int | str | None
     serving_version: int | str | None
@@ -4173,6 +4188,7 @@ class Metrics(Payload):
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("status", "status", True, _decode_State),
+        Field("error", "error", True, _union(_text, _null)),
         Field("context", "context", True, _union(_record(ServingContext), _null)),
         Field(
             "accepted_version",
@@ -4668,10 +4684,15 @@ class Source(Payload):
 
     name: Name
     kind: SourceKind
-    state: Literal["ready", "failing", "expired"]
+    access: Literal["service_account", "secret"]
+    state: Literal[
+        "untested", "connected", "unauthorized", "not_found", "unavailable", "expired"
+    ]
     config: dict[str, str]
     secret_expires: str | None
     tested_at: str | None
+    tables: int | None
+    contexts: int
     error: str | None
     origin: Origin
     created: str
@@ -4680,10 +4701,25 @@ class Source(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Name),
         Field("kind", "kind", True, _decode_SourceKind),
-        Field("state", "state", True, _literal("ready", "failing", "expired")),
+        Field("access", "access", True, _literal("service_account", "secret")),
+        Field(
+            "state",
+            "state",
+            True,
+            _literal(
+                "untested",
+                "connected",
+                "unauthorized",
+                "not_found",
+                "unavailable",
+                "expired",
+            ),
+        ),
         Field("config", "config", True, _mapping(_text)),
         Field("secret_expires", "secret_expires", True, _union(_text, _null)),
         Field("tested_at", "tested_at", True, _union(_text, _null)),
+        Field("tables", "tables", True, _union(_integer, _null)),
+        Field("contexts", "contexts", True, _integer),
         Field("error", "error", True, _union(_text, _null)),
         Field("origin", "origin", True, _record(Origin)),
         Field("created", "created", True, _text),
@@ -4693,11 +4729,13 @@ class Source(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class SourceList(Payload):
-    """The SourceList schema."""
+    """`available` says whether this plane can connect sources at all."""
 
+    available: bool
     sources: tuple[Source, ...]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("available", "available", True, _boolean),
         Field("sources", "sources", True, _items(_record(Source))),
     )
 
@@ -7869,29 +7907,37 @@ class SourceCreate(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class SourceTable(Payload):
-    """The SourceTable schema."""
+    """A table of the source's location, as the warehouse lists it."""
 
     name: str
-    rows: int | None
-    bytes: int | None
-    updated: str | None
+    type: str
+    readable: bool
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _text),
-        Field("rows", "rows", True, _union(_integer, _null)),
-        Field("bytes", "bytes", True, _union(_integer, _null)),
-        Field("updated", "updated", True, _union(_text, _null)),
+        Field("type", "type", True, _text),
+        Field("readable", "readable", True, _boolean),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
 class SourceTables(Payload):
-    """The SourceTables schema."""
+    """The SourceTables schema.
 
+    the tables of the source's location, the BigQuery `project` and `dataset`, whose
+    names start with `prefix`; `more` says the warehouse holds more than were listed
+    """
+
+    project: str
+    dataset: str
     tables: tuple[SourceTable, ...]
+    more: bool
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("project", "project", True, _text),
+        Field("dataset", "dataset", True, _text),
         Field("tables", "tables", True, _items(_record(SourceTable))),
+        Field("more", "more", True, _boolean),
     )
 
 
