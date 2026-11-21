@@ -154,6 +154,14 @@ def test_wait_reports_progress_and_the_published_version(fake):
     assert run.published.report.delta == pytest.approx(0.023)
     assert [r.state for r in seen] == ["running", "finished"]
     assert seen[0].step == 500 and seen[0].loss == pytest.approx(0.45)
+    # While the attempt runs its seconds are pending; once it ends, charged.
+    assert seen[0].attempt == 1 and seen[0].seconds == 60.0
+    assert (seen[0].pending_seconds, seen[0].charged_seconds) == (60.0, 0.0)
+    assert (run.charged_seconds, run.pending_seconds, run.voided_seconds) == (
+        130.0,
+        0.0,
+        0.0,
+    )
     assert run.curve == ((500, 0.45, 0.43), (1000, 0.41, 0.398))
     assert repr(run) == (
         "credit-default@ft1  finished  step 1,000/1,000  loss 0.410  "
@@ -178,8 +186,11 @@ def test_watch_yields_each_event_once_and_a_failed_run_raises(fake):
         "t", data=credit(), target="defaulted", task="classification"
     )
     gf.fine_tunes.runs.create("a", base="tabicl-v2", data=["t"], plan=gf.Plan(steps=10))
-    kinds = [e.kind for e in gf.fine_tunes.runs.watch("a@ft1")]
-    assert kinds == ["state", "metrics", "metrics", "published"]
+    kinds = [e.kind for e in gf.fine_tunes.runs.watch("a@ft1", poll=0.5)]
+    assert kinds == [
+        "created", "state", "attempt", "state", "calibration",
+        "metrics", "metrics", "published", "state",
+    ]  # fmt: skip
     assert [e.kind for e in gf.fine_tunes.runs.events("a")] == kinds
     fake.run_ends = "failed"
     gf.fine_tunes.runs.create("b", base="tabicl-v2", data=["t"], plan=gf.Plan(steps=10))
@@ -266,4 +277,4 @@ def test_the_async_client_fine_tunes_too(fake):
             return run, events
 
     run, events = asyncio.run(go())
-    assert run.state == "finished" and events[-1].kind == "published"
+    assert run.state == "finished" and events[-2].kind == "published"
