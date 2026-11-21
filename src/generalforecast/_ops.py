@@ -220,8 +220,8 @@ def _not_done(what: str, timeout: float | None, hint: str) -> Timeout:
     return Timeout(f"{what} is still going{shown}", hint=hint)
 
 
-def _deadline(timeout: float | None, poll: float | None = None) -> float | None:
-    """When a wait gives up; checks its `poll` before the wait starts."""
+def _checked_poll(poll: float | None) -> float | None:
+    """A wait's `poll`, checked before the wait starts."""
     if poll is not None and (
         isinstance(poll, bool)
         or not isinstance(poll, (int, float))
@@ -231,6 +231,12 @@ def _deadline(timeout: float | None, poll: float | None = None) -> float | None:
             "poll is the seconds between checks, more than 0 and at most 3600",
             param="poll",
         )
+    return poll
+
+
+def _deadline(timeout: float | None, poll: float | None = None) -> float | None:
+    """When a wait gives up; checks its `poll` before the wait starts."""
+    _checked_poll(poll)
     return None if timeout is None else time.monotonic() + timeout
 
 
