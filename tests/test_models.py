@@ -114,6 +114,7 @@ def test_estimators_fit_uploads_and_fail_fast(fake, monkeypatch):
         "model": "tabicl-v2",
         "context_rows": 40,
         "queries": 40,
+        "inputs": X.shape[1],
         "task": "classification",
     }
     monkeypatch.setattr(_data, "SNAPSHOT_MAX_BYTES", 100)

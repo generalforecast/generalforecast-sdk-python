@@ -43,6 +43,7 @@ __all__ = [
     "Experiment",
     "Holdout",
     "Key",
+    "KeyOwner",
     "LargeContext",
     "Limits",
     "LogEntry",
@@ -1073,8 +1074,23 @@ class SourceTable:
 
 
 @dataclass(frozen=True)
+class KeyOwner:
+    """The signed-in account behind a key: `issuer` and `subject` name it, and stay when its email changes."""
+
+    issuer: str = ""
+    subject: str = ""
+    email: str | None = None
+
+
+@dataclass(frozen=True)
 class Key:
-    """An API key; its token is shown once, in `NewKey`."""
+    """An API key; its token is shown once, in `NewKey`.
+
+    `owner` is the account that made it, None for a `service` key (one the
+    service made for its own use) and a `legacy` one (made before keys
+    recorded their owners). `machine` names the machine a `gf login` made
+    it for.
+    """
 
     id: str
     name: str = ""
@@ -1084,6 +1100,10 @@ class Key:
     created: datetime | None = None
     expires: datetime | None = None
     last_used: datetime | None = None
+    owner: KeyOwner | None = None
+    service: bool = False
+    legacy: bool = False
+    machine: str | None = None
 
     @classmethod
     def _load(cls, data: Mapping[str, Any]) -> Key:
@@ -1099,6 +1119,7 @@ class Key:
                 state = "active"
         token = data.get("token")
         prefix = data.get("prefix") or (token[:12] if isinstance(token, str) else None)
+        owner = data.get("owner")
         return cls(
             id=str(data.get("id") or ""),
             name=str(data.get("name") or ""),
@@ -1108,6 +1129,10 @@ class Key:
             created=created,
             expires=expires,
             last_used=instant(data.get("last_used_at", data.get("last_used"))),
+            owner=load(KeyOwner, owner) if isinstance(owner, Mapping) else None,
+            service=bool(data.get("service")),
+            legacy=bool(data.get("legacy")),
+            machine=data.get("machine"),
         )
 
 

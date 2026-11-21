@@ -1513,14 +1513,24 @@ def estimate_of(result: Mapping[str, Any]) -> Estimate:
 
 
 def predict_estimate(
-    model: str, task: str | None, context_rows: int, queries: int
+    model: str,
+    task: str | None,
+    context_rows: int,
+    queries: int,
+    inputs: int | None = None,
 ) -> Op:
-    """Prices a prediction without making it (3.4), the large-context line included."""
+    """Prices a prediction without making it (3.4), the large-context line included.
+
+    `inputs` is the context's input columns, which with its rows place it
+    against the large-context line; left out, the service takes 32.
+    """
     payload: dict[str, Any] = {
         "model": model,
         "context_rows": context_rows,
         "queries": queries,
     }
+    if inputs is not None:
+        payload["inputs"] = inputs
     if task:
         payload["task"] = _task(task)
     reply = yield _http.estimate(payload)
