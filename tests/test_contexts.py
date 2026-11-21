@@ -183,3 +183,21 @@ def test_delete_is_refused_while_a_predictor_serves_it(fake):
     gf.contexts.delete("adult")
     with pytest.raises(gf.NotFound):
         gf.contexts.get("adult")
+
+
+def test_context_waits_check_every_poll_seconds(fake, monkeypatch):
+    from generalforecast import _ops
+
+    slept = []
+    real = _ops._poll
+    monkeypatch.setattr(
+        _ops, "_poll", lambda a, p=None, *rest: slept.append(real(a, p)) or 0
+    )
+    gf.contexts.create(
+        "customers", source="bigquery-acme", table="acme.analytics.customers", poll=0.5
+    )
+    gf.contexts.refresh("customers", poll=0.5)
+    assert slept and set(slept) == {0.5}
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.contexts.upload("adult", adult(), poll=-1)
+    assert error.value.param == "poll"
