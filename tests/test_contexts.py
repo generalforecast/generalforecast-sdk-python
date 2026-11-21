@@ -43,6 +43,15 @@ def test_the_same_rows_again_are_unchanged_and_send_no_bytes(fake):
     assert changed.version == 2 and not changed.unchanged
 
 
+def test_upload_creates_a_context_it_does_not_find(fake):
+    first = gf.contexts.upload("adult", adult())
+    assert first.state == "ready" and first.version == 1 and first.rows == 200
+    assert fake.calls_to("POST", r".*/contexts")[0].payload["kind"] == "snapshot"
+    again = gf.contexts.upload("adult", adult())
+    assert again.unchanged and again.version == 1
+    assert len(fake.calls_to("POST", r".*/contexts")) == 1
+
+
 def test_a_path_is_read_and_named(fake, tmp_path):
     path = tmp_path / "adult.csv"
     adult().to_csv(path, index=False)
