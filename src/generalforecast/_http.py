@@ -525,20 +525,6 @@ def snapshots_stream(name: str, metadata: Mapping[str, str], body: bytes) -> Req
     )
 
 
-def snapshots_bytes(name: str, chunk: bytes, offset: int, total: int) -> Request:
-    """Sends one chunk of a snapshot upload when the service gave no signed URL."""
-    end = offset + len(chunk) - 1
-    return Request(
-        "POST",
-        f"/snapshots/{_segment(name)}/bytes",
-        "snapshot",
-        name,
-        body=chunk,
-        content_type=OCTETS,
-        headers={"Content-Range": f"bytes {offset}-{end}/{total}"},
-    )
-
-
 def snapshots_get(name: str) -> Request:
     """Reads a training snapshot."""
     return Request("GET", f"/snapshots/{_segment(name)}", "snapshot", name)

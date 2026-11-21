@@ -105,6 +105,15 @@ def request_problems(op: Operation, body: Any) -> list[str]:
     return _problems(content["schema"], body) if content else []
 
 
+# Where the contract's own examples break its schemas: a schema that adds
+# fields with `allOf` to one that allows no others. Each is reported to the
+# engine; replies on these routes are checked for everything else.
+KNOWN_DEFECTS = {
+    "snapshots.synthetic": "result: Additional properties are not allowed ('counts', 'options', 'seed', 'tables' were unexpected)",
+    "workspaces.get": "result: Additional properties are not allowed ('created_at', 'organization' were unexpected)",
+}
+
+
 def reply_problems(op: Operation, status: int, body: Any) -> list[str]:
     """How a JSON reply departs from the route's schema for its status."""
     responses = op.body.get("responses", {})
@@ -114,7 +123,8 @@ def reply_problems(op: Operation, status: int, body: Any) -> list[str]:
             return []
         return [f"the contract has no {status} reply"]
     content = _resolved(reply).get("content", {}).get("application/json")
-    return _problems(content["schema"], body) if content else []
+    found = _problems(content["schema"], body) if content else []
+    return [p for p in found if p != KNOWN_DEFECTS.get(op.id)]
 
 
 def example(operation_id: str, name: str | None = None, *, status: str = "200") -> Any:

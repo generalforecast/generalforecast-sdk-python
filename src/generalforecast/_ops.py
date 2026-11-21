@@ -1479,6 +1479,13 @@ def snapshot_create(
             reply = yield _http.snapshots_tag(name, [*found.tags, *tags])
             found = load(Snapshot, reply.result)
         return found
+    if "target" not in meta:
+        raise InvalidInput(
+            f"a snapshot past {STREAM_ROWS:,} rows or {_data.size(STREAM_BYTES)} names its "
+            "target= and task=",
+            hint="the resumable upload a large snapshot takes needs its training metadata",
+            param="target",
+        )
     parquet = _data.parquet(rows)
     payload: dict[str, Any] = {
         "name": name,
@@ -1491,14 +1498,15 @@ def snapshot_create(
     reply = yield _http.snapshots_open(payload)
     opened = reply.result or {}
     url = opened.get("url")
+    if not isinstance(url, str) or not url:
+        raise InvalidInput(
+            "the service opened a snapshot upload without its upload URL"
+        )
     chunk = int(opened.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
     yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(parquet))}")
     for offset in range(0, len(parquet), chunk):
         piece = parquet[offset : offset + chunk]
-        if url:
-            yield _http.upload_chunk(url, piece, offset, len(parquet))
-        else:
-            yield _http.snapshots_bytes(name, piece, offset, len(parquet))
+        yield _http.upload_chunk(url, piece, offset, len(parquet))
     found = load(Snapshot, opened)
     attempt = 0
     while found.state not in UPLOAD_DONE:

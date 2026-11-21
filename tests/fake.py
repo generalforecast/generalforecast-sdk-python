@@ -917,9 +917,9 @@ def _store_snapshot(fake: Fake, name: str, table: pa.Table, metadata: dict[str, 
         "name": name, "state": "ready", "digest": digest, "bytes": table.nbytes,
         "rows": table.num_rows,
         "columns": [{"name": f.name, "type": arrow.get(str(f.type), str(f.type))} for f in table.schema],
-        "metadata": {**metadata, "origin": {"kind": "uploaded"}},
+        "metadata": {**metadata, "origin": {"kind": "uploaded"}} if metadata.get("target") else None,
         "tags": sorted({*tags, "uploaded"}), "error": None, "expires": None,
-        "created": 1761200000.0,
+        "created": 1761200000.0, "origin": origin(),
     }  # fmt: skip
     return fake.training[name]
 
@@ -934,23 +934,27 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
     fake.training[p["name"]] = {
         "name": p["name"], "state": "open", "digest": None, "bytes": p["bytes"], "rows": None,
         "columns": None, "metadata": p["metadata"], "tags": sorted({*p.get("tags", []), "uploaded"}),
-        "error": None, "expires": 1761286400.0, "created": 1761200000.0, "url": None,
-        "method": "PUT", "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
+        "error": None, "expires": 1761286400.0, "created": 1761200000.0, "origin": origin(),
+        "url": f"{fake.url}/uploads/snapshots/{p['name']}", "method": "PUT",
+        "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
     }  # fmt: skip
     return ok(_snapshot_json(fake, p["name"]))
 
 
-def snapshots_bytes(fake: Fake, call: Call, name: str) -> Any:
+def snapshots_upload(fake: Fake, call: Call, name: str) -> Any:
+    """A chunk sent to a snapshot's upload URL, the resumable object store's and not an API route."""
     snap = fake.training[name]
     start = int(call.headers["content-range"].split()[1].split("-")[0])
     assert start == len(snap["_data"]), "chunks arrive in order"
+    assert "authorization" not in call.headers, "an upload URL carries no credential"
     snap["_data"] += call.body
-    if len(snap["_data"]) == snap["bytes"]:
-        table = pq.read_table(io.BytesIO(snap["_data"]))
-        meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
-        _store_snapshot(fake, name, table, meta, snap["_tags"])
-        fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
-    return ok({"received": len(snap.get("_data", b""))})
+    if len(snap["_data"]) < snap["bytes"]:
+        return 308, None, {"Range": f"bytes=0-{len(snap['_data']) - 1}"}
+    table = pq.read_table(io.BytesIO(snap["_data"]))
+    meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
+    _store_snapshot(fake, name, table, meta, snap["_tags"])
+    fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
+    return ok(None)
 
 
 def snapshots_get(fake: Fake, call: Call, name: str) -> Any:
@@ -986,15 +990,17 @@ def snapshots_delete(fake: Fake, call: Call, name: str) -> Any:
 
 def synthetic_post(fake: Fake, call: Call) -> Any:
     p = dict(call.payload)
-    name, count = p.pop("name"), p.pop("count", 1)
-    p.pop("tags", None)
+    name, count = p["name"], p.get("count", 1)
     fake.batches[name] = {
-        "name": name, "tag": f"synthetic-{name}", "count": count, "seed": p.pop("seed", 7),
-        "options": p, "state": "pending", "counts": {"pending": count, "ready": 0, "rejected": 0},
+        "name": name, "tag": f"synthetic-{name}", "count": count, "seed": p.get("seed", 7),
+        "snapshots": [f"{name}-{i}" for i in range(count)],
+        "options": {k: v for k, v in p.items() if k != "tags"}, "state": "pending",
+        "counts": {"pending": count, "ready": 0, "rejected": 0},
         "tables": [{"name": f"{name}-{i}", "state": "pending", "error": None} for i in range(count)],
-        "created": 1761200000.0, "_polls": 1,
+        "_polls": 1,
     }  # fmt: skip
-    return ok({k: v for k, v in fake.batches[name].items() if not k.startswith("_")})
+    created = ("name", "tag", "count", "snapshots", "state")
+    return ok({k: fake.batches[name][k] for k in created})
 
 
 def synthetic_get(fake: Fake, call: Call, name: str) -> Any:
@@ -1019,30 +1025,40 @@ def _run_json(run: dict[str, Any]) -> dict[str, Any]:
 def runs_post(fake: Fake, call: Call) -> Any:
     p = call.payload
     versions = fake.runs.setdefault(p["name"], [])
-    if versions and versions[0]["base"] != p["base"]:
+    if versions and versions[0]["base"] != entry(p["base"])["name"]:
         raise Refusal(409, "Conflict", f"{p['name']} trains from {versions[0]['base']}")
     version = len(versions) + 1
     data = []
-    for item in p.get("data") or [
-        d for phase in p.get("phases", []) for d in phase["data"]
-    ]:
+    items = [(None, d) for d in p.get("data") or ()]
+    items += [
+        (phase["name"], d) for phase in p.get("phases", []) for d in phase["data"]
+    ]
+    for phase, item in items:
+        pinned = {"phase": phase} if phase else {}
         if isinstance(item, dict) and "context" in item:
             ctx = fake.contexts[item["context"]]
             data.append({"context": item["context"], "version": item.get("version") or ctx["version"],
-                         "name": f"context-{item['context']}", "digest": ctx["digest"]})  # fmt: skip
+                         "name": f"context-{item['context']}", "digest": ctx["digest"], **pinned})  # fmt: skip
         elif isinstance(item, dict):
-            data += [{"name": n, "digest": v["digest"]} for n, v in fake.training.items()
+            data += [{"name": n, "digest": v["digest"], **pinned} for n, v in fake.training.items()
                      if item["tag"] in v["tags"]]  # fmt: skip
         else:
-            data.append({"name": item, "digest": fake.training[item]["digest"]})
+            data.append(
+                {"name": item, "digest": fake.training[item]["digest"], **pinned}
+            )
     run = {
         "model": f"{fake.project}/{p['name']}@ft{version}", "name": p["name"], "version": version,
-        "state": "queued", "reason": None, "attempt": 0, "base": p["base"], "data": data,
-        "data_digest": "sha256:dd", "waiting": None, "phases": p.get("phases", []),
-        "architecture": p.get("architecture", []), "warnings": [], "progress": None,
-        "method": p["method"], "evaluation": p.get("evaluation", {}), "budget": p.get("budget"),
-        "seed": p.get("seed", 0), "tags": p.get("tags", []), "plan": p.get("plan", {}),
+        "state": "queued", "reason": None, "attempt": 0, "base": entry(p["base"])["name"],
+        "data": data, "data_digest": digest(str(data)),
+        "phases": [{**phase, "data": [d for d in data if d.get("phase") == phase["name"]]}
+                   for phase in p.get("phases", [])],
+        "architecture": [{"stages": [], "init": None, **a} for a in p.get("architecture", [])],
+        "warnings": [], "progress": None, "method": p["method"],
+        "evaluation": {**contract.example("runs.get")["evaluation"], **p.get("evaluation", {})},
+        "budget": p.get("budget"), "seed": p.get("seed", 0), "tags": p.get("tags", []),
+        "plan": p.get("plan", {"steps": sum(ph["plan"]["steps"] for ph in p.get("phases", []))}),
         "created": 1761200000.0, "updated": 1761200000.0, "usage": None, "published": None,
+        "origin": origin(), "url": fake.link(f"fine-tunes/{p['name']}"),
         "_polls": fake.polls_until_done, "_events": [
             {"at": 1761200000.0, "kind": "state", "body": {"state": "queued"}}],
         "_payload": p,
@@ -1066,7 +1082,7 @@ def _advance(fake: Fake, run: dict[str, Any]) -> None:
     steps = run["plan"].get("steps", 100)
     if run["_polls"] > 0:
         run.update(state="training", progress={"step": steps // 2, "loss": 0.45},
-                   usage={"gpu_seconds": 60.0, "credits": 120.0})  # fmt: skip
+                   usage=_usage(60.0))  # fmt: skip
         run["_events"].append({"at": 1761200060.0, "kind": "metrics",
                                "body": {"steps": steps // 2, "loss": 0.45, "validation_loss": 0.43}})  # fmt: skip
         return
@@ -1074,15 +1090,21 @@ def _advance(fake: Fake, run: dict[str, Any]) -> None:
         run.update(state="failed", reason="the trainer ran out of memory")
         return
     run.update(state="finished", progress={"step": steps, "loss": 0.41},
-               usage={"gpu_seconds": 130.0, "credits": 260.0},
-               published={"model": run["model"], "digest": "sha256:ee", "kept_step": steps,
+               usage=_usage(130.0),
+               published={"model": run["model"], "digest": digest(run["model"]), "kept_step": steps,
                           "validation_loss": 0.398, "base_validation_loss": 0.421,
                           "report": {"data": {"rows": 900, "base": 0.421, "kept": 0.398,
-                                              "gain": 0.023, "ci95": [0.01, 0.03], "metrics": {}}}})  # fmt: skip
+                                              "gain": 0.023, "ci95": [0.01, 0.03],
+                                              "metrics": {"base": {"auroc": 0.81}, "kept": {"auroc": 0.84}}}}})  # fmt: skip
     run["_events"] += [
         {"at": 1761200120.0, "kind": "metrics", "body": {"steps": steps, "loss": 0.41, "validation_loss": 0.398}},
         {"at": 1761200130.0, "kind": "published", "body": {"model": run["model"]}},
     ]  # fmt: skip
+
+
+def _usage(seconds: float) -> dict[str, float]:
+    return {"gpu_seconds": seconds, "charged_gpu_seconds": seconds, "voided_gpu_seconds": 0.0,
+            "credits": 2.0 * seconds}  # fmt: skip
 
 
 def runs_get(fake: Fake, call: Call, segment: str) -> Any:
@@ -1106,7 +1128,7 @@ def runs_cancel(fake: Fake, call: Call, segment: str) -> Any:
     run = _run_for(fake, segment)
     run["state"] = "cancelled"
     if call.payload.get("save"):
-        run["published"] = {"model": run["model"], "digest": "sha256:ff", "kept_step": 10,
+        run["published"] = {"model": run["model"], "digest": digest(run["model"] + "-saved"), "kept_step": 10,
                             "validation_loss": 0.44, "base_validation_loss": 0.421, "report": None}  # fmt: skip
     return ok(_run_json(run))
 
@@ -1133,7 +1155,7 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("POST", f"{P}/snapshots/synthetic", synthetic_post),
     ("GET", f"{P}/snapshots/synthetic/{N}", synthetic_get),
     ("GET", f"{P}/snapshots/{N}", snapshots_get),
-    ("POST", f"{P}/snapshots/{N}/bytes", snapshots_bytes),
+    ("PUT", f"/uploads/snapshots/{N}", snapshots_upload),
     ("POST", f"{P}/snapshots/{N}/update", snapshots_update),
     ("POST", f"{P}/snapshots/{N}/delete", snapshots_delete),
     ("POST", f"{P}/runs", runs_post),
@@ -1184,6 +1206,8 @@ def _contract_problems(
     method: str, path: str, call: Call, status: int, data: Any
 ) -> list[str]:
     """How a request the SDK sent, or the fake's reply to it, departs from the contract."""
+    if path.startswith("/uploads/"):
+        return []  # an upload URL is the object store's, outside the API
     op = contract.operation(method, path)
     if op is None:
         return [f"{method} {path} is not a route of api/openapi.yaml"]
@@ -1242,7 +1266,7 @@ def serve(fake: Fake) -> Callable[[], None]:
             )
             rid = headers.get("x-gf-request-id", "r-none")
             status, result, extra = 500, None, {}
-            envelope = not parts.path.startswith("/v1/device-logins")
+            envelope = not parts.path.startswith(("/v1/device-logins", "/uploads/"))
             try:
                 if (
                     parts.path.startswith(P)

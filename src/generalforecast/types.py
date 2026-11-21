@@ -1379,7 +1379,9 @@ class Tag:
 class Snapshot:
     """A named, immutable training table.
 
-    `target` and `task` are the training metadata a run reads.
+    `target` and `task` are the training metadata a run reads. A snapshot
+    has no console page: the `url` the service sends with one is where an
+    open upload sends its bytes, which `snapshots.create` uses.
     """
 
     name: str
@@ -1393,7 +1395,6 @@ class Snapshot:
     state: str = "ready"
     origin: Mapping[str, Any] = field(default_factory=dict)
     created: datetime | None = None
-    url: str | None = None
     error: str | None = None
 
     @classmethod
@@ -1421,7 +1422,6 @@ class Snapshot:
             state=str(data.get("state") or "ready"),
             origin=dict(data.get("origin") or metadata.get("origin") or {}),
             created=instant(data.get("created")),
-            url=None if data.get("state") == "open" else data.get("url"),
             error=error.get("message") if isinstance(error, Mapping) else error,
         )
 
