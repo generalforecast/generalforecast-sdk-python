@@ -94,6 +94,21 @@ def test_live_contexts_from_a_source_and_from_the_api(fake):
         "signups", pd.DataFrame({"account_id": [1, 2], "plan": ["team", "free"]})
     )
     assert receipt.rows == 2 and receipt.sequence > 0
+    # A write carries at most 100 rows: more go in parts, each its own write id.
+    many = gf.contexts.append(
+        "signups",
+        pd.DataFrame({"account_id": range(250), "plan": ["team"] * 250}),
+        idempotency_key="rows-1",
+    )
+    assert many.rows == 250
+    assert [len(w["rows"]) for w in fake.writes[-3:]] == [100, 100, 50]
+    assert [w["write_id"] for w in fake.writes[-3:]] == [
+        "rows-1-1",
+        "rows-1-2",
+        "rows-1-3",
+    ]
+    with pytest.raises(gf.InvalidInput):
+        gf.contexts.append("signups", pd.DataFrame({"account_id": []}))
     labeled = gf.contexts.label(
         signups,
         pd.DataFrame({"account_id": [1], "converted": [True]}),
