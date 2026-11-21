@@ -166,3 +166,5 @@ def test_json_parts_count_values_as_well_as_bytes(monkeypatch):
     rows = [{"a": i, "b": i, "c": i, "d": i} for i in range(5)]
     parts = _ops.json_parts(rows)
     assert [len(p) for p in parts] == [2, 2, 1]
+    monkeypatch.undo()
+    assert [len(p) for p in _ops.json_parts(list(range(250)), 100)] == [100, 100, 50]

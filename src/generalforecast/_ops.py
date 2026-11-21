@@ -538,18 +538,23 @@ def _records(rows: Any) -> list[dict[str, Any]]:
 
 JSON_PART_BYTES = 900_000
 JSON_PART_VALUES = 60_000
+# The rows or labels one write to a live context carries at most, as the contract has it.
+WRITE_ITEMS = 100
 
 
-def json_parts(items: list[Any]) -> list[list[Any]]:
-    """Items in parts under the JSON bounds: bytes and values both (3.10)."""
+def json_parts(items: list[Any], most: int | None = None) -> list[list[Any]]:
+    """Items in parts under the JSON bounds, bytes and values both (3.10), and at most `most` a part."""
     parts: list[list[Any]] = []
     current: list[Any] = []
     size = values = 0
     for item in items:
         encoded = len(json.dumps(item, separators=(",", ":")))
         count = len(item) + 1 if isinstance(item, Mapping) else 1
+        full = most is not None and len(current) == most
         if current and (
-            size + encoded > JSON_PART_BYTES or values + count > JSON_PART_VALUES
+            full
+            or size + encoded > JSON_PART_BYTES
+            or values + count > JSON_PART_VALUES
         ):
             parts.append(current)
             current, size, values = [], 0, 0
@@ -569,8 +574,10 @@ def _write(
     extra: Mapping[str, Any],
 ) -> Op:
     field_name = "rows" if verb == "append" else "labels"
+    if not items:
+        raise InvalidInput(f"there are no {field_name} to {verb}", param="data")
     base = key or f"{verb}-{os.urandom(8).hex()}"
-    parts = json_parts(items)
+    parts = json_parts(items, WRITE_ITEMS)
     total = sequence = 0
     for index, part in enumerate(parts):
         write_id = base if len(parts) == 1 else f"{base}-{index + 1}"
