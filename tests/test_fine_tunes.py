@@ -111,6 +111,7 @@ def test_a_run_takes_snapshots_batches_contexts_and_tags(fake):
         "credit-default",
         base="tabicl-v2",
         data=[snap, "warmup", "adult", "adult@1", gf.Tag("credit")],
+        target="defaulted",
         plan=gf.Plan(steps=1000, learning_rate=5e-5, episode_rows=1024),
         evaluation=gf.Evaluation(holdout=0.1),
         budget=gf.Budget(credits=500),
@@ -135,6 +136,26 @@ def test_a_run_takes_snapshots_batches_contexts_and_tags(fake):
     assert sent["evaluation"]["early_stopping_threshold"] == {"standard_errors": 2.0}
     assert run.data[2].kind == "context" and run.data[2].name == "adult"
     assert run.data[2].version == 1 and run.data[0].kind == "snapshot"
+    assert sent["target"] == "defaulted" and run.target == "defaulted"
+
+
+def test_a_run_on_a_context_names_its_target(fake):
+    gf.contexts.create("adult", data=credit())
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.fine_tunes.runs.create(
+            "credit-default", base="tabicl-v2", data=["adult"], plan=gf.Plan(steps=10)
+        )
+    assert error.value.param == "target"
+    assert not fake.calls_to("POST", r".*/runs")
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.fine_tunes.runs.create(
+            "credit-default",
+            base="tabicl-v2",
+            data=["adult"],
+            target="incme",
+            plan=gf.Plan(steps=10),
+        )
+    assert error.value.param == "target" and "incme" in error.value.message
 
 
 def test_wait_reports_progress_and_the_published_version(fake):

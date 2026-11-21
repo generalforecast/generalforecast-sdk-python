@@ -1877,11 +1877,18 @@ def run_create(
     wait: bool,
     progress: Any,
     poll: float | None = None,
+    target: str | None = None,
 ) -> Op:
     """Starts the run that publishes the fine-tune `name`'s next version."""
     _checked_name(name, "fine-tune")
     if not isinstance(base, str) or not base:
         raise InvalidInput("a run needs base=, the model it trains from", param="base")
+    if target is not None and (
+        not isinstance(target, str) or not 1 <= len(target) <= 512
+    ):
+        raise InvalidInput(
+            "target is a column name, 1 to 512 characters", param="target"
+        )
     if (data is None) == (phases is None):
         raise InvalidInput(
             "a run takes data= or phases=, one of them",
@@ -1942,11 +1949,29 @@ def run_create(
         payload["seed"] = seed
     if tags:
         payload["tags"] = list(tags)
+    if target is not None:
+        payload["target"] = target
+    elif any(
+        "context" in item for item in _run_items(payload) if isinstance(item, dict)
+    ):
+        raise InvalidInput(
+            "a run on a context names the column it trains to predict",
+            hint="pass target=, as an experiment on the context does",
+            param="target",
+        )
     reply = yield _http.runs_create(payload)
     run = load(FineTuneRun, reply.result)
     if not wait:
         return run
     return (yield from run_wait(run.model, None, progress, poll))
+
+
+def _run_items(payload: Mapping[str, Any]) -> list[Any]:
+    """A run payload's data items, its phases' included."""
+    items = list(payload.get("data") or ())
+    for phase in payload.get("phases") or ():
+        items += phase["data"]
+    return items
 
 
 def _curve(run: FineTuneRun, events: Sequence[RunEvent]) -> FineTuneRun:

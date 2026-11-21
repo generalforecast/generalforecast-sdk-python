@@ -1057,6 +1057,12 @@ def runs_post(fake: Fake, call: Call) -> Any:
         pinned = {"phase": phase} if phase else {}
         if isinstance(item, dict) and "context" in item:
             ctx = fake.contexts[item["context"]]
+            if "target" not in p:
+                raise Refusal(422, "ValidationError", "a run on a context names its target",
+                              param="target")  # fmt: skip
+            if p["target"] not in [c["name"] for c in ctx["columns"]]:
+                raise Refusal(422, "ValidationError", f"the context {ctx['name']} has no column "
+                              f"`{p['target']}`", param="target")  # fmt: skip
             data.append({"context": item["context"], "version": item.get("version") or ctx["version"],
                          "name": f"context-{item['context']}", "digest": ctx["digest"], **pinned})  # fmt: skip
         elif isinstance(item, dict):
@@ -1082,6 +1088,7 @@ def runs_post(fake: Fake, call: Call) -> Any:
         "_polls": fake.polls_until_done, "_events": [
             {"at": 1761200000.0, "kind": "created", "body": {"name": p["name"], "base": p["base"]}},
             {"at": 1761200000.0, "kind": "state", "body": {"state": "queued", "reason": None}}],
+        **({"target": p["target"]} if "target" in p else {}),
         "_payload": p,
     }  # fmt: skip
     versions.append(run)
