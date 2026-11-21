@@ -75,7 +75,8 @@ def test_predict_takes_predictor_fields_and_refuses_others(fake):
     assert (
         sent["series"] == ["sku"]
         and sent["horizon"] == 1
-        and sent["task"] == "forecast"
+        and sent["model"] == "general-forecast/chronos-2"
+        and "task" not in sent
     )
     with pytest.raises(gf.InvalidInput) as error:
         gf.models.predict("m", context=frame(2), queries=frame(1), target="y", horizn=3)

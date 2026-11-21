@@ -841,10 +841,15 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
     share = 1 / len(classes)
     predictions = [{"id": i, "label": classes[0],
                     "probabilities": {c: share for c in classes}} for i in range(rows)]  # fmt: skip
-    if payload.get("task") == "regression":
+    # The model decides the task, as gf-server's does; a short name is a classifier's here.
+    task = next(
+        (m["task"] for m in fake.catalog if m["name"] == payload.get("model")),
+        "classification",
+    )
+    if task == "regression":
         predictions = [{"value": 1.5, "quantiles": {str(q): q for q in payload.get("quantiles", [])}}
                        for _ in range(rows)]  # fmt: skip
-    if payload.get("task") == "forecast":
+    if task == "forecast":
         predictions = [{"value": 2.0, "quantiles": {f"{q:g}": q for q in payload.get("quantiles", [])}}
                        for _ in range(rows)]  # fmt: skip
     fake.last_prediction = payload  # type: ignore[attr-defined]
@@ -875,6 +880,11 @@ def predictors_predict(fake: Fake, call: Call, name: str) -> Any:
 
 
 def predict(fake: Fake, call: Call) -> Any:
+    if "task" in call.envelope["payload"]:
+        # As gf-server: the model, resolved for the target column, decides the task.
+        raise Refusal(
+            422, "ValidationError", "task is not a field: the model determines the task"
+        )
     digest = call.envelope["payload"]["context"]["snapshot"]
     if digest not in fake.snapshots:
         raise Refusal(404, "NotFound", f"no snapshot {digest}")
