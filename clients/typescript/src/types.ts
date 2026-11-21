@@ -1505,6 +1505,7 @@ export interface Resolved {
   model: ModelField;
   short: string | null;
   model_digest: Digest;
+  base_digest: Digest | null;
   task: Task;
   context: Name;
   context_version: number | null;
@@ -1518,6 +1519,8 @@ export interface Resolved {
 export interface Revision {
   predictor: Name;
   number: number;
+  status: "pending" | "building" | "ready" | "failed" | "stopped";
+  lock_digest: Digest;
   spec: Spec;
   resolved: Resolved;
   origin: Origin;
