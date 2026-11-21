@@ -733,6 +733,7 @@ class Runs(_Sync):
         tags: Sequence[str] = (),
         wait: bool = False,
         progress: Callable[[FineTuneRun], None] | None = None,
+        poll: float | None = None,
     ) -> FineTuneRun:
         """Starts the run that publishes `name`'s next version, trained afresh from `base`.
 
@@ -748,7 +749,7 @@ class Runs(_Sync):
             _ops.run_create(
                 name, base=base, data=data, method=method, plan=plan, phases=phases,
                 architecture=architecture, evaluation=evaluation, budget=budget,
-                seed=seed, tags=tags, wait=wait, progress=progress,
+                seed=seed, tags=tags, wait=wait, progress=progress, poll=poll,
             )
         )  # fmt: skip
 
@@ -774,13 +775,16 @@ class Runs(_Sync):
         *,
         timeout: float | None = None,
         progress: Callable[[FineTuneRun], None] | None = None,
+        poll: float | None = None,
     ) -> FineTuneRun:
         """Waits for a run to end; `progress` is called with the run at each poll."""
-        return self._run(_ops.run_wait(run, timeout, progress))
+        return self._run(_ops.run_wait(run, timeout, progress, poll))
 
-    def watch(self, run: str | FineTuneRun) -> Iterator[RunEvent]:
+    def watch(
+        self, run: str | FineTuneRun, *, poll: float | None = None
+    ) -> Iterator[RunEvent]:
         """Yields a run's events once each, oldest first, until it ends."""
-        return self._client._iterate(_ops.run_watch(run))
+        return self._client._iterate(_ops.run_watch(run, poll))
 
     def events(self, run: str | FineTuneRun) -> builtins.list[RunEvent]:
         """Every event of a run so far, oldest first."""
@@ -1362,13 +1366,14 @@ class AsyncRuns(_Async):
         tags: Sequence[str] = (),
         wait: bool = False,
         progress: Callable[[FineTuneRun], None] | None = None,
+        poll: float | None = None,
     ) -> FineTuneRun:
         """See `Runs.create`."""
         return await self._run(
             _ops.run_create(
                 name, base=base, data=data, method=method, plan=plan, phases=phases,
                 architecture=architecture, evaluation=evaluation, budget=budget,
-                seed=seed, tags=tags, wait=wait, progress=progress,
+                seed=seed, tags=tags, wait=wait, progress=progress, poll=poll,
             )
         )  # fmt: skip
 
@@ -1394,13 +1399,16 @@ class AsyncRuns(_Async):
         *,
         timeout: float | None = None,
         progress: Callable[[FineTuneRun], None] | None = None,
+        poll: float | None = None,
     ) -> FineTuneRun:
         """See `Runs.wait`."""
-        return await self._run(_ops.run_wait(run, timeout, progress))
+        return await self._run(_ops.run_wait(run, timeout, progress, poll))
 
-    def watch(self, run: str | FineTuneRun) -> AsyncIterator[RunEvent]:
+    def watch(
+        self, run: str | FineTuneRun, *, poll: float | None = None
+    ) -> AsyncIterator[RunEvent]:
         """See `Runs.watch`; iterate it with `async for`."""
-        return self._client._iterate(_ops.run_watch(run))
+        return self._client._iterate(_ops.run_watch(run, poll))
 
     async def events(self, run: str | FineTuneRun) -> builtins.list[RunEvent]:
         """See `Runs.events`."""

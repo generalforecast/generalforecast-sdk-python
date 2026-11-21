@@ -135,11 +135,11 @@ POLL_FIRST = 1.0
 POLL_MAX = 5.0
 
 
-def _poll(attempt: int, poll: float | None = None) -> float:
-    """Seconds before the next check: `poll`, or from 1s rising to 5s when it is None."""
+def _poll(attempt: int, poll: float | None = None, scale: float = 1.0) -> float:
+    """Seconds before the next check: `poll`, or from 1s rising to 5s, times `scale`, when it is None."""
     if poll is not None:
         return poll
-    return min(POLL_FIRST * 1.5**attempt, POLL_MAX)
+    return min(POLL_FIRST * 1.5**attempt, POLL_MAX) * scale
 
 
 def name_of(value: Any, what: str) -> str:
@@ -1870,6 +1870,7 @@ def run_create(
     tags: Sequence[str],
     wait: bool,
     progress: Any,
+    poll: float | None = None,
 ) -> Op:
     """Starts the run that publishes the fine-tune `name`'s next version."""
     _checked_name(name, "fine-tune")
@@ -1939,7 +1940,7 @@ def run_create(
     run = load(FineTuneRun, reply.result)
     if not wait:
         return run
-    return (yield from run_wait(run.model, None, progress))
+    return (yield from run_wait(run.model, None, progress, poll))
 
 
 def _curve(run: FineTuneRun, events: Sequence[RunEvent]) -> FineTuneRun:
@@ -1994,10 +1995,12 @@ FINE_TUNE_STATES_WIRE = (
 )
 
 
-def run_wait(run: Any, timeout: float | None, progress: Any) -> Op:
+def run_wait(
+    run: Any, timeout: float | None, progress: Any, poll: float | None = None
+) -> Op:
     """Polls a run until it ends; raises when it failed. A name follows its latest run as of now."""
     segment = run_segment(run)
-    deadline = _deadline(timeout)
+    deadline = _deadline(timeout, poll)
     attempt = 0
     while True:
         reply = yield _http.runs_get(segment)
@@ -2021,7 +2024,7 @@ def run_wait(run: Any, timeout: float | None, progress: Any) -> Op:
             from generalforecast import _render
 
             yield Say(_render.run_line(found))
-        yield Sleep(_poll(attempt) * 2)
+        yield Sleep(_poll(attempt, poll, scale=2))
         attempt += 1
 
 
@@ -2030,8 +2033,9 @@ def run_events(run: Any) -> Op:
     return (yield from _lineage(run_segment(run)))
 
 
-def run_watch(run: Any) -> Op:
+def run_watch(run: Any, poll: float | None = None) -> Op:
     """Emits each of a run's events once, oldest first, until it ends."""
+    _checked_poll(poll)
     segment = run_segment(run)
     seen = 0
     attempt = 0
@@ -2048,7 +2052,7 @@ def run_watch(run: Any) -> Op:
         seen = max(seen, len(events))
         if found.done:
             return None
-        yield Sleep(_poll(attempt) * 2)
+        yield Sleep(_poll(attempt, poll, scale=2))
         attempt += 1
 
 
