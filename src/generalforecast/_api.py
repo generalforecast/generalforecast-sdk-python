@@ -2191,7 +2191,8 @@ class RunDataContext(Payload):
     """The RunDataContext schema.
 
     a context version a run trains on: `version`, or the latest when it is left out,
-    pinned to that version's snapshot digest when the run is created
+    pinned to that version's snapshot digest when the run is created. Its rows train to
+    predict the run's `target`
     """
 
     context: Name
@@ -2607,6 +2608,7 @@ class Run(Payload):
     created: float
     updated: float
     published: RunPublished | None
+    target: str | None = None
     waiting: RunWaiting | None = None
     phases: tuple[RunPinnedPhase, ...] | None = None
     architecture: tuple[RunResolvedArchitectureChange, ...] | None = None
@@ -2624,6 +2626,7 @@ class Run(Payload):
         Field("attempt", "attempt", True, _integer),
         Field("base", "base", True, _decode_ModelId),
         Field("data", "data", True, _items(_record(RunData))),
+        Field("target", "target", False, _text),
         Field("data_digest", "data_digest", True, _union(_decode_Digest, _null)),
         Field("waiting", "waiting", False, _record(RunWaiting)),
         Field("phases", "phases", False, _items(_record(RunPinnedPhase))),
@@ -2767,6 +2770,7 @@ class RunCreate(Payload):
     base: ModelField
     method: RunMethod
     data: tuple[RunDataItem, ...] | None = None
+    target: str | None = None
     plan: RunPlan | RunCurriculumPlan | None = None
     phases: tuple[RunPhase, ...] | None = None
     architecture: tuple[RunArchitectureChange, ...] | None = None
@@ -2779,6 +2783,7 @@ class RunCreate(Payload):
         Field("name", "name", True, _decode_Name),
         Field("base", "base", True, _decode_ModelField),
         Field("data", "data", False, _items(_decode_RunDataItem)),
+        Field("target", "target", False, _text),
         Field("method", "method", True, _record(RunMethod)),
         Field(
             "plan",
