@@ -462,15 +462,16 @@ def predictors_delete(name: str) -> Request:
 
 
 def predictors_predict(
-    name: str, payload: Mapping[str, Any], queries: pa.Table
+    name: str, env: str, payload: Mapping[str, Any], queries: pa.Table
 ) -> Request:
-    """Scores one part of the queries with a predictor."""
+    """Scores one part of the queries with a predictor's `env` environment."""
     return Request(
         "POST",
         f"/predictors/{_segment(name)}/predict",
         "predictor",
         name,
         payload=payload,
+        params={"env": env},
         arrow=queries,
         retry=True,
         respond_async=True,

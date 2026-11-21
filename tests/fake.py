@@ -864,6 +864,13 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
 
 
 def predictors_predict(fake: Fake, call: Call, name: str) -> Any:
+    # The environment rides in the query; the payload holds only `as_of`, and
+    # gf-server refuses any other field as the engine does.
+    assert set(call.query) <= {"env"}, (
+        "a predictor call names its environment in the query"
+    )
+    if call.envelope is not None and not call.envelope["payload"].keys() <= {"as_of"}:
+        raise Refusal(422, "ValidationError", "unknown fields are not supported")
     return _answer(fake, call, name)
 
 

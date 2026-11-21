@@ -133,6 +133,9 @@ def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
     calls = adult.calls_to("POST", r".*/predictors/adult-income/predict")
     assert len(calls) > 1
     assert sum(c.table.num_rows for c in calls) == 100
+    # The environment is a query parameter; the payload carries no `env`.
+    assert {c.query["env"] for c in calls} == {"production"}
+    assert all("env" not in c.envelope["payload"] for c in calls)
     assert all(
         c.headers["content-type"] == "application/vnd.apache.arrow.stream"
         and c.headers["accept"].startswith("application/vnd.apache.arrow.stream")
