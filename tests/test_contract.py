@@ -28,6 +28,8 @@ from tests import contract, fake
 
 def test_every_route_the_fake_serves_is_a_route_of_the_contract():
     for method, pattern, handler in fake.ROUTES:
+        if pattern.startswith("/uploads/"):
+            continue  # an upload URL is the object store's, outside the API
         path = re.sub(
             r"\(\[\^/\]\+\)|\(\\d\+\)|\(\.\+\)|\((\w+)\|[\w|]+\)",
             lambda m: m[1] or "x1",
@@ -73,3 +75,34 @@ def test_the_sdk_reads_a_model_and_a_prediction_as_the_contract_writes_them():
     predictions = _ops.predictions_of(reply)
     assert predictions.rows == 2 and predictions.context.rows == 1840
     assert predictions.context.used == "exact"
+
+
+# Request examples the contract gives as what a route refuses.
+REFUSED = {("predictors.predict", "declared"), ("predictors.predict", "context"),
+           ("snapshots.create_synthetic", "unknown_field"), ("snapshots.update", "digest")}  # fmt: skip
+
+
+def test_the_contracts_examples_keep_to_its_schemas():
+    broken = []
+    for op in contract.operations():
+        for status, reply in op.body.get("responses", {}).items():
+            content = (
+                contract._resolved(reply).get("content", {}).get("application/json", {})
+            )
+            for name, example in content.get("examples", {}).items():
+                if status.isdigit() and contract.reply_problems(
+                    op, int(status), example["value"]
+                ):
+                    broken.append((op.id, name))
+        request = op.body.get("requestBody")
+        content = (
+            contract._resolved(request or {})
+            .get("content", {})
+            .get("application/json", {})
+        )
+        for name, example in content.get("examples", {}).items():
+            if (op.id, name) not in REFUSED and contract.request_problems(
+                op, example["value"]
+            ):
+                broken.append((op.id, name))
+    assert broken == []

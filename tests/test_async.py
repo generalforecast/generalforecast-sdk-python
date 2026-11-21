@@ -18,14 +18,20 @@ def test_every_sync_method_has_an_async_twin():
         (resources.Sources, resources.AsyncSources),
         (resources.Keys, resources.AsyncKeys),
         (resources.Models, resources.AsyncModels),
+        (resources.Snapshots, resources.AsyncSnapshots),
+        (resources.Runs, resources.AsyncRuns),
     ]
     for sync, asynchronous in pairs:
         for name, method in inspect.getmembers(sync, inspect.isfunction):
             if name.startswith("_"):
                 continue
             twin = getattr(asynchronous, name)
+            ours, theirs = inspect.signature(twin), inspect.signature(method)
+            assert ours.parameters == theirs.parameters, (sync.__name__, name)
+            if name == "watch":
+                continue
             assert inspect.iscoroutinefunction(twin), (sync.__name__, name)
-            assert inspect.signature(twin) == inspect.signature(method), (
+            assert ours.return_annotation == theirs.return_annotation, (
                 sync.__name__,
                 name,
             )
