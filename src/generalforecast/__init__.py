@@ -3,8 +3,8 @@
 
 """General Forecast: the Python SDK for structured data foundation models.
 
-`gf.contexts`, `gf.experiments`, `gf.predictors`, `gf.sources`, `gf.keys`
-and `gf.models` are the resources of a default `Client`, built on first
+`gf.contexts`, `gf.experiments`, `gf.predictors`, `gf.fine_tunes`,
+`gf.sources`, `gf.keys` and `gf.models` are the resources of a default `Client`, built on first
 use; `gf.login()` logs the process in. `gf.Client` and `gf.AsyncClient`
 make clients of your own. Everything loads on first use, so
 `import generalforecast` stays cheap.
@@ -43,15 +43,27 @@ if TYPE_CHECKING:
     from generalforecast.resources import (
         Contexts,
         Experiments,
+        FineTunes,
         Keys,
         Models,
         Predictors,
         Sources,
     )
     from generalforecast.types import STANDARD_PERMISSIONS as STANDARD_PERMISSIONS
+    from generalforecast.types import ArchitectureChange as ArchitectureChange
+    from generalforecast.types import Budget as Budget
+    from generalforecast.types import Evaluation as Evaluation
+    from generalforecast.types import Full as Full
     from generalforecast.types import Holdout as Holdout
+    from generalforecast.types import InputAdapter as InputAdapter
+    from generalforecast.types import LoRA as LoRA
+    from generalforecast.types import Missing as Missing
+    from generalforecast.types import Phase as Phase
+    from generalforecast.types import Plan as Plan
     from generalforecast.types import Predictor as Predictor
+    from generalforecast.types import Range as Range
     from generalforecast.types import Selection as Selection
+    from generalforecast.types import Tag as Tag
 
     __version__: str
     contexts: Contexts
@@ -60,26 +72,38 @@ if TYPE_CHECKING:
     sources: Sources
     keys: Keys
     models: Models
+    fine_tunes: FineTunes
 
 __all__ = [
     "STANDARD_PERMISSIONS",
     "AmbiguousReference",
+    "ArchitectureChange",
     "AsyncClient",
+    "Budget",
     "CapacityExceeded",
     "Classifier",
     "Client",
     "Conflict",
     "Error",
+    "Evaluation",
     "Forecaster",
+    "Full",
     "Holdout",
+    "InputAdapter",
     "Internal",
     "InvalidInput",
+    "LoRA",
+    "Missing",
     "ModelNotReady",
     "NotFound",
     "PaymentRequired",
+    "Phase",
+    "Plan",
     "Predictor",
+    "Range",
     "Regressor",
     "Selection",
+    "Tag",
     "Timeout",
     "Unauthorized",
     "Unavailable",
@@ -88,6 +112,7 @@ __all__ = [
     "contexts",
     "errors",
     "experiments",
+    "fine_tunes",
     "keys",
     "login",
     "logout",
@@ -110,6 +135,17 @@ _EXPORTS = {
     "Predictor": ("generalforecast.types", "Predictor"),
     "Holdout": ("generalforecast.types", "Holdout"),
     "Selection": ("generalforecast.types", "Selection"),
+    "ArchitectureChange": ("generalforecast.types", "ArchitectureChange"),
+    "Budget": ("generalforecast.types", "Budget"),
+    "Evaluation": ("generalforecast.types", "Evaluation"),
+    "Full": ("generalforecast.types", "Full"),
+    "InputAdapter": ("generalforecast.types", "InputAdapter"),
+    "LoRA": ("generalforecast.types", "LoRA"),
+    "Missing": ("generalforecast.types", "Missing"),
+    "Phase": ("generalforecast.types", "Phase"),
+    "Plan": ("generalforecast.types", "Plan"),
+    "Range": ("generalforecast.types", "Range"),
+    "Tag": ("generalforecast.types", "Tag"),
     "STANDARD_PERMISSIONS": ("generalforecast.types", "STANDARD_PERMISSIONS"),
     "errors": ("generalforecast.errors", None),
     "types": ("generalforecast.types", None),
@@ -117,7 +153,7 @@ _EXPORTS = {
 
 # The default client's resources; looked up on each use, so a new login takes effect.
 _RESOURCES = frozenset(
-    {"contexts", "experiments", "predictors", "sources", "keys", "models"}
+    {"contexts", "experiments", "predictors", "sources", "keys", "models", "fine_tunes"}
 )
 
 

@@ -20,8 +20,11 @@ if TYPE_CHECKING:
         Context,
         Entry,
         Experiment,
+        FineTuneRun,
         PredictorInfo,
         Run,
+        Snapshot,
+        SyntheticBatch,
     )
 
 WIDTH = 100
@@ -63,9 +66,27 @@ def seconds(value: float) -> str:
     return f"{hours}h{minutes:02d}m"
 
 
+def spaced(value: float) -> str:
+    """A long duration with spaces, as a run's line shows it: `2m 10s`."""
+    total = round(value)
+    if total < 60:
+        return f"{total}s"
+    minutes, rest = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {rest}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
 def number(value: float | None, digits: int = 3) -> str:
     """A score to `digits` decimals, or empty."""
     return "" if value is None else f"{value:.{digits}f}"
+
+
+def credits(value: float) -> str:
+    """Credits as a short count: `31 credits`, `0.4 credits`."""
+    text = f"{value:,.0f}" if value >= 10 else f"{value:.1f}".rstrip("0").rstrip(".")
+    return f"{text or '0'} credits"
 
 
 def table(
@@ -336,3 +357,110 @@ def predictor_html(info: PredictorInfo) -> str:
             numeric=(1, 3, 4),
         )
     return f"<div>{body}{_link(info.url)}</div>"
+
+
+def run_line(run: FineTuneRun) -> str:
+    """`credit-default@ft2  running  step 340/1,000  loss 0.412  val 0.398 (base 0.421)  2m 10s  31 credits`."""
+    model = run.model.split("/")[-1] or run.name
+    parts = [model, run.state]
+    if run.state == "queued" and run.waiting:
+        parts.append(f"waiting for {run.waiting:,} tables")
+    if run.phase:
+        parts.append(f"phase {run.phase}")
+    if run.state != "queued":
+        if run.steps:
+            parts.append(f"step {run.step:,}/{run.steps:,}")
+        elif run.step:
+            parts.append(f"step {run.step:,}")
+    if run.loss is not None:
+        parts.append(f"loss {run.loss:.3f}")
+    if run.validation_loss is not None:
+        val = f"val {run.validation_loss:.3f}"
+        if run.base_validation_loss is not None:
+            val += f" (base {run.base_validation_loss:.3f})"
+        parts.append(val)
+    if run.seconds:
+        parts.append(spaced(run.seconds))
+    if run.credits:
+        parts.append(credits(run.credits))
+    if run.error:
+        parts.append(f"error: {run.error}")
+    return "  ".join(parts)
+
+
+def loss_chart(run: FineTuneRun, *, width: int = 360, height: int = 120) -> str:
+    """An inline SVG of a run's loss and validation loss, with the base's line."""
+    points = [p for p in run.curve if p[1] is not None]
+    if len(points) < 2:
+        return ""
+    values = [p[1] for p in points] + [p[2] for p in points if p[2] is not None]
+    if run.base_validation_loss is not None:
+        values.append(run.base_validation_loss)
+    low, high = min(values), max(values)
+    span = (high - low) or 1.0
+    first, last = points[0][0], points[-1][0]
+    steps = (last - first) or 1
+
+    def xy(step: float, value: float) -> str:
+        x = 4 + (step - first) / steps * (width - 8)
+        y = 4 + (high - value) / span * (height - 8)
+        return f"{x:.1f},{y:.1f}"
+
+    loss = " ".join(xy(s, v) for s, v, _ in points)
+    val = " ".join(xy(s, v) for s, _, v in points if v is not None)
+    lines = [
+        f'<polyline fill="none" stroke="#2563eb" stroke-width="1.5" points="{loss}"/>'
+    ]
+    if val:
+        lines.append(
+            f'<polyline fill="none" stroke="#d97706" stroke-width="1.5" points="{val}"/>'
+        )
+    if run.base_validation_loss is not None:
+        y = xy(first, run.base_validation_loss).split(",")[1]
+        lines.append(
+            f'<line x1="4" x2="{width - 4}" y1="{y}" y2="{y}" stroke="#737373" '
+            'stroke-dasharray="4 3" stroke-width="1"/>'
+        )
+    legend = (
+        '<div style="font-size:12px;color:#525252">'
+        '<span style="color:#2563eb">loss</span>&nbsp;&nbsp;'
+        '<span style="color:#d97706">validation loss</span>&nbsp;&nbsp;'
+        "dashed: base</div>"
+    )
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="loss by step">{"".join(lines)}</svg>{legend}'
+    )
+
+
+def run_html(run: FineTuneRun) -> str:
+    """A run's status line and loss chart as HTML."""
+    return f"<div>{_title(run_line(run))}{loss_chart(run)}{_link(run.url)}</div>"
+
+
+def snapshot_line(snapshot: Snapshot) -> str:
+    """`Snapshot credit-2026-01  ready  500,000 rows  12 columns  classification, target defaulted`."""
+    parts = [f"Snapshot {snapshot.name}", snapshot.state]
+    if snapshot.rows is not None:
+        parts.append(f"{snapshot.rows:,} rows")
+    if snapshot.columns:
+        parts.append(f"{len(snapshot.columns)} columns")
+    if snapshot.task:
+        parts.append(
+            f"{snapshot.task}, target {snapshot.target}"
+            if snapshot.target
+            else snapshot.task
+        )
+    if snapshot.tags:
+        parts.append("tags " + ", ".join(snapshot.tags))
+    return "  ".join(parts)
+
+
+def batch_line(batch: SyntheticBatch) -> str:
+    """`SyntheticBatch credit-warmup  pending  64 tables  12 ready, 52 pending`."""
+    parts = [f"SyntheticBatch {batch.name}", batch.state, f"{batch.count:,} tables"]
+    counts = ", ".join(f"{n:,} {state}" for state, n in batch.counts.items() if n)
+    if counts:
+        parts.append(counts)
+    parts.append(f"tag {batch.tag}")
+    return "  ".join(parts)

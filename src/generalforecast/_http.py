@@ -504,6 +504,119 @@ def estimate(payload: Mapping[str, Any]) -> Request:
     )
 
 
+def snapshots_open(payload: Mapping[str, Any]) -> Request:
+    """Opens a resumable Parquet upload of a training snapshot (3.8b)."""
+    return Request(
+        "POST", "/snapshots", "snapshot", payload["name"], payload=payload, retry=True
+    )
+
+
+def snapshots_stream(name: str, metadata: Mapping[str, str], body: bytes) -> Request:
+    """Sends a small training snapshot as one Arrow stream, ready at once."""
+    return Request(
+        "POST",
+        "/snapshots",
+        "snapshot",
+        name,
+        params={"name": name, **metadata},
+        body=body,
+        content_type=ARROW,
+        retry=True,
+    )
+
+
+def snapshots_bytes(name: str, chunk: bytes, offset: int, total: int) -> Request:
+    """Sends one chunk of a snapshot upload when the service gave no signed URL."""
+    end = offset + len(chunk) - 1
+    return Request(
+        "POST",
+        f"/snapshots/{_segment(name)}/bytes",
+        "snapshot",
+        name,
+        body=chunk,
+        content_type=OCTETS,
+        headers={"Content-Range": f"bytes {offset}-{end}/{total}"},
+    )
+
+
+def snapshots_get(name: str) -> Request:
+    """Reads a training snapshot."""
+    return Request("GET", f"/snapshots/{_segment(name)}", "snapshot", name)
+
+
+def snapshots_list(tag: str | None) -> Request:
+    """Lists training snapshots, or those carrying a tag."""
+    return Request("GET", "/snapshots", "snapshot", "snapshots", params=_query(tag=tag))
+
+
+def snapshots_tag(name: str, tags: list[str]) -> Request:
+    """Replaces a snapshot's tags."""
+    return Request(
+        "POST",
+        f"/snapshots/{_segment(name)}/update",
+        "snapshot",
+        name,
+        payload={"tags": tags},
+        retry=True,
+    )
+
+
+def snapshots_delete(name: str) -> Request:
+    """Deletes a training snapshot; its name stays taken."""
+    return Request(
+        "POST", f"/snapshots/{_segment(name)}/delete", "snapshot", name, payload={}
+    )
+
+
+def synthetic_create(payload: Mapping[str, Any]) -> Request:
+    """Generates a synthetic batch; the same batch again returns it."""
+    return Request(
+        "POST",
+        "/snapshots/synthetic",
+        "snapshot",
+        payload["name"],
+        payload=payload,
+        retry=True,
+    )
+
+
+def synthetic_get(name: str) -> Request:
+    """Reads a synthetic batch and its tables' states."""
+    return Request("GET", f"/snapshots/synthetic/{_segment(name)}", "snapshot", name)
+
+
+def runs_create(payload: Mapping[str, Any]) -> Request:
+    """Starts a run of the fine-tune's next version; retried under its request id."""
+    return Request("POST", "/runs", "run", payload["name"], payload=payload, retry=True)
+
+
+def runs_list(params: Mapping[str, Any]) -> Request:
+    """Lists runs by name, state, data digest or tag."""
+    return Request("GET", "/runs", "run", "runs", params=_query(**params))
+
+
+def runs_get(run: str) -> Request:
+    """Reads a run, `NAME@ftN`, or a name's latest run."""
+    return Request("GET", f"/runs/{_segment(run)}", "run", run)
+
+
+def runs_lineage(run: str) -> Request:
+    """Reads every event of a run, oldest first."""
+    return Request("GET", f"/runs/{_segment(run)}/lineage", "run", run)
+
+
+def runs_cancel(run: str, save: bool) -> Request:
+    """Cancels a run; with `save` it publishes what it trained."""
+    return Request(
+        "POST",
+        f"/runs/{_segment(run)}/cancel",
+        "run",
+        run,
+        payload={"save": True} if save else {},
+        retry=True,
+    )
+
+
 def sources_list() -> Request:
     """Lists sources."""
     return Request("GET", "/sources", "source", "sources")

@@ -40,29 +40,44 @@ from generalforecast.types import (
     SOURCE_KINDS,
     STANDARD_PERMISSIONS,
     TASKS,
+    ArchitectureChange,
+    Budget,
     Context,
     ContextUse,
     Deploy,
     Environment,
     Estimate,
+    Evaluation,
     Experiment,
+    FineTuneRun,
+    Full,
     Holdout,
+    InputAdapter,
     Key,
     LargeContext,
     Limits,
     LogEntry,
     Logs,
+    LoRA,
     Me,
+    Missing,
     Model,
     NewKey,
+    Phase,
+    Plan,
     Predictions,
     Predictor,
     PredictorInfo,
+    Range,
     Revision,
     Run,
+    RunEvent,
     Slice,
+    Snapshot,
     Source,
     SourceTable,
+    SyntheticBatch,
+    Tag,
     Timing,
     TrainedOn,
     WriteReceipt,
@@ -1437,3 +1452,518 @@ def predict_estimate(
         payload["task"] = _task(task)
     reply = yield _http.estimate(payload)
     return estimate_of(reply.result or {})
+
+
+STREAM_ROWS = 100_000
+STREAM_BYTES = 32 * 1024 * 1024
+UPLOAD_DONE = ("ready", "rejected", "expired")
+
+
+def snapshot_create(
+    name: str, data: Any, tags: Sequence[str], metadata: Mapping[str, Any]
+) -> Op:
+    """Uploads a training snapshot: one Arrow stream when small, else a chunked Parquet upload."""
+    _checked_name(name, "snapshot")
+    meta = {k: v for k, v in metadata.items() if v is not None}
+    if "task" in meta:
+        _task(meta["task"])
+    if ("target" in meta) != ("task" in meta):
+        raise InvalidInput(
+            "a snapshot's training metadata names target= and task= together",
+            param="target" if "target" not in meta else "task",
+        )
+    rows = _data.table(data)
+    body = _data.stream(rows)
+    if rows.num_rows <= STREAM_ROWS and len(body) <= STREAM_BYTES:
+        yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(body))}")
+        reply = yield _http.snapshots_stream(name, meta, body)
+        found = load(Snapshot, reply.result)
+        if tags:
+            reply = yield _http.snapshots_tag(name, [*found.tags, *tags])
+            found = load(Snapshot, reply.result)
+        return found
+    parquet = _data.parquet(rows)
+    payload: dict[str, Any] = {
+        "name": name,
+        "bytes": len(parquet),
+        "format": "parquet",
+        "metadata": meta,
+    }
+    if tags:
+        payload["tags"] = list(tags)
+    reply = yield _http.snapshots_open(payload)
+    opened = reply.result or {}
+    url = opened.get("url")
+    chunk = int(opened.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
+    yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(parquet))}")
+    for offset in range(0, len(parquet), chunk):
+        piece = parquet[offset : offset + chunk]
+        if url:
+            yield _http.upload_chunk(url, piece, offset, len(parquet))
+        else:
+            yield _http.snapshots_bytes(name, piece, offset, len(parquet))
+    found = load(Snapshot, opened)
+    attempt = 0
+    while found.state not in UPLOAD_DONE:
+        yield Say(f"Verifying {name}")
+        yield Sleep(_poll(attempt))
+        attempt += 1
+        reply = yield _http.snapshots_get(name)
+        found = load(Snapshot, reply.result)
+    if found.state != "ready":
+        raise InvalidInput(
+            f"snapshot {name} was {found.state}"
+            + (f": {found.error}" if found.error else "")
+        )
+    return found
+
+
+def snapshot_get(snapshot: Any) -> Op:
+    """Reads a training snapshot."""
+    reply = yield _http.snapshots_get(name_of(snapshot, "snapshot"))
+    return load(Snapshot, reply.result)
+
+
+def snapshot_list(tag: str | None) -> Op:
+    """Lists training snapshots, or those carrying `tag`."""
+    reply = yield _http.snapshots_list(tag)
+    return loads(Snapshot, (reply.result or {}).get("snapshots"))
+
+
+def snapshot_tag(snapshot: Any, tags: Sequence[str]) -> Op:
+    """Replaces a snapshot's tags."""
+    if isinstance(tags, str):
+        tags = [tags]
+    reply = yield _http.snapshots_tag(name_of(snapshot, "snapshot"), list(tags))
+    return load(Snapshot, reply.result)
+
+
+def snapshot_delete(snapshot: Any) -> Op:
+    """Deletes a training snapshot."""
+    yield _http.snapshots_delete(name_of(snapshot, "snapshot"))
+
+
+SYNTHETIC_BOUNDS: dict[str, tuple[type, float, float]] = {
+    "rows": (int, 64, 50_000),
+    "columns": (int, 2, 100),
+    "classes": (int, 2, 10),
+    "graph_nodes": (int, 2, 64),
+    "irrelevant_columns": (float, 0, 0.9),
+    "high_cardinality_columns": (int, 0, 3),
+}
+SYNTHETIC_GROUPS: dict[str, tuple[str, ...]] = {
+    "categorical": ("share", "max_categories"),
+    "correlated_columns": ("share", "groups", "strength"),
+    "coarsened_columns": ("share", "levels"),
+    "missing": ("rate", "patterns"),
+    "target": ("noise", "label_noise", "imbalance", "heavy_tail"),
+}
+SYNTHETIC_LISTS = ("functions",)
+REJECT = ("trivial", "unlearnable")
+
+
+def _bounded(key: str, value: Any) -> Any:
+    kind, low, high = SYNTHETIC_BOUNDS[key]
+    if isinstance(value, tuple) and len(value) == 2:
+        value = Range(*value)
+    if isinstance(value, Range):
+        for end in (value.min, value.max):
+            _bounded(key, end)
+        return {"min": kind(value.min), "max": kind(value.max)}
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidInput(f"`{key}` is a number or a gf.Range", param=key)
+    if kind is int and int(value) != value:
+        raise InvalidInput(f"`{key}` is a whole number", param=key)
+    if not low <= value <= high:
+        raise InvalidInput(
+            f"`{key}` {value:g} is outside {low:g} to {high:g}",
+            param=key,
+            limit=high,
+            actual=value,
+        )
+    return kind(value)
+
+
+def synthetic_options(
+    *,
+    task: str | None,
+    rows: Any,
+    columns: Any,
+    classes: Any,
+    missing: Missing | Mapping[str, Any] | None,
+    reject: Sequence[str],
+    generator: Mapping[str, Any],
+) -> dict[str, Any]:
+    """The generator's options, each checked against the service's bounds."""
+    options: dict[str, Any] = {}
+    if task is not None:
+        if task not in ("classification", "regression"):
+            raise InvalidInput(
+                "a synthetic batch is for classification or regression", param="task"
+            )
+        options["task"] = task
+    for key, value in (("rows", rows), ("columns", columns), ("classes", classes)):
+        if value is not None:
+            options[key] = _bounded(key, value)
+    if missing is not None:
+        options["missing"] = (
+            missing.to_json() if isinstance(missing, Missing) else dict(missing)
+        )
+    for item in reject:
+        if item not in REJECT:
+            raise InvalidInput(
+                f"`{item}` is not a reject rule", hint="trivial or unlearnable"
+            )
+    if reject:
+        options["reject"] = list(reject)
+    known = (*SYNTHETIC_BOUNDS, *SYNTHETIC_GROUPS, *SYNTHETIC_LISTS)
+    for key, value in generator.items():
+        if key in SYNTHETIC_BOUNDS:
+            options[key] = _bounded(key, value)
+        elif key in SYNTHETIC_GROUPS:
+            if not isinstance(value, Mapping):
+                raise InvalidInput(f"`{key}` is a mapping of settings", param=key)
+            for inner in value:
+                if inner not in SYNTHETIC_GROUPS[key]:
+                    raise InvalidInput(
+                        f"`{key}` has no setting `{inner}`",
+                        hint="its settings are " + ", ".join(SYNTHETIC_GROUPS[key]),
+                        param=key,
+                    )
+            options[key] = {
+                k: v.to_json() if isinstance(v, Range) else v for k, v in value.items()
+            }
+        elif key in SYNTHETIC_LISTS:
+            options[key] = list(value)
+        else:
+            raise InvalidInput(
+                f"the generator has no setting `{key}`",
+                hint=_suggest(key, known) or "settings are " + ", ".join(sorted(known)),
+                param=key,
+            )
+    return options
+
+
+def synthetic_create(
+    name: str,
+    *,
+    count: int,
+    seed: int | None,
+    like: Any,
+    tags: Sequence[str],
+    options: Mapping[str, Any],
+) -> Op:
+    """Generates a synthetic batch of `count` tables."""
+    _checked_name(name, "batch")
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 64:
+        raise InvalidInput(
+            "count is 1 to 64 tables", param="count", limit=64, actual=count
+        )
+    payload: dict[str, Any] = {"name": name, **options}
+    if count != 1:
+        payload["count"] = count
+    if seed is not None:
+        payload["seed"] = seed
+    if like is not None:
+        payload["schema_from"] = name_of(like, "snapshot")
+    if tags:
+        payload["tags"] = list(tags)
+    reply = yield _http.synthetic_create(payload)
+    return load(SyntheticBatch, reply.result)
+
+
+def synthetic_get(batch: Any) -> Op:
+    """Reads a synthetic batch and its tables' states."""
+    reply = yield _http.synthetic_get(name_of(batch, "batch"))
+    return load(SyntheticBatch, reply.result)
+
+
+RUN_REF = re.compile(
+    r"^(?:[a-z][a-z0-9-]{0,62}/)?([a-z][a-z0-9-]{0,62}(?:@ft[1-9]\d*)?)$"
+)
+
+
+def run_segment(run: Any) -> str:
+    """A run's path segment: `NAME@ftN`, or `NAME` for its latest run."""
+    if isinstance(run, FineTuneRun):
+        run = run.model
+    found = RUN_REF.match(run) if isinstance(run, str) else None
+    if found is None:
+        raise InvalidInput(
+            f"`{run}` is not a run",
+            hint="a run is NAME@ftN, or NAME for its latest run",
+            param="run",
+        )
+    return found[1]
+
+
+def _found(request: _http.Request) -> Op:
+    try:
+        reply = yield request
+    except NotFound:
+        return None
+    return reply.result
+
+
+def data_item(item: Any) -> Op:
+    """A run's `data` item from a snapshot, a batch, a context or a tag."""
+    if isinstance(item, Tag):
+        return {"tag": item.tag}
+    if isinstance(item, SyntheticBatch):
+        return {"tag": item.tag}
+    if isinstance(item, Snapshot):
+        return item.name
+    if isinstance(item, Context):
+        return {
+            "context": item.name,
+            **({"version": item.version} if item.version else {}),
+        }
+    if not isinstance(item, str) or not item:
+        raise InvalidInput(
+            "data holds snapshots, batches, contexts or gf.Tag", param="data"
+        )
+    if item.startswith("tag:"):
+        return {"tag": item[4:]}
+    if "@" in item:
+        name, version = split_ref(item)
+        return {"context": name, "version": version}
+    snapshot = yield from _found(_http.snapshots_get(item))
+    batch = yield from _found(_http.synthetic_get(item))
+    context = yield from _found(_http.contexts_get(item))
+    found = [
+        kind
+        for kind, value in (
+            ("snapshot", snapshot),
+            ("batch", batch),
+            ("context", context),
+        )
+        if value is not None
+    ]
+    if not found:
+        raise NotFound(
+            f"no snapshot, batch or context named `{item}`",
+            hint="gf.fine_tunes.snapshots.list() and gf.contexts.list() show them",
+            param="data",
+        )
+    if len(found) > 1:
+        raise AmbiguousReference(
+            f"`{item}` names a {' and a '.join(found)}",
+            hint="pass the object itself, or gf.Tag(...) for a tag",
+            param="data",
+        )
+    if found[0] == "snapshot":
+        return item
+    if found[0] == "batch":
+        return {"tag": load(SyntheticBatch, batch).tag}
+    return {"context": item}
+
+
+def _data_items(items: Sequence[Any]) -> Op:
+    out = []
+    for item in items:
+        out.append((yield from data_item(item)))
+    return out
+
+
+def run_create(
+    name: str,
+    *,
+    base: str,
+    data: Sequence[Any] | None,
+    method: Any,
+    plan: Plan | None,
+    phases: Sequence[Phase] | None,
+    architecture: Sequence[ArchitectureChange],
+    evaluation: Evaluation | None,
+    budget: Budget | None,
+    seed: int | None,
+    tags: Sequence[str],
+    wait: bool,
+    progress: Any,
+) -> Op:
+    """Starts the run that publishes the fine-tune `name`'s next version."""
+    _checked_name(name, "fine-tune")
+    if not isinstance(base, str) or not base:
+        raise InvalidInput("a run needs base=, the model it trains from", param="base")
+    if (data is None) == (phases is None):
+        raise InvalidInput(
+            "a run takes data= or phases=, one of them",
+            hint="data= trains on tables; phases= trains a curriculum",
+        )
+    if not isinstance(method, (LoRA, InputAdapter, Full)):
+        raise InvalidInput(
+            "method is gf.LoRA(), gf.InputAdapter() or gf.Full()", param="method"
+        )
+    if plan is not None and not isinstance(plan, Plan):
+        raise InvalidInput("plan is a gf.Plan", param="plan")
+    payload: dict[str, Any] = {"name": name, "base": base, "method": method.to_json()}
+    if data is not None:
+        if plan is None or plan.steps is None:
+            raise InvalidInput(
+                "a run on data= needs plan= with its steps",
+                hint="pass plan=gf.Plan(steps=200)",
+                param="plan",
+            )
+        items = (
+            [data]
+            if isinstance(data, (str, Context, Snapshot, SyntheticBatch, Tag))
+            else list(data)
+        )
+        if not items:
+            raise InvalidInput("data= names at least one table", param="data")
+        payload["data"] = yield from _data_items(items)
+    else:
+        phases = list(phases or ())
+        if not 1 <= len(phases) <= 16:
+            raise InvalidInput("a curriculum has 1 to 16 phases", param="phases")
+        out = []
+        for phase in phases:
+            if not isinstance(phase, Phase):
+                raise InvalidInput("phases are gf.Phase", param="phases")
+            phase_plan: dict[str, Any] = {"steps": phase.steps}
+            if phase.episode_rows is not None:
+                phase_plan["episode_sampling"] = {"rows": phase.episode_rows}
+            if phase.episodes_per_step is not None:
+                phase_plan["episodes_per_step"] = phase.episodes_per_step
+            items = [phase.data] if isinstance(phase.data, str) else list(phase.data)
+            refs = yield from _data_items(items)
+            out.append({"name": phase.name, "data": refs, "plan": phase_plan})
+        payload["phases"] = out
+    if plan is not None:
+        payload["plan"] = plan.to_json()
+    if architecture:
+        if any(not isinstance(a, ArchitectureChange) for a in architecture):
+            raise InvalidInput(
+                "architecture holds gf.ArchitectureChange", param="architecture"
+            )
+        payload["architecture"] = [a.to_json() for a in architecture]
+    if evaluation is not None:
+        payload["evaluation"] = evaluation.to_json()
+    if budget is not None:
+        payload["budget"] = budget.to_json()
+    if seed is not None:
+        payload["seed"] = seed
+    if tags:
+        payload["tags"] = list(tags)
+    reply = yield _http.runs_create(payload)
+    run = load(FineTuneRun, reply.result)
+    if not wait:
+        return run
+    return (yield from run_wait(run.model, None, progress))
+
+
+def _curve(run: FineTuneRun, events: Sequence[RunEvent]) -> FineTuneRun:
+    points = []
+    for event in events:
+        body = event.body
+        step = body.get("step", body.get("steps"))
+        if (
+            event.kind == "metrics"
+            and step is not None
+            and body.get("loss") is not None
+        ):
+            points.append((int(step), float(body["loss"]), body.get("validation_loss")))
+    return replace(run, curve=tuple(points)) if points else run
+
+
+def _lineage(segment: str) -> Op:
+    reply = yield _http.runs_lineage(segment)
+    return loads(RunEvent, (reply.result or {}).get("events"))
+
+
+def run_get(run: Any) -> Op:
+    """A run, with its loss curve."""
+    segment = run_segment(run)
+    reply = yield _http.runs_get(segment)
+    found = load(FineTuneRun, reply.result)
+    events = yield from _lineage(run_segment(found.model) if found.model else segment)
+    return _curve(found, events)
+
+
+def run_list(params: Mapping[str, Any]) -> Op:
+    """Lists runs; `name` keeps one fine-tune's."""
+    if params.get("state") is not None and params["state"] not in FINE_TUNE_STATES_WIRE:
+        raise InvalidInput(f"`{params['state']}` is not a run state", param="state")
+    reply = yield _http.runs_list(params)
+    found = loads(FineTuneRun, (reply.result or {}).get("runs"))
+    if params.get("name"):
+        found = [r for r in found if r.name == params["name"]]
+    return found
+
+
+FINE_TUNE_STATES_WIRE = (
+    "queued",
+    "setting_up",
+    "training",
+    "preempted",
+    "running",
+    "finished",
+    "cancelling",
+    "cancelled",
+    "failed",
+)
+
+
+def run_wait(run: Any, timeout: float | None, progress: Any) -> Op:
+    """Polls a run until it ends; raises when it failed. A name follows its latest run as of now."""
+    segment = run_segment(run)
+    deadline = _deadline(timeout)
+    attempt = 0
+    while True:
+        reply = yield _http.runs_get(segment)
+        found = load(FineTuneRun, reply.result)
+        if found.model:
+            segment = run_segment(found.model)
+        if progress is not None:
+            yield Notify(progress, found)
+        if found.done:
+            found = _curve(found, (yield from _lineage(segment)))
+            if found.state == "failed":
+                raise failed(f"run {segment} failed", found.error, code="RunFailed")
+            return found
+        if _past(deadline):
+            raise _not_done(
+                f"run {segment}",
+                timeout,
+                f"gf.fine_tunes.runs.wait({segment!r}) picks it up again",
+            )
+        if progress is None:
+            from generalforecast import _render
+
+            yield Say(_render.run_line(found))
+        yield Sleep(_poll(attempt) * 2)
+        attempt += 1
+
+
+def run_events(run: Any) -> Op:
+    """Every event of a run, oldest first."""
+    return (yield from _lineage(run_segment(run)))
+
+
+def run_watch(run: Any) -> Op:
+    """Emits each of a run's events once, oldest first, until it ends."""
+    segment = run_segment(run)
+    seen = 0
+    attempt = 0
+    while True:
+        reply = yield _http.runs_get(segment)
+        found = load(FineTuneRun, reply.result)
+        if found.model:
+            segment = run_segment(found.model)
+        events = yield from _lineage(segment)
+        for event in events[seen:]:
+            yield Emit(event)
+        if len(events) > seen:
+            attempt = 0
+        seen = max(seen, len(events))
+        if found.done:
+            return None
+        yield Sleep(_poll(attempt) * 2)
+        attempt += 1
+
+
+def run_cancel(run: Any, save: bool) -> Op:
+    """Cancels a run; with `save`, one that is training publishes what it has."""
+    segment = run_segment(run)
+    reply = yield _http.runs_cancel(segment, bool(save))
+    return load(FineTuneRun, reply.result)

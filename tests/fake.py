@@ -107,6 +107,10 @@ class Fake:
     fail: dict[str, int] = field(default_factory=dict)
     pending_logins: int = 1
     deploy_ends: str = "ready"
+    training: dict[str, dict[str, Any]] = field(default_factory=dict)
+    batches: dict[str, dict[str, Any]] = field(default_factory=dict)
+    runs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    run_ends: str = "finished"
     errors: list[str] = field(default_factory=list)
 
     def calls_to(self, method: str, pattern: str) -> list[Call]:
@@ -784,6 +788,221 @@ def keys_action(fake: Fake, call: Call, key: str, verb: str) -> Any:
     return ok({"id": key, "deleted": True})
 
 
+def _snapshot_json(fake: Fake, name: str) -> dict[str, Any]:
+    return {k: v for k, v in fake.training[name].items() if not k.startswith("_")}
+
+
+def _store_snapshot(fake: Fake, name: str, table: pa.Table, metadata: dict[str, Any],
+                    tags: list[str]) -> dict[str, Any]:  # fmt: skip
+    import hashlib
+
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema.remove_metadata()) as writer:
+        writer.write_table(table.replace_schema_metadata(None))
+    digest = "sha256:" + hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+    existing = fake.training.get(name)
+    if existing is not None and existing["digest"] not in (None, digest):
+        raise Refusal(409, "Conflict", f"snapshot {name} exists; a snapshot never changes",
+                      param="name")  # fmt: skip
+    arrow = {"double": "double", "int64": "int64", "bool": "bool", "string": "string"}
+    fake.training[name] = {
+        "name": name, "state": "ready", "digest": digest, "bytes": table.nbytes,
+        "rows": table.num_rows,
+        "columns": [{"name": f.name, "type": arrow.get(str(f.type), str(f.type))} for f in table.schema],
+        "metadata": {**metadata, "origin": {"kind": "uploaded"}},
+        "tags": sorted({*tags, "uploaded"}), "error": None, "expires": None,
+        "created": 1761200000.0,
+    }  # fmt: skip
+    return fake.training[name]
+
+
+def snapshots_post(fake: Fake, call: Call) -> Any:
+    if call.table is not None:
+        query = dict(call.query)
+        name = query.pop("name")
+        _store_snapshot(fake, name, call.table, query, [])
+        return ok(_snapshot_json(fake, name))
+    p = call.payload
+    fake.training[p["name"]] = {
+        "name": p["name"], "state": "open", "digest": None, "bytes": p["bytes"], "rows": None,
+        "columns": None, "metadata": p["metadata"], "tags": sorted({*p.get("tags", []), "uploaded"}),
+        "error": None, "expires": 1761286400.0, "created": 1761200000.0, "url": None,
+        "method": "PUT", "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
+    }  # fmt: skip
+    return ok(_snapshot_json(fake, p["name"]))
+
+
+def snapshots_bytes(fake: Fake, call: Call, name: str) -> Any:
+    snap = fake.training[name]
+    start = int(call.headers["content-range"].split()[1].split("-")[0])
+    assert start == len(snap["_data"]), "chunks arrive in order"
+    snap["_data"] += call.body
+    if len(snap["_data"]) == snap["bytes"]:
+        table = pq.read_table(io.BytesIO(snap["_data"]))
+        meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
+        _store_snapshot(fake, name, table, meta, snap["_tags"])
+        fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
+    return ok({"received": len(snap.get("_data", b""))})
+
+
+def snapshots_get(fake: Fake, call: Call, name: str) -> Any:
+    if name not in fake.training:
+        raise Refusal(404, "NotFound", f"no snapshot named `{name}`")
+    snap = fake.training[name]
+    if snap.get("_polls"):
+        snap["_polls"] -= 1
+        if not snap["_polls"]:
+            snap["state"] = "ready"
+    return ok(_snapshot_json(fake, name))
+
+
+def snapshots_list(fake: Fake, call: Call) -> Any:
+    tag = call.query.get("tag")
+    found = [
+        _snapshot_json(fake, n)
+        for n, v in fake.training.items()
+        if not tag or tag in v["tags"]
+    ]
+    return ok({"snapshots": found})
+
+
+def snapshots_update(fake: Fake, call: Call, name: str) -> Any:
+    fake.training[name]["tags"] = sorted({*call.payload["tags"]})
+    return ok(_snapshot_json(fake, name))
+
+
+def snapshots_delete(fake: Fake, call: Call, name: str) -> Any:
+    fake.training[name]["state"] = "deleted"
+    return ok(_snapshot_json(fake, name))
+
+
+def synthetic_post(fake: Fake, call: Call) -> Any:
+    p = dict(call.payload)
+    name, count = p.pop("name"), p.pop("count", 1)
+    p.pop("tags", None)
+    fake.batches[name] = {
+        "name": name, "tag": f"synthetic-{name}", "count": count, "seed": p.pop("seed", 7),
+        "options": p, "state": "pending", "counts": {"pending": count, "ready": 0, "rejected": 0},
+        "tables": [{"name": f"{name}-{i}", "state": "pending", "error": None} for i in range(count)],
+        "created": 1761200000.0, "_polls": 1,
+    }  # fmt: skip
+    return ok({k: v for k, v in fake.batches[name].items() if not k.startswith("_")})
+
+
+def synthetic_get(fake: Fake, call: Call, name: str) -> Any:
+    if name not in fake.batches:
+        raise Refusal(404, "NotFound", f"no synthetic batch named `{name}`")
+    batch = fake.batches[name]
+    if batch["_polls"]:
+        batch["_polls"] -= 1
+    else:
+        batch.update(
+            state="done", counts={"pending": 0, "ready": batch["count"], "rejected": 0}
+        )
+        for table in batch["tables"]:
+            table["state"] = "ready"
+    return ok({k: v for k, v in batch.items() if not k.startswith("_")})
+
+
+def _run_json(run: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in run.items() if not k.startswith("_")}
+
+
+def runs_post(fake: Fake, call: Call) -> Any:
+    p = call.payload
+    versions = fake.runs.setdefault(p["name"], [])
+    if versions and versions[0]["base"] != p["base"]:
+        raise Refusal(409, "Conflict", f"{p['name']} trains from {versions[0]['base']}")
+    version = len(versions) + 1
+    data = []
+    for item in p.get("data") or [
+        d for phase in p.get("phases", []) for d in phase["data"]
+    ]:
+        if isinstance(item, dict) and "context" in item:
+            ctx = fake.contexts[item["context"]]
+            data.append({"context": item["context"], "version": item.get("version") or ctx["version"],
+                         "name": f"context-{item['context']}", "digest": ctx["digest"]})  # fmt: skip
+        elif isinstance(item, dict):
+            data += [{"name": n, "digest": v["digest"]} for n, v in fake.training.items()
+                     if item["tag"] in v["tags"]]  # fmt: skip
+        else:
+            data.append({"name": item, "digest": fake.training[item]["digest"]})
+    run = {
+        "model": f"{fake.project}/{p['name']}@ft{version}", "name": p["name"], "version": version,
+        "state": "queued", "reason": None, "attempt": 0, "base": p["base"], "data": data,
+        "data_digest": "sha256:dd", "waiting": None, "phases": p.get("phases", []),
+        "architecture": p.get("architecture", []), "warnings": [], "progress": None,
+        "method": p["method"], "evaluation": p.get("evaluation", {}), "budget": p.get("budget"),
+        "seed": p.get("seed", 0), "tags": p.get("tags", []), "plan": p.get("plan", {}),
+        "created": 1761200000.0, "updated": 1761200000.0, "usage": None, "published": None,
+        "_polls": fake.polls_until_done, "_events": [
+            {"at": 1761200000.0, "kind": "state", "body": {"state": "queued"}}],
+        "_payload": p,
+    }  # fmt: skip
+    versions.append(run)
+    return ok(_run_json(run))
+
+
+def _run_for(fake: Fake, segment: str) -> dict[str, Any]:
+    name, _, version = segment.partition("@ft")
+    versions = fake.runs.get(name)
+    if not versions:
+        raise Refusal(404, "NotFound", f"no run named `{segment}`")
+    return versions[int(version) - 1] if version else versions[-1]
+
+
+def _advance(fake: Fake, run: dict[str, Any]) -> None:
+    if run["state"] in ("finished", "failed", "cancelled"):
+        return
+    run["_polls"] -= 1
+    steps = run["plan"].get("steps", 100)
+    if run["_polls"] > 0:
+        run.update(state="training", progress={"step": steps // 2, "loss": 0.45},
+                   usage={"gpu_seconds": 60.0, "credits": 120.0})  # fmt: skip
+        run["_events"].append({"at": 1761200060.0, "kind": "metrics",
+                               "body": {"steps": steps // 2, "loss": 0.45, "validation_loss": 0.43}})  # fmt: skip
+        return
+    if fake.run_ends == "failed":
+        run.update(state="failed", reason="the trainer ran out of memory")
+        return
+    run.update(state="finished", progress={"step": steps, "loss": 0.41},
+               usage={"gpu_seconds": 130.0, "credits": 260.0},
+               published={"model": run["model"], "digest": "sha256:ee", "kept_step": steps,
+                          "validation_loss": 0.398, "base_validation_loss": 0.421,
+                          "report": {"data": {"rows": 900, "base": 0.421, "kept": 0.398,
+                                              "gain": 0.023, "ci95": [0.01, 0.03], "metrics": {}}}})  # fmt: skip
+    run["_events"] += [
+        {"at": 1761200120.0, "kind": "metrics", "body": {"steps": steps, "loss": 0.41, "validation_loss": 0.398}},
+        {"at": 1761200130.0, "kind": "published", "body": {"model": run["model"]}},
+    ]  # fmt: skip
+
+
+def runs_get(fake: Fake, call: Call, segment: str) -> Any:
+    run = _run_for(fake, segment)
+    _advance(fake, run)
+    return ok(_run_json(run))
+
+
+def runs_list(fake: Fake, call: Call) -> Any:
+    found = [_run_json(r) for versions in fake.runs.values() for r in versions
+             if not call.query.get("tag") or call.query["tag"] in r["tags"]]  # fmt: skip
+    return ok({"runs": found})
+
+
+def runs_lineage(fake: Fake, call: Call, segment: str) -> Any:
+    run = _run_for(fake, segment)
+    return ok({"model": run["model"], "events": run["_events"]})
+
+
+def runs_cancel(fake: Fake, call: Call, segment: str) -> Any:
+    run = _run_for(fake, segment)
+    run["state"] = "cancelled"
+    if call.payload.get("save"):
+        run["published"] = {"model": run["model"], "digest": "sha256:ff", "kept_step": 10,
+                            "validation_loss": 0.44, "base_validation_loss": 0.421, "report": None}  # fmt: skip
+    return ok(_run_json(run))
+
+
 P = "/v1/projects/acme"
 N = r"([^/]+)"
 ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
@@ -801,6 +1020,19 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("POST", f"{P}/contexts/{N}/(append|label)", contexts_write),
     ("POST", f"{P}/contexts/{N}/delete", contexts_delete),
     ("PUT", f"{P}/snapshots", snapshots_put),
+    ("POST", f"{P}/snapshots", snapshots_post),
+    ("GET", f"{P}/snapshots", snapshots_list),
+    ("POST", f"{P}/snapshots/synthetic", synthetic_post),
+    ("GET", f"{P}/snapshots/synthetic/{N}", synthetic_get),
+    ("GET", f"{P}/snapshots/{N}", snapshots_get),
+    ("POST", f"{P}/snapshots/{N}/bytes", snapshots_bytes),
+    ("POST", f"{P}/snapshots/{N}/update", snapshots_update),
+    ("POST", f"{P}/snapshots/{N}/delete", snapshots_delete),
+    ("POST", f"{P}/runs", runs_post),
+    ("GET", f"{P}/runs", runs_list),
+    ("GET", f"{P}/runs/{N}", runs_get),
+    ("GET", f"{P}/runs/{N}/lineage", runs_lineage),
+    ("POST", f"{P}/runs/{N}/cancel", runs_cancel),
     ("POST", f"{P}/experiments", experiments_create),
     ("GET", f"{P}/experiments", experiments_list),
     ("GET", f"{P}/experiments/{N}", experiments_get),
@@ -886,8 +1118,9 @@ def serve(fake: Fake) -> Callable[[], None]:
                 if kind == ARROW and body and self.command == "POST":
                     call.table = pa.ipc.open_stream(body).read_all()
                     meta = call.table.schema.metadata or {}
-                    call.envelope = json.loads(meta[b"gf.request"])
-                    call.payload = call.envelope["payload"]
+                    if b"gf.request" in meta:
+                        call.envelope = json.loads(meta[b"gf.request"])
+                        call.payload = call.envelope["payload"]
                 elif kind == "application/json" and body:
                     value = json.loads(body)
                     if envelope:

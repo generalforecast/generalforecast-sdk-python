@@ -121,10 +121,34 @@ hosted and in-context: `fit` uploads your rows and trains nothing; `predict`
 reads them as context. A context too large to send fails at `fit`, at once,
 with `CapacityExceeded`.
 
+## Fine-tuning
+
+`gf.fine_tunes` holds training snapshots, synthetic batches and runs. Each run
+of a name publishes its next version, `<name>@ft<n>`, trained afresh from the
+same base; a published version works anywhere a model goes.
+
+```python
+snap = gf.fine_tunes.snapshots.create("credit-2026-01", data=rows,
+                                      target="defaulted", task="classification")
+warmup = gf.fine_tunes.snapshots.synthesize("credit-warmup", count=64, seed=0,
+                                            task="classification",
+                                            rows=gf.Range(1024, 8192))
+run = gf.fine_tunes.runs.create("credit-default", base="tabicl-v2",
+                                data=[warmup, snap, "adult@3"],
+                                plan=gf.Plan(steps=1000), wait=True)
+run        # credit-default@ft1  finished  step 1,000/1,000  loss 0.410  ...
+```
+
+`data` takes snapshots, batches, contexts (the run pins that version's
+snapshot) and `gf.Tag("nightly")`. `phases=[gf.Phase(...)]` trains a
+curriculum; `gf.LoRA`, `gf.InputAdapter`, `gf.Full`, `gf.ArchitectureChange`,
+`gf.Evaluation` and `gf.Budget` are the typed settings, so a typo fails
+before anything is sent.
+
 ## Clients and errors
 
 `gf.Client` and `gf.AsyncClient` carry the same resources: `contexts`,
-`experiments`, `predictors`, `sources`, `keys` and `models`. Every error is a
+`experiments`, `predictors`, `fine_tunes`, `sources`, `keys` and `models`. Every error is a
 `gf.Error` with `message`, `hint`, `code`, `reason`, `request_id` and
 `recoverable`, false only for `Internal`, `Unavailable` and failed runs or
 deploys.

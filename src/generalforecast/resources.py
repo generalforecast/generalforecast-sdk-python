@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: General Forecast, Inc.
 # SPDX-License-Identifier: MIT
 
-"""The resources of a client: contexts, experiments, predictors, sources, keys, models.
+"""The resources of a client: contexts, experiments, predictors, fine-tunes, sources, keys, models.
 
 Each method takes a name or the object for every reference and returns
 typed dataclasses. The work is in `generalforecast._ops`; the `Async`
@@ -11,7 +11,7 @@ classes await the same operations.
 from __future__ import annotations
 
 import builtins
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -19,25 +19,39 @@ from generalforecast import _ops
 from generalforecast._ops import UNSET
 from generalforecast.types import (
     STANDARD_PERMISSIONS,
+    ArchitectureChange,
+    Budget,
     ColumnType,
     Context,
     Deploy,
     Environment,
     Estimate,
+    Evaluation,
     Experiment,
+    FineTuneRun,
     Holdout,
     Key,
     Logs,
+    LoRA,
+    Method,
+    Missing,
     Model,
     NewKey,
+    Phase,
+    Plan,
     Predictions,
     Predictor,
     PredictorInfo,
+    Range,
     Revision,
+    RunEvent,
     Slice,
+    Snapshot,
     Source,
     SourceKind,
     SourceTable,
+    SyntheticBatch,
+    Tag,
     Task,
     WriteReceipt,
 )
@@ -58,17 +72,27 @@ if TYPE_CHECKING:
 __all__ = [
     "AsyncContexts",
     "AsyncExperiments",
+    "AsyncFineTunes",
     "AsyncKeys",
     "AsyncModels",
     "AsyncPredictors",
+    "AsyncRuns",
+    "AsyncSnapshots",
     "AsyncSources",
     "Contexts",
     "Experiments",
+    "FineTunes",
     "Keys",
     "Models",
     "Predictors",
+    "Runs",
+    "Snapshots",
     "Sources",
 ]
+
+
+DEFAULT_METHOD = LoRA(rank=16)
+"""A run's method when none is given: LoRA of rank 16."""
 
 
 def _setup(**values: Any) -> dict[str, Any]:
@@ -586,6 +610,170 @@ class Models(_Sync):
         )
 
 
+class Snapshots(_Sync):
+    """Training snapshots and synthetic batches: named, immutable tables."""
+
+    def create(
+        self,
+        name: str,
+        *,
+        data: DataLike,
+        tags: Sequence[str] = (),
+        target: str | None = None,
+        task: Task | None = None,
+        time: str | None = None,
+        group: str | None = None,
+    ) -> Snapshot:
+        """Uploads a training table as `name`, waiting until the service has verified it.
+
+        `target` and `task` are the training metadata a run reads; `time`
+        and `group` say how its rows are held out. A name is never reused:
+        the same rows again return the snapshot, other rows raise `Conflict`.
+        """
+        metadata = {"target": target, "task": task, "time": time, "group": group}
+        return self._run(_ops.snapshot_create(name, data, tags, metadata))
+
+    def synthesize(
+        self,
+        name: str,
+        *,
+        count: int = 1,
+        seed: int | None = None,
+        like: str | Snapshot | None = None,
+        task: Task | None = None,
+        rows: int | Range | None = None,
+        columns: int | Range | None = None,
+        classes: int | Range | None = None,
+        missing: Missing | None = None,
+        reject: Sequence[Literal["trivial", "unlearnable"]] = (),
+        tags: Sequence[str] = (),
+        **generator: Any,
+    ) -> SyntheticBatch:
+        """Generates `count` tables from random causal graphs, table `i` seeded `seed + i`.
+
+        `like` copies a snapshot's columns, types, task and classes;
+        `generator` takes the other generator settings (`categorical`,
+        `functions`, `graph_nodes`, `irrelevant_columns`, ...), each
+        checked against the service's bounds before anything is sent. It
+        returns at once, every table pending; a run can name the batch now.
+        """
+        options = _ops.synthetic_options(
+            task=task, rows=rows, columns=columns, classes=classes, missing=missing,
+            reject=reject, generator=generator,
+        )  # fmt: skip
+        return self._run(
+            _ops.synthetic_create(
+                name, count=count, seed=seed, like=like, tags=tags, options=options
+            )
+        )
+
+    def get(self, snapshot: str | Snapshot) -> Snapshot:
+        """A snapshot."""
+        return self._run(_ops.snapshot_get(snapshot))
+
+    def batch(self, batch: str | SyntheticBatch) -> SyntheticBatch:
+        """A synthetic batch and its tables' states."""
+        return self._run(_ops.synthetic_get(batch))
+
+    def list(self, *, tag: str | None = None) -> builtins.list[Snapshot]:
+        """The project's snapshots, or those carrying `tag`."""
+        return self._run(_ops.snapshot_list(tag))
+
+    def tag(self, snapshot: str | Snapshot, tags: Sequence[str]) -> Snapshot:
+        """Replaces a snapshot's tags; runs pinned to it are unchanged."""
+        return self._run(_ops.snapshot_tag(snapshot, tags))
+
+    def delete(self, snapshot: str | Snapshot) -> None:
+        """Deletes a snapshot; its name stays taken. `Conflict` while a run reads it."""
+        self._run(_ops.snapshot_delete(snapshot))
+
+
+class Runs(_Sync):
+    """Fine-tuning runs: each run of a name publishes its next version, `NAME@ftN`."""
+
+    def create(
+        self,
+        name: str,
+        *,
+        base: str,
+        data: Sequence[str | Snapshot | SyntheticBatch | Context | Tag] | None = None,
+        method: Method = DEFAULT_METHOD,
+        plan: Plan | None = None,
+        phases: Sequence[Phase] | None = None,
+        architecture: Sequence[ArchitectureChange] = (),
+        evaluation: Evaluation | None = None,
+        budget: Budget | None = None,
+        seed: int | None = None,
+        tags: Sequence[str] = (),
+        wait: bool = False,
+        progress: Callable[[FineTuneRun], None] | None = None,
+    ) -> FineTuneRun:
+        """Starts the run that publishes `name`'s next version, trained afresh from `base`.
+
+        `data` takes snapshots, synthetic batches, contexts (`"adult"`,
+        `"adult@3"`, a `Context`; the run pins that version's snapshot) and
+        `gf.Tag`s; a bare name is looked up as each. `phases` in its place
+        trains a curriculum. A batch still generating makes the run wait.
+
+        Raises:
+            Error: Not recoverable, with `wait`, when the run fails.
+        """
+        return self._run(
+            _ops.run_create(
+                name, base=base, data=data, method=method, plan=plan, phases=phases,
+                architecture=architecture, evaluation=evaluation, budget=budget,
+                seed=seed, tags=tags, wait=wait, progress=progress,
+            )
+        )  # fmt: skip
+
+    def get(self, run: str | FineTuneRun) -> FineTuneRun:
+        """A run, `NAME@ftN`, or a name's latest run."""
+        return self._run(_ops.run_get(run))
+
+    def list(
+        self,
+        *,
+        name: str | None = None,
+        state: str | None = None,
+        data_digest: str | None = None,
+        tag: str | None = None,
+    ) -> builtins.list[FineTuneRun]:
+        """The project's runs, only those matching what is given."""
+        params = {"name": name, "state": state, "data_digest": data_digest, "tag": tag}
+        return self._run(_ops.run_list(params))
+
+    def wait(
+        self,
+        run: str | FineTuneRun,
+        *,
+        timeout: float | None = None,
+        progress: Callable[[FineTuneRun], None] | None = None,
+    ) -> FineTuneRun:
+        """Waits for a run to end; `progress` is called with the run at each poll."""
+        return self._run(_ops.run_wait(run, timeout, progress))
+
+    def watch(self, run: str | FineTuneRun) -> Iterator[RunEvent]:
+        """Yields a run's events once each, oldest first, until it ends."""
+        return self._client._iterate(_ops.run_watch(run))
+
+    def events(self, run: str | FineTuneRun) -> builtins.list[RunEvent]:
+        """Every event of a run so far, oldest first."""
+        return self._run(_ops.run_events(run))
+
+    def cancel(self, run: str | FineTuneRun, *, save: bool = False) -> FineTuneRun:
+        """Cancels a run; with `save`, one that is training publishes what it has."""
+        return self._run(_ops.run_cancel(run, save))
+
+
+class FineTunes:
+    """Fine-tuning: training snapshots and synthetic batches, and the runs that train on them."""
+
+    def __init__(self, client: Client) -> None:
+        """Binds the snapshots and runs to `client`."""
+        self.snapshots = Snapshots(client)
+        self.runs = Runs(client)
+
+
 class AsyncContexts(_Async):
     """`Contexts`, awaited."""
 
@@ -1049,3 +1237,148 @@ class AsyncModels(_Async):
                 fields=predictor_fields,
             )
         )
+
+
+class AsyncSnapshots(_Async):
+    """`Snapshots`, awaited."""
+
+    async def create(
+        self,
+        name: str,
+        *,
+        data: DataLike,
+        tags: Sequence[str] = (),
+        target: str | None = None,
+        task: Task | None = None,
+        time: str | None = None,
+        group: str | None = None,
+    ) -> Snapshot:
+        """See `Snapshots.create`."""
+        metadata = {"target": target, "task": task, "time": time, "group": group}
+        return await self._run(_ops.snapshot_create(name, data, tags, metadata))
+
+    async def synthesize(
+        self,
+        name: str,
+        *,
+        count: int = 1,
+        seed: int | None = None,
+        like: str | Snapshot | None = None,
+        task: Task | None = None,
+        rows: int | Range | None = None,
+        columns: int | Range | None = None,
+        classes: int | Range | None = None,
+        missing: Missing | None = None,
+        reject: Sequence[Literal["trivial", "unlearnable"]] = (),
+        tags: Sequence[str] = (),
+        **generator: Any,
+    ) -> SyntheticBatch:
+        """See `Snapshots.synthesize`."""
+        options = _ops.synthetic_options(
+            task=task, rows=rows, columns=columns, classes=classes, missing=missing,
+            reject=reject, generator=generator,
+        )  # fmt: skip
+        return await self._run(
+            _ops.synthetic_create(
+                name, count=count, seed=seed, like=like, tags=tags, options=options
+            )
+        )
+
+    async def get(self, snapshot: str | Snapshot) -> Snapshot:
+        """See `Snapshots.get`."""
+        return await self._run(_ops.snapshot_get(snapshot))
+
+    async def batch(self, batch: str | SyntheticBatch) -> SyntheticBatch:
+        """See `Snapshots.batch`."""
+        return await self._run(_ops.synthetic_get(batch))
+
+    async def list(self, *, tag: str | None = None) -> builtins.list[Snapshot]:
+        """See `Snapshots.list`."""
+        return await self._run(_ops.snapshot_list(tag))
+
+    async def tag(self, snapshot: str | Snapshot, tags: Sequence[str]) -> Snapshot:
+        """See `Snapshots.tag`."""
+        return await self._run(_ops.snapshot_tag(snapshot, tags))
+
+    async def delete(self, snapshot: str | Snapshot) -> None:
+        """See `Snapshots.delete`."""
+        await self._run(_ops.snapshot_delete(snapshot))
+
+
+class AsyncRuns(_Async):
+    """`Runs`, awaited."""
+
+    async def create(
+        self,
+        name: str,
+        *,
+        base: str,
+        data: Sequence[str | Snapshot | SyntheticBatch | Context | Tag] | None = None,
+        method: Method = DEFAULT_METHOD,
+        plan: Plan | None = None,
+        phases: Sequence[Phase] | None = None,
+        architecture: Sequence[ArchitectureChange] = (),
+        evaluation: Evaluation | None = None,
+        budget: Budget | None = None,
+        seed: int | None = None,
+        tags: Sequence[str] = (),
+        wait: bool = False,
+        progress: Callable[[FineTuneRun], None] | None = None,
+    ) -> FineTuneRun:
+        """See `Runs.create`."""
+        return await self._run(
+            _ops.run_create(
+                name, base=base, data=data, method=method, plan=plan, phases=phases,
+                architecture=architecture, evaluation=evaluation, budget=budget,
+                seed=seed, tags=tags, wait=wait, progress=progress,
+            )
+        )  # fmt: skip
+
+    async def get(self, run: str | FineTuneRun) -> FineTuneRun:
+        """See `Runs.get`."""
+        return await self._run(_ops.run_get(run))
+
+    async def list(
+        self,
+        *,
+        name: str | None = None,
+        state: str | None = None,
+        data_digest: str | None = None,
+        tag: str | None = None,
+    ) -> builtins.list[FineTuneRun]:
+        """See `Runs.list`."""
+        params = {"name": name, "state": state, "data_digest": data_digest, "tag": tag}
+        return await self._run(_ops.run_list(params))
+
+    async def wait(
+        self,
+        run: str | FineTuneRun,
+        *,
+        timeout: float | None = None,
+        progress: Callable[[FineTuneRun], None] | None = None,
+    ) -> FineTuneRun:
+        """See `Runs.wait`."""
+        return await self._run(_ops.run_wait(run, timeout, progress))
+
+    def watch(self, run: str | FineTuneRun) -> AsyncIterator[RunEvent]:
+        """See `Runs.watch`; iterate it with `async for`."""
+        return self._client._iterate(_ops.run_watch(run))
+
+    async def events(self, run: str | FineTuneRun) -> builtins.list[RunEvent]:
+        """See `Runs.events`."""
+        return await self._run(_ops.run_events(run))
+
+    async def cancel(
+        self, run: str | FineTuneRun, *, save: bool = False
+    ) -> FineTuneRun:
+        """See `Runs.cancel`."""
+        return await self._run(_ops.run_cancel(run, save))
+
+
+class AsyncFineTunes:
+    """`FineTunes`, awaited."""
+
+    def __init__(self, client: AsyncClient) -> None:
+        """Binds the snapshots and runs to `client`."""
+        self.snapshots = AsyncSnapshots(client)
+        self.runs = AsyncRuns(client)
