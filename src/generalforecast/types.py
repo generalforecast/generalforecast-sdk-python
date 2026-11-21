@@ -941,11 +941,16 @@ class Deploy:
 
 @dataclass(frozen=True)
 class Timing:
-    """Where a call's time went: waiting in the queue, a cold start, and compute."""
+    """Where a call's time went: waiting in the queue, a cold start, and compute.
+
+    `compile_seconds` is the time the call's steps spent compiling or
+    loading programs they waited on, which `compute_seconds` leaves out.
+    """
 
     queued_seconds: float = 0.0
     cold_start_seconds: float = 0.0
     compute_seconds: float = 0.0
+    compile_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
