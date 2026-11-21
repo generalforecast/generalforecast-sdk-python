@@ -150,6 +150,9 @@ class Fake:
     keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     writes: list[dict[str, Any]] = field(default_factory=list)
     chunk_bytes: int = 4096
+    # Contexts upload to a signed object-store URL, query string and all, as the
+    # hosted service's do; False sends them through the bytes route instead.
+    signed_uploads: bool = True
     polls_until_done: int = 2
     accept_predictions: int = 0
     fail: dict[str, int] = field(default_factory=dict)
@@ -306,8 +309,22 @@ def _open_upload(fake: Fake, name: str, data: dict[str, Any]) -> Any:
     ctx["state"] = "uploading"
     ctx["file"] = data.get("file")
     out = fake.context_json(name)
-    out["upload"] = {"version": version, "url": None, "chunk_bytes": fake.chunk_bytes}
+    url = (
+        f"{fake.url}{_signed(f'/uploads/contexts/{name}', name, version)}"
+        if fake.signed_uploads
+        else None
+    )
+    out["upload"] = {"version": version, "url": url, "chunk_bytes": fake.chunk_bytes}
     return ok(out)
+
+
+def _signed(path: str, name: str, version: int) -> str:
+    """An upload URL as an object store signs one: the session rides in its query."""
+    return f"{path}?uploadType=resumable&upload_id={_session(name, version)}"
+
+
+def _session(name: str, version: int) -> str:
+    return f"{name}-{version}"
 
 
 def contexts_create(fake: Fake, call: Call) -> Any:
@@ -342,7 +359,29 @@ def contexts_bytes(fake: Fake, call: Call, name: str, version: str) -> Any:
     upload = fake.uploads[name]
     assert int(version) == upload["version"]
     assert int(call.query["offset"]) == len(upload["data"]), "chunks arrive in order"
-    upload["data"] += call.body
+    return ok({"received": _receive(fake, name, call.body)})
+
+
+def contexts_signed_upload(fake: Fake, call: Call, name: str) -> Any:
+    """A chunk sent to a context's signed upload URL, the object store's and not an API route."""
+    upload = fake.uploads[name]
+    assert call.query == {
+        "uploadType": "resumable",
+        "upload_id": _session(name, upload["version"]),
+    }, "a signed upload URL keeps its query string"
+    assert "authorization" not in call.headers, "an upload URL carries no credential"
+    start = int(call.headers["content-range"].split()[1].split("-")[0])
+    assert start == len(upload["data"]), "chunks arrive in order"
+    received = _receive(fake, name, call.body)
+    if received < upload["bytes"]:
+        return 308, None, {"Range": f"bytes=0-{received - 1}"}
+    return ok(None)
+
+
+def _receive(fake: Fake, name: str, chunk: bytes) -> int:
+    """Adds a chunk to a context's open upload, finishing the version on its last byte."""
+    upload = fake.uploads[name]
+    upload["data"] += chunk
     if len(upload["data"]) == upload["bytes"]:
         table = pq.read_table(io.BytesIO(upload["data"]))
         ctx = fake.contexts[name]
@@ -352,7 +391,7 @@ def contexts_bytes(fake: Fake, call: Call, name: str, version: str) -> Any:
         ctx["_versions"].append({"version": upload["version"], "digest": upload["digest"],
                                  "rows": table.num_rows})  # fmt: skip
         ctx["_rows"] = table.to_pylist()
-    return ok({"received": len(upload["data"])})
+    return len(upload["data"])
 
 
 def contexts_get(fake: Fake, call: Call, name: str) -> Any:
@@ -993,7 +1032,7 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
         "name": p["name"], "state": "open", "digest": None, "bytes": p["bytes"], "rows": None,
         "columns": None, "metadata": p["metadata"], "tags": sorted({*p.get("tags", []), "uploaded"}),
         "error": None, "expires": 1761286400.0, "created": 1761200000.0, "origin": origin(),
-        "url": f"{fake.url}/uploads/snapshots/{p['name']}", "method": "PUT",
+        "url": f"{fake.url}{_signed(f'/uploads/snapshots/{p['name']}', p['name'], 1)}", "method": "PUT",
         "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
     }  # fmt: skip
     return ok(_snapshot_json(fake, p["name"]))
@@ -1002,6 +1041,9 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
 def snapshots_upload(fake: Fake, call: Call, name: str) -> Any:
     """A chunk sent to a snapshot's upload URL, the resumable object store's and not an API route."""
     snap = fake.training[name]
+    assert call.query == {"uploadType": "resumable", "upload_id": _session(name, 1)}, (
+        "a signed upload URL keeps its query string"
+    )
     start = int(call.headers["content-range"].split()[1].split("-")[0])
     assert start == len(snap["_data"]), "chunks arrive in order"
     assert "authorization" not in call.headers, "an upload URL carries no credential"
@@ -1236,6 +1278,7 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("GET", f"{P}/snapshots/synthetic/{N}", synthetic_get),
     ("GET", f"{P}/snapshots/{N}", snapshots_get),
     ("PUT", f"/uploads/snapshots/{N}", snapshots_upload),
+    ("PUT", f"/uploads/contexts/{N}", contexts_signed_upload),
     ("POST", f"{P}/snapshots/{N}/update", snapshots_update),
     ("POST", f"{P}/snapshots/{N}/delete", snapshots_delete),
     ("POST", f"{P}/runs", runs_post),

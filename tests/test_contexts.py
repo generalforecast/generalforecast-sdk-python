@@ -17,8 +17,9 @@ def adult(rows=200):
     )
 
 
-def test_create_uploads_in_chunks_and_waits_until_ready(fake):
-    fake.chunk_bytes = 512
+@pytest.mark.parametrize("signed", [True, False], ids=["signed-url", "bytes-route"])
+def test_create_uploads_in_chunks_and_waits_until_ready(fake, signed):
+    fake.chunk_bytes, fake.signed_uploads = 512, signed
     ctx = gf.contexts.create("adult", data=adult())
     assert ctx.state == "ready" and ctx.version == 1 and ctx.rows == 200
     assert [c.name for c in ctx.columns] == ["age", "workclass", "income"]
@@ -27,18 +28,27 @@ def test_create_uploads_in_chunks_and_waits_until_ready(fake):
     created = fake.calls_to("POST", r".*/contexts")[0].payload
     assert created["kind"] == "snapshot" and created["data"]["format"] == "parquet"
     assert created["data"]["digest"].startswith("sha256:")
-    chunks = fake.calls_to("POST", r".*/versions/1/bytes")
+    if signed:
+        # The signed URL's query names the upload session, so every chunk keeps it.
+        chunks = fake.calls_to("PUT", r"/uploads/contexts/adult")
+        assert {c.query["upload_id"] for c in chunks} == {"adult-1"}
+        offsets = [
+            int(c.headers["content-range"].split()[1].split("-")[0]) for c in chunks
+        ]
+    else:
+        chunks = fake.calls_to("POST", r".*/versions/1/bytes")
+        offsets = [int(c.query["offset"]) for c in chunks]
     assert len(chunks) > 1 and all(len(c.body) <= 512 for c in chunks)
-    assert [int(c.query["offset"]) for c in chunks][:2] == [0, 512]
+    assert offsets[:2] == [0, 512]
 
 
 def test_the_same_rows_again_are_unchanged_and_send_no_bytes(fake):
     gf.contexts.create("adult", data=adult())
-    sent = len(fake.calls_to("POST", r".*/bytes"))
+    sent = len(fake.calls_to("PUT", r"/uploads/.*"))
     again = gf.contexts.upload("adult", adult())
     assert again.unchanged and again.version == 1
     assert repr(again).endswith("unchanged")
-    assert len(fake.calls_to("POST", r".*/bytes")) == sent
+    assert len(fake.calls_to("PUT", r"/uploads/.*")) == sent
     changed = gf.contexts.upload(again, adult(300))
     assert changed.version == 2 and not changed.unchanged
 
