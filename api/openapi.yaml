@@ -60,11 +60,14 @@ paths:
       summary: score queries with a predictor
       description: |
         The predictor's revision supplies the model, target, inputs and
-        context. The payload carries only `queries`, and `as_of` for a live
+        context. The payload carries `queries`, and `as_of` for a live
         context; `context` is refused with `param: "context"` and the
-        message `context is declared by the predictor`. `target`, `inputs`,
-        `model` and `task` are refused with `param` naming the field and the
-        message `declared by the predictor`.
+        message `context is declared by the predictor`, unless the predictor
+        is one gf serve serves whose lock takes its context with each
+        request. `target`, `inputs`, `model` and `task` are refused with
+        `param` naming the field and the message `declared by the
+        predictor`, and any other field the payload does not take with
+        `param` naming it and a `hint` listing the ones it takes.
       parameters:
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/predictor"
@@ -112,7 +115,6 @@ paths:
                     queries:
                       - {customer_id: 1041, spend: 82.5, plan: pro}
               context:
-                x-gf-invalid: true
                 value:
                   api_version: gf/v1
                   project: acme
@@ -222,20 +224,32 @@ paths:
       summary: score queries with an ad hoc predictor
       description: |
         The payload is a predictor's fields plus rows: `model`, `target`,
-        `context` and `queries` are required; `inputs`, `id`, `time`,
-        `series`, `frequency`, `horizon`, `quantiles`, `outputs` and
-        `selection` take a predictor's names and defaults. `model` takes a
-        short name on the hosted plane, resolved for the task the target
-        column calls for; gf serve takes full ids. There is no `task` and no
-        `options` object. The rows bind as a
-        request context's do, so text and category inputs are read as the
-        model reads them in process, and a forecaster's `inputs` may split
-        into `past` and `future`. No row, query, series or input count is
-        refused: the context reads exactly while the device holds it and by
-        retrieval past that, as the result's `context.used` says, and a
-        context past what the model was trained on carries a note. Every
-        limit error carries `limit` and `actual` and names the model in
-        `message`.
+        `context` and `queries` are required; every other field of
+        `Manifest` takes a predictor spec's names and defaults, and a field
+        it does not list is refused with `param` naming it and a `hint`
+        listing the ones it takes. `model` takes a full id or a family's
+        short name, such as `tabicl-v2`, which resolves for the task the
+        target column calls for (`AmbiguousReference` only when the column
+        cannot say). There is no `task` and no `options` object: `task` is
+        refused with `param: "task"`.
+
+        `inputs` is a list of columns, or the rule `{exclude, types, past,
+        future}`, whose fields may instead sit at the top level as a
+        predictor spec has them; each is given once. Left out, the inputs
+        are every column of the context without a role, less `exclude`. A
+        forecaster's `past` and `future` are inputs whatever else is, and
+        its other inputs are past covariates; `related` groups its series.
+        `types` overrides inferred types: at the top level in a spec's
+        `ColumnType`, in `inputs.types` in the engine's `Kind`. `selection`,
+        for a tabular model, fixes each query's rows against the model's
+        row cap; left out, the context reads whole while the device holds
+        it and by retrieval past that, as the result's `context.used` says.
+
+        The rows bind as a request context's do, so text and category
+        inputs are read as the model reads them in process. No row, query,
+        series or input count is refused, and a context past what the model
+        was trained on carries a note. Every limit error carries `limit`
+        and `actual` and names the model in `message`.
       parameters:
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/prefer"
@@ -293,8 +307,46 @@ paths:
                     queries:
                       - {sku: a, date: "2026-01-05", price: 8.5}
                       - {sku: a, date: "2026-01-06", price: 8.5}
+              rule:
+                summary: a short name, and inputs and selection by rule
+                value:
+                  api_version: gf/v1
+                  project: acme
+                  request_id: r-4d5e6f708192a3b4c5d6e7f8091a2b3c
+                  resource: {kind: predictor, name: ad-hoc}
+                  payload:
+                    model: tabicl-v2
+                    target: churned
+                    id: customer_id
+                    exclude: [region]
+                    types: {plan: category}
+                    selection: {core: 2, neighbors: 2}
+                    context:
+                      - {customer_id: 1, spend: 10.0, plan: free, region: eu, churned: 1}
+                      - {customer_id: 2, spend: 95.0, plan: pro, region: us, churned: 0}
+                      - {customer_id: 3, spend: 40.0, plan: pro, region: us, churned: 0}
+                      - {customer_id: 4, spend: 5.0, plan: free, region: eu, churned: 1}
+                    queries:
+                      - {customer_id: 1041, spend: 82.5, plan: pro, region: eu}
+              task:
+                summary: a task, which the route does not take
+                x-gf-invalid: true
+                value:
+                  api_version: gf/v1
+                  project: acme
+                  request_id: r-5e6f708192a3b4c5d6e7f8091a2b3c4d
+                  resource: {kind: predictor, name: ad-hoc}
+                  payload:
+                    model: tabicl-v2
+                    task: classification
+                    target: churned
+                    context:
+                      - {spend: 10.0, churned: 1}
+                      - {spend: 95.0, churned: 0}
+                    queries:
+                      - {spend: 82.5}
               bare:
-                summary: an entry's bare name, which gf serve refuses; it takes full ids
+                summary: an entry's name without its organization, which is neither a full id nor a family's short name
                 value:
                   api_version: gf/v1
                   project: acme
@@ -350,6 +402,19 @@ paths:
                         - {value: 18.2, quantiles: {"0.1": 16.1, "0.5": 18.2, "0.9": 20.4}}
                         - {value: 19.0, quantiles: {"0.1": 16.0, "0.5": 19.0, "0.9": 22.1}}
                       usage: {calls: 1, rows: 2, credits: 0.004, usd: 0.000004}
+                rule:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-4d5e6f708192a3b4c5d6e7f8091a2b3c
+                    resource: {kind: predictor, name: ad-hoc}
+                    result:
+                      model: general-forecast/tabicl-v2-classifier@sha256:7a01c2e4b6d8f0a2c4e6f8a0b2d4f6a8c0e2f4a6b8d0f2a4c6e8f0a2b4d6f8a0
+                      task: classification
+                      context: {source: request, name: null, version: null, digest: null, rows: 4, as_of: null}
+                      predictions:
+                        - {id: 1041, label: 0, probabilities: {"0": 0.83, "1": 0.17}}
+                      usage: {calls: 1, rows: 1, credits: 0.002, usd: 0.000002}
         "422":
           description: the fields or the rows are invalid
           content:
@@ -357,6 +422,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorReply"
               examples:
+                task:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-5e6f708192a3b4c5d6e7f8091a2b3c4d
+                    resource: {kind: predictor, name: ad-hoc}
+                    error:
+                      code: ValidationError
+                      message: "task is not a field: the model determines the task, and the target column a short name's"
+                      param: task
                 bare:
                   value:
                     api_version: gf/v1
@@ -621,6 +696,7 @@ paths:
                     resource: {kind: predictor, name: churn}
                     result:
                       status: ready
+                      error: null
                       context: {source: live/churn-history, version: 312, rows: 1840, as_of: "2026-01-01T00:00:00Z", accepted_version: 312, serving_version: 312, freshness_lag_seconds: 0.0}
                       accepted_version: 312
                       serving_version: 312
@@ -3421,13 +3497,17 @@ paths:
                     request_id: r-4a33c4dfc75b2873b429a268b4f2239b
                     resource: {kind: source, name: sources}
                     result:
+                      available: true
                       sources:
                       - name: bigquery-acme
                         kind: bigquery
-                        state: ready
+                        access: service_account
+                        state: connected
                         config: {project: acme-prod, dataset: analytics}
                         secret_expires: null
                         tested_at: "2026-11-21T08:02:00Z"
+                        tables: 42
+                        contexts: 3
                         error: null
                         origin:
                           surface: console
@@ -3481,7 +3561,8 @@ paths:
                     result:
                       name: pg-replica
                       kind: postgres
-                      state: ready
+                      access: secret
+                      state: connected
                       config:
                         host: "10.2.0.4"
                         port: "5432"
@@ -3489,6 +3570,8 @@ paths:
                         user: gf_read
                       secret_expires: null
                       tested_at: "2026-11-21T09:12:04Z"
+                      tables: 18
+                      contexts: 0
                       error: null
                       origin:
                         surface: cli
@@ -3522,10 +3605,13 @@ paths:
                     result:
                       name: bigquery-acme
                       kind: bigquery
-                      state: ready
+                      access: service_account
+                      state: connected
                       config: {project: acme-prod, dataset: analytics}
                       secret_expires: null
                       tested_at: "2026-11-21T08:02:00Z"
+                      tables: 42
+                      contexts: 3
                       error: null
                       origin:
                         surface: console
@@ -3545,6 +3631,7 @@ paths:
       - name: prefix
         in: query
         required: false
+        description: only the tables whose names start with it
         schema: {type: string}
       responses:
         "200":
@@ -3561,11 +3648,13 @@ paths:
                     request_id: r-b3e1af2cef65a512a63e1b610d255d96
                     resource: {kind: source, name: bigquery-acme}
                     result:
+                      project: acme-prod
+                      dataset: analytics
                       tables:
-                      - name: acme.analytics.customers
-                        rows: 48210
-                        bytes: 9122816
-                        updated: "2026-11-20T17:03:00Z"
+                      - {name: customers, type: TABLE, readable: true}
+                      - {name: customers_daily, type: VIEW, readable: true}
+                      - {name: customers_model, type: MODEL, readable: false}
+                      more: false
   /v1/projects/{project}/sources/{source}/preview:
     post:
       operationId: sources.preview
@@ -3655,10 +3744,13 @@ paths:
                     result:
                       name: bigquery-acme
                       kind: bigquery
-                      state: ready
+                      access: service_account
+                      state: connected
                       config: {project: acme-prod, dataset: analytics}
                       secret_expires: null
                       tested_at: "2026-11-21T08:02:00Z"
+                      tables: 42
+                      contexts: 3
                       error: null
                       origin:
                         surface: console
@@ -4553,7 +4645,9 @@ paths:
         A JSON payload opens a resumable upload of a Parquet table of up to
         8 GiB, with its size and training metadata. `url` is a resumable
         session to `PUT` the bytes to, in `chunk_bytes` chunks with
-        `Content-Range`. Once every declared byte is stored, the plane
+        `Content-Range`; a plane without object storage answers `url: null`
+        and takes the same chunks at `snapshots.bytes`. Once every declared
+        byte is stored, the plane
         verifies the upload on its own: it reads the Parquet footer, checks
         the named columns exist and hashes the rows, and the snapshot
         becomes `ready`, or `rejected` with an `error`. An upload left open
@@ -4907,6 +5001,9 @@ paths:
                       count: 3
                       snapshots: [credit-warmup-0, credit-warmup-1, credit-warmup-2]
                       state: pending
+                      created: 1761200000.0
+                      origin: {surface: cli, notebook: null, client: generalforecast/1.0.0, by: "maya@acme.com"}
+                      url: "https://app.generalforecast.com/?project=acme#/fine-tunes"
                 schema_from:
                   value:
                     api_version: gf/v1
@@ -4921,6 +5018,9 @@ paths:
                       count: 2
                       snapshots: [credit-shaped-0, credit-shaped-1]
                       state: pending
+                      created: 1761200000.0
+                      origin: {surface: cli, notebook: null, client: generalforecast/1.0.0, by: "maya@acme.com"}
+                      url: "https://app.generalforecast.com/?project=acme#/fine-tunes"
         '200':
           description: the same create sent again, answered with the batch it made
           content:
@@ -5021,6 +5121,9 @@ paths:
                       count: 2
                       snapshots: [credit-shaped-0, credit-shaped-1]
                       state: done
+                      created: 1761200000.0
+                      origin: {surface: cli, notebook: null, client: generalforecast/1.0.0, by: "maya@acme.com"}
+                      url: "https://app.generalforecast.com/?project=acme#/fine-tunes"
                       seed: 81234
                       options:
                         name: credit-shaped
@@ -5244,6 +5347,45 @@ paths:
                       error: null
                       expires: null
                       created: 1761200000.0
+  /v1/projects/{project}/snapshots/{snapshot}/bytes:
+    post:
+      operationId: snapshots.bytes
+      tags: [hosted]
+      summary: "send a chunk of a snapshot's upload, when it has no signed URL"
+      description: |
+        A plane without object storage opens an upload with `url: null` and
+        takes its chunks here, in order, each with `Content-Range: bytes
+        <first>-<last>/<total>`, where `total` is the upload's declared
+        `bytes`. The reply says how many bytes the plane holds; once it
+        holds them all, it verifies the upload as it does one sent to a
+        signed URL.
+      parameters:
+      - $ref: "#/components/parameters/project"
+      - $ref: "#/components/parameters/snapshot"
+      - name: Content-Range
+        in: header
+        required: true
+        schema: {type: string, pattern: "^bytes \\d+-\\d+/\\d+$"}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        "200":
+          description: the bytes held so far
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotReceivedReply"
+              examples:
+                received:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-5e2c1e9a2b4d6f8031a5c7e9b2d4f6a8
+                    resource: {kind: snapshot, name: credit-2026-01}
+                    result: {name: credit-2026-01, received: 8388608, bytes: 52428800}
   /v1/projects/{project}/runs:
     get:
       operationId: runs.list
@@ -7973,15 +8115,24 @@ components:
 
     ErrorCode:
       type: string
-      enum: [ValidationError, NotFound, Unauthorized, CapacityExceeded, ModelNotReady, Internal, Conflict, Unsupported, PaymentRequired, AmbiguousReference]
+      enum: [ValidationError, NotFound, Unauthorized, CapacityExceeded, ModelNotReady, Internal, Conflict, Unsupported, PaymentRequired, AmbiguousReference, Unavailable]
       description: |
         ValidationError 422, NotFound 404, Unauthorized 401, CapacityExceeded
-        422, ModelNotReady 503, Internal 500, Conflict 409 (a compare-and-swap
-        on a stale generation), Unsupported 501 (an operation this server
-        does not offer, such as a hosted route on gf serve), PaymentRequired
-        402 (the workspace's plan or credit does not cover the request),
-        AmbiguousReference 422 (a short model name whose task nothing
-        decides: pass `task`, or the full id).
+        422, ModelNotReady 503 (a model, or the runtime or pool serving it, is
+        still loading, starting or compiling), Internal 500, Conflict 409 (a
+        compare-and-swap on a stale generation), Unsupported 501 (an
+        operation this server does not offer, such as a hosted route on gf
+        serve), PaymentRequired 402 (the workspace's plan or credit does not
+        cover the request), AmbiguousReference 422 (a short model name whose
+        task nothing decides: pass `task`, or the full id), Unavailable 503
+        or 504 (a service the request needs, such as a database, storage or
+        a control plane, is down for now or did not answer in time).
+
+        Every 503 carries `Retry-After`, and a client may retry it, as it
+        may a 504. A code the server raises that is not in this enum is sent
+        as the enum code it folds into, with the code itself, in snake case,
+        as `reason`: `CredentialUnavailable` 503 is `Unavailable` with reason
+        `credential_unavailable`.
 
         Hosted fine-tuning's gates, with their `reason`:
         `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
@@ -8043,8 +8194,9 @@ components:
       type: object
       description: |
         inputs by rule rather than by list: `exclude` removes columns from the
-        inferred set, `types` overrides inferred types; forecast predictors
-        use `past` and `future` instead
+        inferred set, `types` overrides inferred types; a forecaster's `past`
+        and `future` are inputs whatever else is, and its other inputs are
+        past covariates
       additionalProperties: false
       properties:
         exclude: {type: array, items: {type: string}}
@@ -8084,20 +8236,22 @@ components:
         the ad hoc predictor: a predictor's fields, with `context` as rows
         or by reference to a snapshot the service holds
         (`{"snapshot": "<digest>"}`, uploaded with `PUT /snapshots?digest=`),
-        and `queries` as rows, or as the Arrow stream the request is. `task`
-        decides a short model name's entry; `exclude`, `types`, `past` and
-        `future` take a predictor spec's forms beside `inputs`'
+        and `queries` as rows, or as the Arrow stream the request is.
+        `exclude`, `types`, `past` and `future` take a predictor spec's
+        forms beside `inputs`, or sit in `inputs` as `Inputs`, once. The
+        target column decides a short model name's entry; there is no `task`
       required: [model, target, context, queries]
       additionalProperties: false
       properties:
-        task: {$ref: "#/components/schemas/Task"}
         exclude: {type: array, items: {type: string}}
         types:
           type: object
           additionalProperties: {$ref: "#/components/schemas/ColumnType"}
         past: {type: array, items: {type: string}}
         future: {type: array, items: {type: string}}
-        model: {$ref: "#/components/schemas/ModelField"}
+        model:
+          $ref: "#/components/schemas/ModelField"
+          description: a full id, or a family's short name, which resolves for the task the target column calls for
         target: {type: string}
         id: {type: string}
         inputs:
@@ -8207,7 +8361,10 @@ components:
     Queries:
       type: object
       description: |
-        a predictor's payload: the queries, and `as_of` for a live context
+        a predictor's payload: the queries, `as_of` for a live context, and
+        `context` for a predictor whose lock takes its context with each
+        request, which only gf serve serves. The environment is the route's
+        `?env=`.
       required: [queries]
       additionalProperties: false
       properties:
@@ -8216,9 +8373,13 @@ components:
           items: {$ref: "#/components/schemas/Row"}
           minItems: 1
         as_of: {$ref: "#/components/schemas/AsOfRequest"}
-        env:
-          $ref: "#/components/schemas/Name"
-          description: the environment whose revision scores them, as `?env=` names it; `production` when neither does
+        context:
+          type: array
+          items: {$ref: "#/components/schemas/Row"}
+          description: |
+            the context rows of a predictor whose lock takes them with each
+            request; any other predictor refuses them with `param:
+            "context"` and the message `context is declared by the predictor`
 
     QueriesRequest:
       allOf:
@@ -8394,8 +8555,9 @@ components:
       type: object
       description: |
         the catalog's description of a served model: `model` is the resolved
-        id with its content digest, `limits` what one call may send here,
-        `warm_shapes` the shapes compiled at startup
+        id with its content digest, `limits` the model's own sizes as the
+        catalog gives them (the same from gf serve and the hosted plane), and
+        `warm_shapes` the shapes compiled at startup, empty where none were
       required: [model, name, short, kind, base, trained_on, task, artifact, bounds, capabilities, runtime, license, repository, revision, limits, warm_shapes]
       additionalProperties: false
       properties:
@@ -10385,7 +10547,7 @@ components:
           type: number
           description: when the snapshot was created, in seconds since the epoch
         url:
-          description: a resumable session to `PUT` the bytes to, or null to send them to the plane
+          description: a resumable session to `PUT` the bytes to, or null to send them to the plane's `snapshots.bytes`
           anyOf:
           - type: string
           - type: 'null'
@@ -10914,6 +11076,9 @@ components:
       - count
       - snapshots
       - state
+      - created
+      - origin
+      - url
       additionalProperties: false
       properties:
         name:
@@ -10932,6 +11097,14 @@ components:
             $ref: '#/components/schemas/Name'
         state:
           $ref: '#/components/schemas/SyntheticBatchState'
+        created:
+          type: number
+          description: when the batch was created, in seconds since the epoch
+        origin:
+          $ref: '#/components/schemas/Origin'
+        url:
+          type: string
+          description: the console page its tables are on
     SyntheticTable:
       type: object
       description: one table of a batch, by its snapshot name, with its state and, once rejected, why
@@ -10973,7 +11146,7 @@ components:
         a batch as `snapshots.synthetic` reads it: its create's answer, and
         the seed, options, tables and counts. Its fields are listed whole, as
         `SyntheticBatchCreated` allows no other fields.
-      required: [name, tag, count, snapshots, state, seed, options, tables, counts]
+      required: [name, tag, count, snapshots, state, created, origin, url, seed, options, tables, counts]
       additionalProperties: false
       properties:
         name:
@@ -10992,6 +11165,14 @@ components:
             $ref: '#/components/schemas/Name'
         state:
           $ref: '#/components/schemas/SyntheticBatchState'
+        created:
+          type: number
+          description: when the batch was created, in seconds since the epoch
+        origin:
+          $ref: '#/components/schemas/Origin'
+        url:
+          type: string
+          description: the console page its tables are on
         seed:
           type: integer
           minimum: 0
@@ -11170,11 +11351,14 @@ components:
         serving facts: `context` is the context the environment is serving
         now, `accepted_version`/`serving_version` compare the newest accepted
         write of a live context with the one being served, `fresh` says
-        whether they agree (null without a context)
-      required: [status, context, accepted_version, serving_version, fresh, requests, errors, mean_latency_seconds]
+        whether they agree (null without a context); `error` is set while
+        the environment serves its last good view and a rebuild of it keeps
+        failing, else null
+      required: [status, error, context, accepted_version, serving_version, fresh, requests, errors, mean_latency_seconds]
       additionalProperties: false
       properties:
         status: {$ref: "#/components/schemas/State"}
+        error: {type: [string, "null"], description: why the environment's rebuild is failing}
         context:
           oneOf:
             - $ref: "#/components/schemas/ServingContext"
@@ -11494,9 +11678,11 @@ components:
 
     SourceList:
       type: object
-      required: [sources]
+      description: "`available` says whether this plane can connect sources at all"
+      required: [sources, available]
       additionalProperties: false
       properties:
+        available: {type: boolean}
         sources:
           type: array
           items:
@@ -13642,16 +13828,25 @@ components:
     Source:
       type: object
       description: "a workspace connection to a warehouse or bucket. Config keys by kind: bigquery `project, dataset`; gcs `bucket, prefix`; snowflake `account, warehouse, database, role`; databricks `host, warehouse, client_id`; s3 `role_arn, region, bucket, prefix`; postgres `host, port, database, user, tls`"
-      required: [name, kind, state, config, secret_expires, tested_at, error, origin, created, url]
+      required: [name, kind, access, state, config, secret_expires, tested_at, tables, contexts, error, origin, created, url]
       additionalProperties: false
       properties:
         name:
           $ref: "#/components/schemas/Name"
         kind:
           $ref: "#/components/schemas/SourceKind"
+        access:
+          type: string
+          enum: [service_account, secret]
+          description: how the plane reads it, as the workspace's service account or with the source's secret
         state:
           type: string
-          enum: [ready, failing, expired]
+          enum: [untested, connected, unauthorized, not_found, unavailable, expired]
+          description: |
+            what the last test found: `connected`, or why not, `unauthorized`
+            (the reader has no grant), `not_found` (no such location),
+            `unavailable` (the warehouse did not answer) or `expired` (the
+            secret has); `untested` before any test
         config:
           type: object
           additionalProperties: {type: string}
@@ -13665,10 +13860,19 @@ components:
           - string
           - "null"
           format: date-time
+        tables:
+          type: [integer, "null"]
+          minimum: 0
+          description: how many tables the last test found; null before one
+        contexts:
+          type: integer
+          minimum: 0
+          description: how many of the project's contexts were made from it
         error:
           type:
           - string
           - "null"
+          description: why the last test failed, else null
         origin:
           $ref: "#/components/schemas/Origin"
         created: {type: string, format: date-time}
@@ -13692,33 +13896,30 @@ components:
 
     SourceTable:
       type: object
-      required: [name, rows, bytes, updated]
+      description: a table of the source's location, as the warehouse lists it
+      required: [name, type, readable]
       additionalProperties: false
       properties:
-        name: {type: string}
-        rows:
-          type:
-          - integer
-          - "null"
-        bytes:
-          type:
-          - integer
-          - "null"
-        updated:
-          type:
-          - string
-          - "null"
-          format: date-time
+        name: {type: string, description: the table's name within the dataset}
+        type: {type: string, description: "the warehouse's kind of table, such as `TABLE`, `VIEW` or `MODEL`"}
+        readable: {type: boolean, description: whether a context can be made of it}
 
     SourceTables:
       type: object
-      required: [tables]
+      description: |
+        the tables of the source's location, the BigQuery `project` and
+        `dataset`, whose names start with `prefix`; `more` says the
+        warehouse holds more than were listed
+      required: [project, dataset, tables, more]
       additionalProperties: false
       properties:
+        project: {type: string}
+        dataset: {type: string}
         tables:
           type: array
           items:
             $ref: "#/components/schemas/SourceTable"
+        more: {type: boolean}
 
     SourcePreview:
       type: object
@@ -13780,6 +13981,25 @@ components:
         properties:
           result:
             $ref: "#/components/schemas/Received"
+
+    SnapshotReceived:
+      type: object
+      description: the bytes of a snapshot's upload the plane holds so far, of the `bytes` it declared
+      required: [name, received, bytes]
+      additionalProperties: false
+      properties:
+        name: {$ref: "#/components/schemas/Name"}
+        received: {type: integer, minimum: 0}
+        bytes: {type: integer, minimum: 1}
+
+    SnapshotReceivedReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/SnapshotReceived"
 
     DeletedReply:
       allOf:

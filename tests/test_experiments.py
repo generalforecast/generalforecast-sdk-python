@@ -15,7 +15,7 @@ Experiment adult-income  run 1  classification, target income, 6,513 held-out ro
   1  tabicl-v2    0.931  0.925 to 0.937  38s   $0.013
   2  kumo-medium  0.929  0.923 to 0.935  51s   $0.013
   3  mitra-2      0.918  0.911 to 0.925  44s   $0.013
-  https://app.generalforecast.com/?project=acme#/experiments/adult-income"""
+  {console}/?project=acme#/experiments/adult-income"""
 
 MODELS = ["kumo-medium", "tabicl-v2", "mitra-2"]
 
@@ -34,7 +34,8 @@ def test_create_waits_and_prints_the_leaderboard_as_the_spec_shows(adult):
         context="adult", target="income", holdout="20%", models=MODELS
     )
     assert exp.run.state == "finished"
-    assert str(exp) == SAMPLE and repr(exp) == SAMPLE
+    shown = SAMPLE.format(console=adult.url)
+    assert str(exp) == shown and repr(exp) == shown
     assert exp.best.short == "tabicl-v2" and exp.best.model.startswith(
         "general-forecast/"
     )

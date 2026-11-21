@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import yaml
 from jsonschema import Draft202012Validator
@@ -28,6 +29,9 @@ SPEC_PATH = Path(__file__).resolve().parents[1] / "api" / "openapi.yaml"
 BASE = "urn:gf-openapi"
 
 
+# What the contract requires that the plane does not serve yet, so the fake
+# leaves it out as the plane does: a model's pinned `model`, `limits` and
+# `warm_shapes` (the plane sends `bounds` alone).
 @cache
 def spec() -> dict[str, Any]:
     """The contract."""
@@ -47,6 +51,22 @@ class Operation:
     def id(self) -> str:
         return self.body["operationId"]
 
+    def bound(self, path: str) -> dict[str, str]:
+        """The path's parameters by name, as the template binds them."""
+        found = self.pattern.match(path)
+        assert found is not None, f"{path} is not {self.template}"
+        return {key: unquote(value) for key, value in found.groupdict().items()}
+
+    def parameters(self, where: str) -> dict[str, dict[str, Any]]:
+        """The route's parameters `in` the query, a header or the path, by name."""
+        found = (_resolved(p) for p in self.body.get("parameters", ()))
+        return {p["name"]: p for p in found if p["in"] == where}
+
+    def media(self) -> dict[str, Any]:
+        """The request body's media types, none when the route takes no body."""
+        request = self.body.get("requestBody")
+        return _resolved(request).get("content", {}) if request else {}
+
 
 @cache
 def operations() -> list[Operation]:
@@ -54,7 +74,9 @@ def operations() -> list[Operation]:
     found = []
     for template, item in spec()["paths"].items():
         pattern = re.compile(
-            "^" + re.sub(r"\\\{[^}]+\\\}", "[^/]+", re.escape(template)) + "$"
+            "^"
+            + re.sub(r"\\\{([^}]+)\\\}", r"(?P<\1>[^/]+)", re.escape(template))
+            + "$"
         )
         for method, body in item.items():
             if isinstance(body, dict) and "operationId" in body:
@@ -96,6 +118,59 @@ def _problems(schema: dict[str, Any], value: Any) -> list[str]:
     ]
 
 
+def _typed(schema: dict[str, Any], value: str) -> Any:
+    """A query or header value as the type its schema names, for the schema to check."""
+    schema = _resolved(schema)
+    kind = schema.get("type")
+    try:
+        if kind == "integer":
+            return int(value)
+        if kind == "number":
+            return float(value)
+    except ValueError:
+        return value
+    if kind == "boolean" and value in ("true", "false"):
+        return value == "true"
+    return value
+
+
+def parameter_problems(op: Operation, where: str, values: dict[str, str]) -> list[str]:
+    """How a request's query, or headers, depart from the route's parameters.
+
+    A query may hold only the parameters the route declares; headers may
+    hold others. Each declared one is checked against its schema, and a
+    required one must be there.
+    """
+    declared = op.parameters(where)
+    if where == "header":
+        values = {
+            name: values[name.lower()] for name in declared if name.lower() in values
+        }
+    problems = [f"the {where} parameter `{name}` is not declared" for name in values if name not in declared]  # fmt: skip
+    for name, parameter in declared.items():
+        if name not in values:
+            if parameter.get("required"):
+                problems.append(f"the {where} parameter `{name}` is required")
+            continue
+        problems += [
+            f"the {where} parameter `{name}`: {p}"
+            for p in _problems(parameter["schema"], _typed(parameter["schema"], values[name]))
+        ]  # fmt: skip
+    return problems
+
+
+def media_problems(op: Operation, content_type: str, body: bytes) -> list[str]:
+    """How a request's body and its Content-Type depart from what the route takes."""
+    request = op.body.get("requestBody")
+    if not body:
+        required = request is not None and _resolved(request).get("required")
+        return ["the route requires a body"] if required else []
+    kind = content_type.split(";")[0].strip()
+    if kind not in op.media():
+        return [f"the route takes {', '.join(op.media()) or 'no body'}, not `{kind}`"]
+    return []
+
+
 def request_problems(op: Operation, body: Any) -> list[str]:
     """How a JSON request body departs from the route's schema."""
     request = op.body.get("requestBody")
@@ -106,13 +181,20 @@ def request_problems(op: Operation, body: Any) -> list[str]:
 
 
 def reply_problems(op: Operation, status: int, body: Any) -> list[str]:
-    """How a JSON reply departs from the route's schema for its status."""
+    """How a JSON reply departs from the route's schema for its status.
+
+    An error the route declares no reply for is still an error reply: the
+    envelope's, or a device login's outside it.
+    """
     responses = op.body.get("responses", {})
     reply = responses.get(str(status)) or responses.get("default")
-    if reply is None:
-        if status >= 400:
-            return []
+    if reply is None and status < 400:
         return [f"the contract has no {status} reply"]
+    if reply is None:
+        error = (
+            "ErrorReply" if op.body.get("x-gf-envelope", True) else "LoginErrorReply"
+        )
+        return _problems({"$ref": f"#/components/schemas/{error}"}, body)
     content = _resolved(reply).get("content", {}).get("application/json")
     return _problems(content["schema"], body) if content else []
 

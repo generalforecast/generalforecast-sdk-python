@@ -30,11 +30,10 @@ def test_list_and_get_return_the_same_model_shape(fake):
     }
     one = gf.models.get("tabicl-v2", task="classification")
     assert one == next(m for m in models if m.id == one.id)
-    assert (
-        one.kind == "catalog"
-        and one.limits.queries == 100
-        and one.trained_on.rows == 100000
-    )
+    # `limits` are the model's own, as the engine's catalog gives them.
+    assert one.kind == "catalog" and one.limits == gf.types.Limits(100000, 100, 10000)
+    assert one.digest and one.digest.startswith("sha256:")
+    assert one.trained_on.rows == 100000
     with pytest.raises(gf.AmbiguousReference):
         gf.models.get("tabicl-v2")
     with pytest.raises(gf.NotFound):
@@ -55,6 +54,88 @@ def test_predict_uploads_the_context_once_by_digest(fake):
     other.models.predict("tabicl-v2", context=context, queries=queries, target="y")
     assert [bool(c.body) for c in fake.calls_to("PUT", r".*/snapshots")][2:] == [False]
     other.close()
+
+
+# A frame with a missing number, dates and categories, and the digest the
+# engine's `table_digest` gives it, the same for the Parquet a context upload
+# sends and the Arrow stream a held snapshot is put as.
+DATED = {
+    "id": ["a", "b", "c"],
+    "amount": [1.5, float("nan"), 3.0],
+    "day": ["2026-01-01", "2026-01-02", "2026-01-03"],
+    "plan": ["x", "y", "x"],
+}
+DIGEST = "sha256:2c88ad7e2570a4fd2a332e9cda3556a652e0236fd60e8900cc78fc82a89947a7"
+# The engine's digest of the table under `..._whatever_lies_under_its_nulls`.
+ENGINE_NULLS = "sha256:282daaa4f8bf80e2d9d9d60ad697c3d907038c66b0e03f8f965f764508237969"
+
+
+def dated() -> pd.DataFrame:
+    rows = pd.DataFrame(DATED)
+    return rows.assign(
+        day=pd.to_datetime(rows["day"]), plan=rows["plan"].astype("category")
+    )
+
+
+def test_a_table_hashes_as_the_engine_hashes_what_the_plane_reads():
+    rows = _data.normalized(_data.table(dated()))
+    assert _data.table_digest(_data.table(dated())) == DIGEST
+    assert _data.table_digest(_data.read_parquet(_data.parquet(rows))) == DIGEST
+    assert _data.table_digest(_data.read_stream(_data.stream(rows))) == DIGEST
+    assert str(rows.schema.field("day").type) == "timestamp[us, tz=UTC]"
+    assert rows.column("plan").type == pa.string()
+
+
+def test_a_table_has_one_digest_whatever_lies_under_its_nulls():
+    # The engine's own case: a NaN made null stays NaN beneath in an Arrow
+    # stream, and Parquet reads a zero back. Rows 1 and 3 are null.
+    values = np.array([1.5, np.nan, 3.0, 0.0]).tobytes()
+    table = pa.table(
+        {
+            "x": pa.Array.from_buffers(
+                pa.float64(), 4, [pa.py_buffer(bytes([0b0101])), pa.py_buffer(values)]
+            ),
+            "s": pa.array(["a", None, "c", "d"]),
+            "i": pa.array([1, None, 3, 4]),
+            "b": pa.array([True, None, False, True]),
+            "t": pa.array([1, None, 3, 4], pa.timestamp("us", tz="UTC")),
+        }
+    )
+    sent = _data.read_stream(_data.stream(table))
+    read = _data.read_parquet(_data.parquet(sent))
+
+    def beneath(table: pa.Table) -> bytes:
+        return table.column("x").chunk(0).buffers()[1].to_pybytes()[8:16]
+
+    assert beneath(sent) != beneath(read)
+    assert _data.table_digest(sent) == _data.table_digest(read) == ENGINE_NULLS
+    assert beneath(_data.normalized(sent)) == bytes(8)
+
+
+def test_contexts_and_predictions_name_a_table_by_the_engines_digest(fake):
+    gf.contexts.create("dated", data=dated())
+    created = fake.calls_to("POST", r".*/contexts")[0].payload
+    assert created["data"]["digest"] == DIGEST == fake.contexts["dated"]["digest"]
+    gf.models.predict(
+        "tabicl-v2",
+        context=dated(),
+        queries=dated().drop(columns="plan"),
+        target="plan",
+    )
+    assert fake.calls_to("PUT", r".*/snapshots")[0].query["digest"] == DIGEST
+
+
+def test_a_table_the_service_cannot_hold_is_refused_before_it_is_sent():
+    with pytest.raises(gf.InvalidInput, match="`span`"):
+        _data.normalized(_data.table(pd.DataFrame({"span": pd.to_timedelta([1], "s")})))
+    with pytest.raises(gf.InvalidInput, match="infinity"):
+        _data.normalized(_data.table(pd.DataFrame({"x": [float("inf")]})))
+    with pytest.raises(gf.InvalidInput, match="cannot be held"):
+        _data.normalized(
+            _data.table(pd.DataFrame({"t": pd.to_datetime([1], unit="ns")}))
+        )
+    empty = _data.normalized(_data.table(pd.DataFrame({"x": [None, None]})))
+    assert empty.column("x").type == pa.string()
 
 
 def test_predict_takes_predictor_fields_and_refuses_others(fake):
@@ -146,7 +227,7 @@ def test_the_same_rows_hash_alike_whatever_holds_them(tmp_path):
     path = tmp_path / "t.parquet"
     df.to_parquet(path)
     digests = {
-        _data.digest(_data.stream(_data.table(v)))
+        _data.table_digest(_data.table(v))
         for v in (
             df,
             pa.Table.from_pandas(df),

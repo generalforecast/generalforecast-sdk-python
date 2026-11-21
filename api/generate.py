@@ -757,8 +757,18 @@ class PythonEmitter:
                     annotation += " | None"
                 default = " = None"
             line = f"    {field.name}: {annotation}{default}"
+            choices = re.fullmatch(r"Literal\[(.*)\]", annotation)
             if len(line) <= WIDTH:
                 lines.append(line)
+            elif choices and len(f"        {choices[1]}") <= WIDTH:
+                # A lone `Literal` too long for its line splits in its brackets, as ruff does.
+                lines.extend(
+                    [
+                        f"    {field.name}: Literal[",
+                        f"        {choices[1]}",
+                        f"    ]{default}",
+                    ]
+                )
             else:
                 lines.extend(
                     [f"    {field.name}: (", f"        {annotation}", f"    ){default}"]

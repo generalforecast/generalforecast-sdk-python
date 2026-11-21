@@ -6,6 +6,7 @@
 import inspect
 import io
 import json
+import re
 import sys
 
 import pandas as pd
@@ -334,6 +335,39 @@ def test_login_with_a_piped_key_keeps_it_and_logout_forgets_it(monkeypatch, fake
         "a pasted key is forgotten, not revoked"
     )
     assert "no login was kept" in gf_cli(monkeypatch, "logout")[2]
+
+
+def test_whoami_shows_a_key_that_never_expires_without_a_date(monkeypatch, fake):
+    code, out, _ = gf_cli(monkeypatch, "whoami")
+    assert code == 0
+    assert re.search(r"Key\s+notebook-maya-mbp$", out, re.MULTILINE), out
+
+
+def test_sources_list_and_tables_print_what_the_service_says_of_them(monkeypatch, fake):
+    from tests import samples
+
+    samples._sources(fake)
+    code, out, _ = gf_cli(monkeypatch, "sources", "list", "--json")
+    listed = json.loads(out)
+    assert code == 0 and listed["available"] is True
+    assert listed["sources"][0]["access"] == "service_account"
+    code, out, _ = gf_cli(monkeypatch, "sources", "tables", "bigquery-acme", "--json")
+    tables = json.loads(out)
+    assert (tables["project"], tables["dataset"], tables["more"]) == (
+        "acme-prod",
+        "analytics",
+        False,
+    )
+    assert tables["tables"][2] == {
+        "name": "customers_model",
+        "type": "MODEL",
+        "readable": False,
+    }
+    fake.sources.clear()
+    fake.sources_available = False
+    code, out, err = gf_cli(monkeypatch, "sources", "list")
+    assert code == 0 and "This service connects no sources." in err
+    assert gf.sources.list().available is False
 
 
 def fake_token():

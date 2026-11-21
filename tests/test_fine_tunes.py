@@ -49,18 +49,25 @@ def test_a_small_snapshot_goes_as_one_arrow_stream(fake):
         gf.fine_tunes.snapshots.create("x", data=credit(), target="defaulted")
 
 
-def test_a_large_snapshot_uploads_in_chunks(fake, monkeypatch):
+@pytest.mark.parametrize("signed", [True, False], ids=["signed-url", "bytes-route"])
+def test_a_large_snapshot_uploads_in_chunks(fake, monkeypatch, signed):
     monkeypatch.setattr(_ops, "STREAM_ROWS", 10)
-    fake.chunk_bytes = 256
+    fake.chunk_bytes, fake.signed_uploads = 256, signed
     snap = gf.fine_tunes.snapshots.create(
         "big", data=credit(), target="defaulted", task="classification", tags=["x"]
     )
     assert snap.state == "ready" and snap.rows == 40
     opened = fake.calls_to("POST", r".*/snapshots")[0].payload
     assert opened["format"] == "parquet" and opened["metadata"]["target"] == "defaulted"
-    # The bytes go to the upload URL the service gave, without the credential.
-    chunks = fake.calls_to("PUT", r"/uploads/snapshots/big")
-    assert len(chunks) > 1 and all("authorization" not in c.headers for c in chunks)
+    if signed:
+        # The bytes go to the upload URL the service gave, without the credential.
+        chunks = fake.calls_to("PUT", r"/uploads/snapshots/big")
+        assert all("authorization" not in c.headers for c in chunks)
+    else:
+        # A plane without object storage answers `url: null` and takes them itself.
+        chunks = fake.calls_to("POST", r".*/snapshots/big/bytes")
+        assert chunks[1].headers["content-range"].startswith("bytes 256-511/")
+    assert len(chunks) > 1
     with pytest.raises(gf.InvalidInput):
         gf.fine_tunes.snapshots.create("bigger", data=credit())
     assert gf.fine_tunes.snapshots.get(snap).name == "big"
@@ -82,6 +89,8 @@ def test_synthesize_checks_settings_before_sending(fake):
     )
     assert batch.state == "pending" and batch.tag == "synthetic-credit-warmup"
     assert len(batch.tables) == 4
+    assert batch.created and batch.origin.surface == "notebook"
+    assert batch.url == f"{fake.url}/?project=acme#/fine-tunes"
     sent = fake.calls_to("POST", r".*/snapshots/synthetic")[0].payload
     assert sent["rows"] == {"min": 1024, "max": 8192} and sent["graph_nodes"] == 16
     assert sent["missing"] == {"rate": 0.05, "patterns": ["random", "censored"]}
@@ -195,7 +204,8 @@ def test_wait_reports_progress_and_the_published_version(fake):
     assert second.model.endswith("@ft2")
     assert gf.fine_tunes.runs.get("credit-default").version == 2
     assert gf.fine_tunes.runs.get("acme/credit-default@ft1").state == "finished"
-    assert [r.version for r in gf.fine_tunes.runs.list(name="credit-default")] == [1, 2]
+    assert [r.version for r in gf.fine_tunes.runs.list()] == [1, 2]
+    assert fake.calls_to("GET", r".*/runs")[-1].query == {}
     with pytest.raises(gf.Conflict):
         gf.fine_tunes.runs.create(
             "credit-default", base="mitra-2", data=["t"], plan=gf.Plan(steps=1)

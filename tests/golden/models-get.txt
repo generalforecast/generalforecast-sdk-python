@@ -2,21 +2,21 @@
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/kumo-tabular-medium-regressor
   Task    regression
-  Limits  60,000 context rows, 100 queries and 32 inputs per call
+  Limits  60,000 context rows, 100 queries and 10,000 inputs per call
 --- 100 columns, a terminal
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/kumo-tabular-medium-regressor
   Task    regression
-  Limits  60,000 context rows, 100 queries and 32 inputs per call
+  Limits  60,000 context rows, 100 queries and 10,000 inputs per call
 --- 44 columns, not a terminal
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/kumo-tabular-medium-regressor
   Task    regression
-  Limits  60,000 context rows, 100 queries and 32 inputs per call
+  Limits  60,000 context rows, 100 queries and 10,000 inputs per call
 --- 44 columns, a terminal
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/
           kumo-tabular-medium-regressor
   Task    regression
   Limits  60,000 context rows, 100 queries
-          and 32 inputs per call
+          and 10,000 inputs per call

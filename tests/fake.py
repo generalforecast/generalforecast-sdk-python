@@ -14,7 +14,6 @@ schemas (`tests/contract.py`): a test fails when they part ways.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import re
 import threading
@@ -25,8 +24,8 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from generalforecast import _data
 from tests import contract
 
 TOKEN = "gf_test_0123456789abcdefghijklmnopqrstuv"
@@ -71,15 +70,22 @@ def model(
     family: str | None = None,
     context_rows: int = 100000,
     queries: int = 100,
-    inputs: int = 500,
+    inputs: int = 10000,
 ) -> dict[str, Any]:
-    """A catalog entry shaped as the contract's `models.list` example."""
+    """A catalog entry as the plane serves one, shaped as the contract's `models.list` example.
+
+    `limits` are the model's own, the engine catalog's `limits` of it, and
+    the plane names no warm shapes.
+    """
     entry = contract.example("models.list")["models"][0]
     pinned = digest(full)
     entry.update(
         model=f"{full}@{pinned}", name=full, short=short, task=task, family=family or short,
         repository=full, limits={"context_rows": context_rows, "queries": queries, "inputs": inputs},
+        warm_shapes=[],
     )  # fmt: skip
+    entry["bounds"] = {**entry["bounds"], "context_rows": context_rows, "query_rows": queries,
+                       "features": inputs}  # fmt: skip
     entry["artifact"] = {**entry["artifact"], "repository": full, "digest": pinned}
     if task != "classification":
         entry["trained_on"] = None
@@ -90,19 +96,19 @@ CATALOG = [
     model("general-forecast/tabicl-v2-classifier", "tabicl-v2", "classification", family="tabicl"),
     model("general-forecast/tabicl-v2-regressor", "tabicl-v2", "regression", family="tabicl"),
     model("general-forecast/kumo-tabular-medium-classifier", "kumo-medium", "classification",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-medium-regressor", "kumo-medium", "regression",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-small-classifier", "kumo-small", "classification",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-small-regressor", "kumo-small", "regression",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/kumo-tabular-large-classifier", "kumo-large", "classification",
-          family="kumo", context_rows=60000, inputs=32),
+          family="kumo", context_rows=60000),
     model("general-forecast/mitra-2-classifier", "mitra-2", "classification", context_rows=5120),
     model("general-forecast/mitra-2-regressor", "mitra-2", "regression", context_rows=5120),
-    model("general-forecast/chronos-2", "chronos-2", "forecast", queries=8),
-    model("general-forecast/timestral-209m", "timestral-209m", "forecast", queries=8),
+    model("general-forecast/chronos-2", "chronos-2", "forecast", queries=8, inputs=8),
+    model("general-forecast/timestral-209m", "timestral-209m", "forecast", queries=8, inputs=8),
 ]  # fmt: skip
 
 
@@ -150,12 +156,20 @@ class Fake:
     keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     writes: list[dict[str, Any]] = field(default_factory=list)
     chunk_bytes: int = 4096
-    # Contexts upload to a signed object-store URL, query string and all, as the
-    # hosted service's do; False sends them through the bytes route instead.
+    # Contexts and snapshots upload to a signed object-store URL, query string
+    # and all, as the hosted service's do; False answers `url: null`, as a
+    # plane without object storage does, and takes the chunks at the bytes routes.
     signed_uploads: bool = True
+    # Bytes at the end of every chunk a signed upload session does not keep,
+    # answering 308 with a `Range` that says what it holds.
+    chunk_loss: int = 0
     polls_until_done: int = 2
     accept_predictions: int = 0
+    # False answers `available: false` to `sources.list`, as a plane that connects no sources.
+    sources_available: bool = True
     fail: dict[str, int] = field(default_factory=dict)
+    # The reasons of the 429s a handler answers, one a call, before it answers.
+    throttle: dict[str, list[str]] = field(default_factory=dict)
     pending_logins: int = 1
     deploy_ends: str = "ready"
     training: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -163,13 +177,16 @@ class Fake:
     runs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     run_ends: str = "finished"
     errors: list[str] = field(default_factory=list)
+    # The key the tests call with never expires, as a key made with `expires=None`.
     key: dict[str, Any] = field(default_factory=lambda: {
-        "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": 1795000000.0})  # fmt: skip
+        "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": None})  # fmt: skip
     catalog: list[dict[str, Any]] = field(default_factory=lambda: list(CATALOG))
     log_entries: list[dict[str, Any]] = field(
         default_factory=lambda: contract.example("environments.logs")["logs"]
     )
     source_errors: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Every console page the fake linked to, fetched once it stops.
+    links: set[str] = field(default_factory=set)
 
     def calls_to(self, method: str, pattern: str) -> list[Call]:
         """The calls whose path matches `pattern`."""
@@ -179,8 +196,11 @@ class Fake:
             if c.method == method and re.fullmatch(pattern, c.path)
         ]
 
-    def link(self, part: str) -> str:
-        return f"{CONSOLE}/?project={self.project}#/{part}"
+    def link(self, part: str = "") -> str:
+        """A console page, as the plane links one: the project in the query, the page in the fragment."""
+        found = f"{self.url}/?project={self.project}" + (f"#/{part}" if part else "")
+        self.links.add(found)
+        return found
 
     def context_json(self, name: str, version: int | None = None) -> dict[str, Any]:
         ctx = self.contexts[name]
@@ -204,6 +224,13 @@ class Fake:
                 if self.fail.get(key):
                     self.fail[key] -= 1
                     raise Refusal(503, "Unavailable", "the service is busy")
+                if self.throttle.get(key):
+                    reason = self.throttle[key].pop(0)
+                    standing = (
+                        {"limit": 1, "actual": 1} if reason != "rate_limited" else {}
+                    )
+                    raise Refusal(429, "CapacityExceeded", f"refused: {reason}", reason=reason,
+                                  **standing)  # fmt: skip
                 return handler(self, call, *found.groups())
         raise Refusal(404, "NotFound", f"no route {call.method} {call.path}")
 
@@ -240,8 +267,7 @@ def auth_status(fake: Fake, call: Call) -> Any:
     status.update(
         principal={"kind": "api-key", "id": fake.key["id"], "project": fake.project},
         key={**fake.key, "project": fake.project}, email="maya@acme.com", machine="maya-mbp",
-        workspace={"id": "acme", "display_name": "Acme Analytics"},
-        url=f"{CONSOLE}/?project={fake.project}",
+        workspace={"id": "acme", "display_name": "Acme Analytics"}, url=fake.link(),
     )  # fmt: skip
     return ok(status)
 
@@ -256,8 +282,10 @@ def device_start(fake: Fake, call: Call) -> Any:
     grant = contract.example("device.start")
     grant.update(
         user_code="WXHG-PTRB",
-        verification_uri_complete=f"{CONSOLE}/device?code=WXHG-PTRB",
+        verification_uri=f"{fake.url}/device",
+        verification_uri_complete=f"{fake.url}/device?code=WXHG-PTRB",
     )
+    fake.links |= {grant["verification_uri"], grant["verification_uri_complete"]}
     return ok(grant)
 
 
@@ -275,7 +303,7 @@ def device_token(fake: Fake, call: Call) -> Any:
         key={"id": "key-0f1e2d3c4b5a69788796", "name": f"{login['client']}-{login['machine']}",
              "project": fake.project, "expires_at": expires, "ephemeral": notebook},
         email="maya@acme.com", workspace={"id": "acme", "display_name": "Acme Analytics"},
-        url=f"{CONSOLE}/?project={fake.project}",
+        url=fake.link(),
     )  # fmt: skip
     return ok(token)
 
@@ -320,10 +348,10 @@ def _open_upload(fake: Fake, name: str, data: dict[str, Any]) -> Any:
 
 def _signed(path: str, name: str, version: int) -> str:
     """An upload URL as an object store signs one: the session rides in its query."""
-    return f"{path}?uploadType=resumable&upload_id={_session(name, version)}"
+    return f"{path}?uploadType=resumable&upload_id={_signed_session(name, version)}"
 
 
-def _session(name: str, version: int) -> str:
+def _signed_session(name: str, version: int) -> str:
     return f"{name}-{version}"
 
 
@@ -362,33 +390,71 @@ def contexts_bytes(fake: Fake, call: Call, name: str, version: str) -> Any:
     return ok({"received": _receive(fake, name, call.body)})
 
 
-def contexts_signed_upload(fake: Fake, call: Call, name: str) -> Any:
-    """A chunk sent to a context's signed upload URL, the object store's and not an API route."""
-    upload = fake.uploads[name]
-    assert call.query == {
-        "uploadType": "resumable",
-        "upload_id": _session(name, upload["version"]),
-    }, "a signed upload URL keeps its query string"
+def _content_range(call: Call) -> tuple[int, int]:
+    """A chunk's first byte and the upload's total, from its `Content-Range: bytes first-last/total`."""
+    found = re.fullmatch(
+        r"bytes (\d+)-(\d+)/(\d+)", call.headers.get("content-range", "")
+    )
+    assert found and int(found[2]) - int(found[1]) + 1 == len(call.body), (
+        "Content-Range names the chunk"
+    )
+    return int(found[1]), int(found[3])
+
+
+def _session(fake: Fake, call: Call, held: int, session: str) -> bytes:
+    """What a signed resumable session keeps of a chunk: all but `chunk_loss` of its bytes.
+
+    The chunk must start where the session holds bytes up to, as its last
+    308's `Range` said.
+    """
+    assert call.query == {"uploadType": "resumable", "upload_id": session}, (
+        "a signed upload URL keeps its query string"
+    )
     assert "authorization" not in call.headers, "an upload URL carries no credential"
-    start = int(call.headers["content-range"].split()[1].split("-")[0])
-    assert start == len(upload["data"]), "chunks arrive in order"
-    received = _receive(fake, name, call.body)
-    if received < upload["bytes"]:
-        return 308, None, {"Range": f"bytes=0-{received - 1}"}
+    start, _ = _content_range(call)
+    assert start == held, (
+        f"a chunk starts at byte {held}, where the session holds up to"
+    )
+    return call.body[: max(1, len(call.body) - fake.chunk_loss)]
+
+
+def _resumed(held: int, total: int) -> Any:
+    """A session's answer: 308 with the bytes it holds while it waits for more, 200 once it holds them all."""
+    if held < total:
+        return 308, None, {"Range": f"bytes=0-{held - 1}"}
     return ok(None)
 
 
+def contexts_signed_upload(fake: Fake, call: Call, name: str) -> Any:
+    """A chunk sent to a context's signed upload URL, the object store's and not an API route."""
+    upload = fake.uploads[name]
+    session = _signed_session(name, upload["version"])
+    kept = _session(fake, call, len(upload["data"]), session)
+    return _resumed(_receive(fake, name, kept), upload["bytes"])
+
+
 def _receive(fake: Fake, name: str, chunk: bytes) -> int:
-    """Adds a chunk to a context's open upload, finishing the version on its last byte."""
+    """Adds a chunk to a context's open upload, verifying the version on its last byte as the plane does.
+
+    The plane hashes the table it was sent (`table_digest`), whatever
+    digest the upload announced, and drops a version whose rows are the
+    latest's.
+    """
     upload = fake.uploads[name]
     upload["data"] += chunk
     if len(upload["data"]) == upload["bytes"]:
-        table = pq.read_table(io.BytesIO(upload["data"]))
+        table = _data.read_parquet(upload["data"])
+        found = _data.table_digest(table)
+        if upload["digest"] != found:
+            fake.errors.append(f"context {name}: the upload announced {upload['digest']}, its table is {found}")  # fmt: skip
         ctx = fake.contexts[name]
+        if found == ctx["digest"]:
+            ctx.update(state="ready")
+            return len(upload["data"])
         ctx.update(state="verifying", version=upload["version"], versions=upload["version"],
-                   digest=upload["digest"], rows=table.num_rows, columns=_columns(table),
+                   digest=found, rows=table.num_rows, columns=_columns(table),
                    updated=NOW, _polls=1)  # fmt: skip
-        ctx["_versions"].append({"version": upload["version"], "digest": upload["digest"],
+        ctx["_versions"].append({"version": upload["version"], "digest": found,
                                  "rows": table.num_rows})  # fmt: skip
         ctx["_rows"] = table.to_pylist()
     return len(upload["data"])
@@ -461,11 +527,16 @@ def snapshots_put(fake: Fake, call: Call) -> Any:
         if digest not in fake.snapshots:
             raise Refusal(404, "NotFound", f"no snapshot {digest}")
         return ok({"digest": digest, "rows": fake.snapshots[digest].num_rows})
-    import hashlib
-
-    assert "sha256:" + hashlib.sha256(call.body).hexdigest() == digest
-    fake.snapshots[digest] = pa.ipc.open_stream(call.body).read_all()
-    return ok({"digest": digest, "rows": fake.snapshots[digest].num_rows}, 201)
+    table = _data.read_stream(call.body)
+    found = _data.table_digest(table)
+    if found != digest:
+        fake.errors.append(
+            f"PUT /snapshots?digest={digest} sent a table whose digest is {found}"
+        )
+        raise Refusal(422, "ValidationError", f"the table's digest is {found}, not {digest}",
+                      param="digest")  # fmt: skip
+    fake.snapshots[digest] = table
+    return ok({"digest": digest, "rows": table.num_rows}, 201)
 
 
 def _entries(models: list[str]) -> list[dict[str, Any]]:
@@ -855,7 +926,7 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
     fake.last_prediction = payload  # type: ignore[attr-defined]
     held = (payload.get("context") or {}).get("snapshot")
     return ok({
-        "model": CATALOG[0]["model"], "task": "classification",
+        "model": f"{CATALOG[0]['name']}@{CATALOG[0]['artifact']['digest']}", "task": "classification",
         "predictor": predictor, "revision": 1 if predictor else None,
         "environment": payload.get("env") if predictor else None,
         "context": {"source": "snapshot", "name": None, "version": None,
@@ -938,14 +1009,18 @@ def models_get(fake: Fake, call: Call, name: str) -> Any:
 
 
 def sources_list(fake: Fake, call: Call) -> Any:
-    return ok({"sources": [_shown(s) for s in fake.sources.values()]})
+    return ok({"sources": [_shown(s) for s in fake.sources.values()],
+               "available": fake.sources_available})  # fmt: skip
 
 
 def sources_create(fake: Fake, call: Call) -> Any:
     p = call.payload
-    fake.sources[p["name"]] = {"name": p["name"], "kind": p["kind"], "state": "ready",
-                               "config": p["config"], "secret_expires": None,
-                               "tested_at": NOW, "error": None, "origin": origin("cli"),
+    tables = contract.example("sources.tables")["tables"]
+    fake.sources[p["name"]] = {"name": p["name"], "kind": p["kind"],
+                               "access": "secret" if p.get("secret") else "service_account",
+                               "state": "connected", "config": p["config"], "secret_expires": None,
+                               "tested_at": NOW, "tables": len(tables), "contexts": 0,
+                               "error": None, "origin": origin("cli"),
                                "created": NOW, "url": fake.link(f"data/sources/{p['name']}"),
                                "_secret": p.get("secret")}  # fmt: skip
     return ok(_shown(fake.sources[p["name"]]))
@@ -1016,12 +1091,7 @@ def _snapshot_json(fake: Fake, name: str) -> dict[str, Any]:
 
 def _store_snapshot(fake: Fake, name: str, table: pa.Table, metadata: dict[str, Any],
                     tags: list[str]) -> dict[str, Any]:  # fmt: skip
-    import hashlib
-
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema.remove_metadata()) as writer:
-        writer.write_table(table.replace_schema_metadata(None))
-    digest = "sha256:" + hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+    digest = _data.table_digest(table)
     existing = fake.training.get(name)
     if existing is not None and existing["digest"] not in (None, digest):
         raise Refusal(409, "Conflict", f"snapshot {name} exists; a snapshot never changes",
@@ -1045,33 +1115,53 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
         _store_snapshot(fake, name, call.table, query, [])
         return ok(_snapshot_json(fake, name))
     p = call.payload
+    url = (
+        f"{fake.url}{_signed(f'/uploads/snapshots/{p["name"]}', p['name'], 1)}"
+        if fake.signed_uploads
+        else None
+    )
     fake.training[p["name"]] = {
         "name": p["name"], "state": "open", "digest": None, "bytes": p["bytes"], "rows": None,
         "columns": None, "metadata": p["metadata"], "tags": sorted({*p.get("tags", []), "uploaded"}),
         "error": None, "expires": 1761286400.0, "created": 1761200000.0, "origin": origin(),
-        "url": f"{fake.url}{_signed(f'/uploads/snapshots/{p['name']}', p['name'], 1)}", "method": "PUT",
-        "chunk_bytes": fake.chunk_bytes, "_data": b"", "_tags": p.get("tags", []),
+        "url": url, "method": "PUT", "chunk_bytes": fake.chunk_bytes, "_data": b"",
+        "_tags": p.get("tags", []),
     }  # fmt: skip
     return ok(_snapshot_json(fake, p["name"]))
+
+
+def _received_snapshot(fake: Fake, name: str, chunk: bytes) -> int:
+    """Adds a chunk to a snapshot's open upload, verifying it on its last byte."""
+    snap = fake.training[name]
+    snap["_data"] += chunk
+    if len(snap["_data"]) == snap["bytes"]:
+        table = _data.read_parquet(snap["_data"])
+        meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
+        _store_snapshot(fake, name, table, meta, snap["_tags"])
+        fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
+    return len(snap["_data"])
 
 
 def snapshots_upload(fake: Fake, call: Call, name: str) -> Any:
     """A chunk sent to a snapshot's upload URL, the resumable object store's and not an API route."""
     snap = fake.training[name]
-    assert call.query == {"uploadType": "resumable", "upload_id": _session(name, 1)}, (
-        "a signed upload URL keeps its query string"
-    )
-    start = int(call.headers["content-range"].split()[1].split("-")[0])
-    assert start == len(snap["_data"]), "chunks arrive in order"
-    assert "authorization" not in call.headers, "an upload URL carries no credential"
-    snap["_data"] += call.body
-    if len(snap["_data"]) < snap["bytes"]:
-        return 308, None, {"Range": f"bytes=0-{len(snap['_data']) - 1}"}
-    table = pq.read_table(io.BytesIO(snap["_data"]))
-    meta = {k: v for k, v in snap["metadata"].items() if k != "origin"}
-    _store_snapshot(fake, name, table, meta, snap["_tags"])
-    fake.training[name]["state"], fake.training[name]["_polls"] = "verifying", 1
-    return ok(None)
+    kept = _session(fake, call, len(snap["_data"]), _signed_session(name, 1))
+    return _resumed(_received_snapshot(fake, name, kept), snap["bytes"])
+
+
+def snapshots_bytes(fake: Fake, call: Call, name: str) -> Any:
+    """A chunk of a snapshot's upload sent to the plane, which gave it no signed URL."""
+    snap = fake.training[name]
+    assert snap["url"] is None, "a snapshot with a signed URL takes its chunks there"
+    start, total = _content_range(call)
+    if start != len(snap["_data"]) or total != snap["bytes"]:
+        raise Refusal(
+            422,
+            "ValidationError",
+            f"the next chunk starts at byte {len(snap['_data'])}",
+        )
+    received = _received_snapshot(fake, name, call.body)
+    return ok({"name": name, "received": received, "bytes": snap["bytes"]})
 
 
 def snapshots_get(fake: Fake, call: Call, name: str) -> Any:
@@ -1114,9 +1204,10 @@ def synthetic_post(fake: Fake, call: Call) -> Any:
         "options": {k: v for k, v in p.items() if k != "tags"}, "state": "pending",
         "counts": {"pending": count, "ready": 0, "rejected": 0},
         "tables": [{"name": f"{name}-{i}", "state": "pending", "error": None} for i in range(count)],
+        "created": 1761200000.0, "origin": origin(), "url": fake.link("fine-tunes"),
         "_polls": 1,
     }  # fmt: skip
-    created = ("name", "tag", "count", "snapshots", "state")
+    created = ("name", "tag", "count", "snapshots", "state", "created", "origin", "url")
     return ok({k: fake.batches[name][k] for k in created})
 
 
@@ -1295,6 +1386,7 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("GET", f"{P}/snapshots/synthetic/{N}", synthetic_get),
     ("GET", f"{P}/snapshots/{N}", snapshots_get),
     ("PUT", f"/uploads/snapshots/{N}", snapshots_upload),
+    ("POST", f"{P}/snapshots/{N}/bytes", snapshots_bytes),
     ("PUT", f"/uploads/contexts/{N}", contexts_signed_upload),
     ("POST", f"{P}/snapshots/{N}/update", snapshots_update),
     ("POST", f"{P}/snapshots/{N}/delete", snapshots_delete),
@@ -1342,15 +1434,99 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
 ]
 
 
-def _contract_problems(
-    method: str, path: str, call: Call, status: int, data: Any
+# What each route's request envelope names, as the plane binds it
+# (`gfi.http.routes.bind`): its resource kind, and its name as a literal, a
+# path parameter (`{name}`), or the payload's `name` (`PAYLOAD`), any name
+# when the payload has none, as an experiment named by no one.
+PAYLOAD = "payload.name"
+RESOURCES: dict[str, tuple[str, str]] = {
+    "auth.logout": ("workspace", "auth"),
+    "contexts.create": ("context", PAYLOAD),
+    "contexts.upload": ("context", "{name}"),
+    "contexts.refresh": ("context", "{name}"),
+    "contexts.append": ("context", "{name}"),
+    "contexts.label": ("context", "{name}"),
+    "contexts.delete": ("context", "{name}"),
+    "experiments.create": ("experiment", PAYLOAD),
+    "experiments.update": ("experiment", "{name}"),
+    "experiments.run": ("experiment", "{name}"),
+    "experiments.cancel": ("experiment", "{name}"),
+    "experiments.delete": ("experiment", "{name}"),
+    "predictors.create": ("predictor", PAYLOAD),
+    "predictors.update": ("predictor", "{name}"),
+    "predictors.deploy": ("predictor", "{name}"),
+    "predictors.delete": ("predictor", "{name}"),
+    "predictors.predict": ("predictor", "{name}"),
+    "environments.promote": ("predictor", "{name}"),
+    "environments.rollback": ("predictor", "{name}"),
+    "predict": ("predictor", "ad-hoc"),
+    "estimate": ("estimate", "estimate"),
+    "sources.create": ("source", PAYLOAD),
+    "sources.test": ("source", "{source}"),
+    "sources.preview": ("source", "{source}"),
+    "sources.delete": ("source", "{source}"),
+    "keys.create": ("api-key", "new"),
+    "keys.rotate": ("api-key", "{key}"),
+    "keys.revoke": ("api-key", "{key}"),
+    "keys.delete": ("api-key", "{key}"),
+    "snapshots.create": ("snapshot", PAYLOAD),
+    "snapshots.update": ("snapshot", "{snapshot}"),
+    "snapshots.delete": ("snapshot", "{snapshot}"),
+    "snapshots.create_synthetic": ("snapshot", PAYLOAD),
+    "runs.create": ("run", PAYLOAD),
+    "runs.cancel": ("run", "{run}"),
+}
+
+
+def resource_problems(
+    op: contract.Operation, path: str, envelope: dict[str, Any]
 ) -> list[str]:
-    """How a request the SDK sent, or the fake's reply to it, departs from the contract."""
-    if path.startswith("/uploads/"):
-        return []  # an upload URL is the object store's, outside the API
-    op = contract.operation(method, path)
-    if op is None:
-        return [f"{method} {path} is not a route of api/openapi.yaml"]
+    """How a request envelope's `resource` departs from what the route binds (`RESOURCES`)."""
+    if op.id not in RESOURCES:
+        return [f"{op.id}: the fake names no resource for the route's envelope"]
+    kind, rule = RESOURCES[op.id]
+    if rule == PAYLOAD:
+        named = envelope["payload"].get("name")
+    elif rule.startswith("{"):
+        named = op.bound(path)[rule[1:-1]]
+    else:
+        named = rule
+    sent = envelope["resource"]
+    if sent["kind"] != kind or named not in (None, sent["name"]):
+        return [f"{op.id}: resource route/envelope mismatch, {sent} for {kind}/{named}"]
+    return []
+
+
+def request_problems(
+    fake: Fake, op: contract.Operation, call: Call, rid: str
+) -> list[str]:
+    """How a request departs from what the plane takes, which it refuses with 422.
+
+    Its query and headers keep to the route's parameters, its body to the
+    route's media types, and its envelope names the fake's project, the
+    request's id and the resource the route binds.
+    """
+    problems = contract.parameter_problems(op, "query", call.query)
+    problems += contract.parameter_problems(op, "header", call.headers)
+    problems += contract.media_problems(
+        op, call.headers.get("content-type", ""), call.body
+    )
+    if call.envelope is not None:
+        sent = call.envelope
+        if sent.get("api_version") != "gf/v1" or sent.get("request_id") != rid:
+            problems.append(f"{op.id}: the envelope names another version or request")
+        if sent.get("project") != fake.project:
+            problems.append(
+                f"{op.id}: project path/envelope mismatch, {sent.get('project')!r}"
+            )
+        problems += resource_problems(op, call.path, sent)
+    return [f"{op.id} request: {p}" for p in problems]
+
+
+def reply_problems(
+    op: contract.Operation, call: Call, status: int, data: Any
+) -> list[str]:
+    """How a request's body, or the fake's reply to it, departs from the route's schemas."""
     sent = call.envelope if call.envelope is not None else call.payload
     if call.table is not None and sent is not None:
         # Queries sent as Arrow: the envelope rides in the stream's metadata without them.
@@ -1433,16 +1609,16 @@ def serve(fake: Fake) -> Callable[[], None]:
             parts = urlsplit(self.path)
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             headers = {k.lower(): v for k, v in self.headers.items()}
-            call = Call(
-                self.command,
-                parts.path,
-                dict(parse_qsl(parts.query)),
-                headers,
-                body=body,
-            )
+            query = dict(parse_qsl(parts.query, keep_blank_values=True))
+            if parts.path in PAGES:
+                self.send(*_page(self.command, parts.path, query))
+                return
+            call = Call(self.command, parts.path, query, headers, body=body)
             rid = headers.get("x-gf-request-id", "r-none")
             status, result, extra = 500, None, {}
-            envelope = not parts.path.startswith(("/v1/device-logins", "/uploads/"))
+            upload = parts.path.startswith("/uploads/")
+            op = None if upload else contract.operation(self.command, parts.path)
+            envelope = not upload and not parts.path.startswith("/v1/device-logins")
             try:
                 if (
                     parts.path.startswith(P)
@@ -1461,15 +1637,18 @@ def serve(fake: Fake) -> Callable[[], None]:
                 elif kind == "application/json" and body:
                     value = json.loads(body)
                     if envelope:
-                        assert (
-                            value["api_version"] == "gf/v1"
-                            and value["request_id"] == rid
-                        )
-                        assert value["project"] in (fake.project, None)
-                        call.envelope, call.payload = value, value["payload"]
+                        call.envelope, call.payload = value, value.get("payload")
                     else:
                         call.payload = value
                 fake.calls.append(call)
+                if op is None and not upload:
+                    raise Refusal(
+                        404, "NotFound", f"no route {self.command} {parts.path}"
+                    )
+                refused = [] if op is None else request_problems(fake, op, call, rid)
+                if refused:
+                    fake.errors.extend(refused)
+                    raise Refusal(422, "ValidationError", refused[0])
                 prediction = re.fullmatch(f"{P}/predictions/(.+)", parts.path)
                 if prediction:
                     status, result, extra = pending.pop(prediction[1])
@@ -1493,12 +1672,22 @@ def serve(fake: Fake) -> Callable[[], None]:
                     500,
                     {"error": {"code": "Internal", "message": str(error)}},
                 )
-            fake.errors += _contract_problems(
-                self.command, parts.path, call, status, data
-            )
+            if op is not None:
+                fake.errors += reply_problems(op, call, status, data)
+            elif not upload:
+                fake.errors.append(
+                    f"{self.command} {parts.path} is not a route of api/openapi.yaml"
+                )
+            if status == 503:  # the contract: every 503 carries Retry-After
+                extra = {**extra, "Retry-After": "0"}
             raw, kind = json.dumps(data).encode(), "application/json"
             if status == 200 and call.table is not None and _accepts_arrow(headers):
                 raw, kind = _arrow_answer(data), ARROW
+            self.send(status, raw, kind, extra)
+
+        def send(
+            self, status: int, raw: bytes, kind: str, extra: Mapping[str, str]
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(raw)))
@@ -1513,8 +1702,50 @@ def serve(fake: Fake) -> Callable[[], None]:
     fake.url = f"http://127.0.0.1:{server.server_port}"
 
     def stop() -> None:
+        fake.errors += _unreachable(fake.links)
         server.shutdown()
         server.server_close()
         thread.join()
 
     return stop
+
+
+# The console's pages the fake links to, and the query each takes: the
+# project, a versioned asset's `v`, and a device login's code.
+PAGES = {"/": {"project", "v"}, "/device": {"code"}}
+
+
+def _page(
+    method: str, path: str, query: Mapping[str, str]
+) -> tuple[int, bytes, str, dict[str, str]]:
+    """A console page as the plane serves it: HTML, or 422 for a query it does not take."""
+    if method != "GET":
+        return 405, b"", "text/plain", {}
+    if not set(query) <= PAGES[path]:
+        return (
+            422,
+            b'{"code":"ValidationError","message":"unexpected query"}',
+            "application/json",
+            {},
+        )
+    return (
+        200,
+        b"<!doctype html><title>General Forecast</title>",
+        "text/html; charset=utf-8",
+        {},
+    )
+
+
+def _unreachable(links: set[str]) -> list[str]:
+    """The console links that do not open a page."""
+    import httpx
+
+    problems = []
+    with httpx.Client(trust_env=False) as client:
+        for link in sorted(links):
+            answer = client.get(link)
+            if answer.status_code != 200 or not answer.headers[
+                "content-type"
+            ].startswith("text/html"):
+                problems.append(f"the link {link} answers {answer.status_code}")
+    return problems

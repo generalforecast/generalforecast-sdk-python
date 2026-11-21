@@ -64,25 +64,32 @@ export interface Envelope {
 
 /**
  * ValidationError 422, NotFound 404, Unauthorized 401, CapacityExceeded 422,
- * ModelNotReady 503, Internal 500, Conflict 409 (a compare-and-swap on a stale
+ * ModelNotReady 503 (a model, or the runtime or pool serving it, is still loading,
+ * starting or compiling), Internal 500, Conflict 409 (a compare-and-swap on a stale
  * generation), Unsupported 501 (an operation this server does not offer, such as a
  * hosted route on gf serve), PaymentRequired 402 (the workspace's plan or credit does
  * not cover the request), AmbiguousReference 422 (a short model name whose task nothing
- * decides: pass `task`, or the full id). Hosted fine-tuning's gates, with their
- * `reason`: `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
- * Enterprise plan) and `credits_exhausted` (an enforced workspace has used its credits,
- * which also refuses predictions); `Unauthorized` 403 `fine_tuning_unavailable`
- * (fine-tuning is not turned on for the project); `CapacityExceeded` 429
- * `run_limit_reached` (the project has as many runs queued or running as it may),
- * `quota_exceeded` (the project's training data would pass its quota) and
- * `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`, and lift only
- * when the caller ends a run or deletes data, so clients do not retry them; a 429
- * `rate_limited` passes on its own and may be retried. A run's create is refused with
- * `Conflict` 409 `run_active` (another run of the fine-tune is still queued or running)
- * or `base_mismatch` (the fine-tune's versions train from another base), and with
- * `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the base).
+ * decides: pass `task`, or the full id), Unavailable 503 or 504 (a service the request
+ * needs, such as a database, storage or a control plane, is down for now or did not
+ * answer in time). Every 503 carries `Retry-After`, and a client may retry it, as it
+ * may a 504. A code the server raises that is not in this enum is sent as the enum code
+ * it folds into, with the code itself, in snake case, as `reason`:
+ * `CredentialUnavailable` 503 is `Unavailable` with reason `credential_unavailable`.
+ * Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
+ * `plan_required` (fine-tuning needs a Pro or Enterprise plan) and `credits_exhausted`
+ * (an enforced workspace has used its credits, which also refuses predictions);
+ * `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not turned on for the
+ * project); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs
+ * queued or running as it may), `quota_exceeded` (the project's training data would
+ * pass its quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and
+ * `actual`, and lift only when the caller ends a run or deletes data, so clients do not
+ * retry them; a 429 `rate_limited` passes on its own and may be retried. A run's create
+ * is refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
+ * queued or running) or `base_mismatch` (the fine-tune's versions train from another
+ * base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
+ * base).
  */
-export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired", "AmbiguousReference"] as const;
+export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired", "AmbiguousReference", "Unavailable"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /**
@@ -116,7 +123,8 @@ export type Kind = "int" | "float" | "0/1" | "category" | "text" | "timestamp" |
 
 /**
  * inputs by rule rather than by list: `exclude` removes columns from the inferred set,
- * `types` overrides inferred types; forecast predictors use `past` and `future` instead
+ * `types` overrides inferred types; a forecaster's `past` and `future` are inputs
+ * whatever else is, and its other inputs are past covariates
  */
 export interface Inputs {
   exclude?: string[];
@@ -154,11 +162,11 @@ export interface SnapshotReference {
  * the ad hoc predictor: a predictor's fields, with `context` as rows or by reference to
  * a snapshot the service holds (`{"snapshot": "<digest>"}`, uploaded with `PUT
  * /snapshots?digest=`), and `queries` as rows, or as the Arrow stream the request is.
- * `task` decides a short model name's entry; `exclude`, `types`, `past` and `future`
- * take a predictor spec's forms beside `inputs`'
+ * `exclude`, `types`, `past` and `future` take a predictor spec's forms beside
+ * `inputs`, or sit in `inputs` as `Inputs`, once. The target column decides a short
+ * model name's entry; there is no `task`
  */
 export interface Manifest {
-  task?: Task;
   exclude?: string[];
   types?: Record<string, ColumnType>;
   past?: string[];
@@ -226,11 +234,15 @@ export interface ManifestRequest extends Envelope {
  */
 export type AsOfRequest = string | number;
 
-/** a predictor's payload: the queries, and `as_of` for a live context */
+/**
+ * a predictor's payload: the queries, `as_of` for a live context, and `context` for a
+ * predictor whose lock takes its context with each request, which only gf serve serves.
+ * The environment is the route's `?env=`.
+ */
 export interface Queries {
   queries: Row[];
   as_of?: AsOfRequest;
-  env?: Name;
+  context?: Row[];
 }
 
 export interface QueriesRequest extends Envelope {
@@ -526,8 +538,9 @@ export interface ModelArchitecture {
 
 /**
  * the catalog's description of a served model: `model` is the resolved id with its
- * content digest, `limits` what one call may send here, `warm_shapes` the shapes
- * compiled at startup
+ * content digest, `limits` the model's own sizes as the catalog gives them (the same
+ * from gf serve and the hosted plane), and `warm_shapes` the shapes compiled at
+ * startup, empty where none were
  */
 export interface Model {
   short: string | null;
@@ -1448,6 +1461,9 @@ export interface SyntheticBatchCreated {
   count: number;
   snapshots: Name[];
   state: SyntheticBatchState;
+  created: number;
+  origin: Origin;
+  url: string;
 }
 
 /**
@@ -1477,6 +1493,9 @@ export interface SyntheticBatch {
   count: number;
   snapshots: Name[];
   state: SyntheticBatchState;
+  created: number;
+  origin: Origin;
+  url: string;
   seed: number;
   options: SyntheticBatchCreate;
   tables: SyntheticTable[];
@@ -1626,10 +1645,12 @@ export interface ServingContext {
  * serving facts: `context` is the context the environment is serving now,
  * `accepted_version`/`serving_version` compare the newest accepted write of a live
  * context with the one being served, `fresh` says whether they agree (null without a
- * context)
+ * context); `error` is set while the environment serves its last good view and a
+ * rebuild of it keeps failing, else null
  */
 export interface Metrics {
   status: State;
+  error: string | null;
   context: ServingContext | null;
   accepted_version: number | string | null;
   serving_version: number | string | null;
@@ -1805,17 +1826,22 @@ export type SourceKind = "bigquery" | "gcs" | "snowflake" | "databricks" | "s3" 
 export interface Source {
   name: Name;
   kind: SourceKind;
-  state: "ready" | "failing" | "expired";
+  access: "service_account" | "secret";
+  state: "untested" | "connected" | "unauthorized" | "not_found" | "unavailable" | "expired";
   config: Record<string, string>;
   secret_expires: string | null;
   tested_at: string | null;
+  tables: number | null;
+  contexts: number;
   error: string | null;
   origin: Origin;
   created: string;
   url: string;
 }
 
+/** `available` says whether this plane can connect sources at all */
 export interface SourceList {
+  available: boolean;
   sources: Source[];
 }
 
@@ -2972,15 +2998,22 @@ export interface SourceCreate {
   secret?: string;
 }
 
+/** a table of the source's location, as the warehouse lists it */
 export interface SourceTable {
   name: string;
-  rows: number | null;
-  bytes: number | null;
-  updated: string | null;
+  type: string;
+  readable: boolean;
 }
 
+/**
+ * the tables of the source's location, the BigQuery `project` and `dataset`, whose
+ * names start with `prefix`; `more` says the warehouse holds more than were listed
+ */
 export interface SourceTables {
+  project: string;
+  dataset: string;
   tables: SourceTable[];
+  more: boolean;
 }
 
 /** one `table` or a `sql` query; the answer is its first 20 rows */
@@ -3012,6 +3045,19 @@ export interface RowsReply extends Envelope {
 
 export interface ReceivedReply extends Envelope {
   result: Received;
+}
+
+/**
+ * the bytes of a snapshot's upload the plane holds so far, of the `bytes` it declared
+ */
+export interface SnapshotReceived {
+  name: Name;
+  received: number;
+  bytes: number;
+}
+
+export interface SnapshotReceivedReply extends Envelope {
+  result: SnapshotReceived;
 }
 
 export interface DeletedReply extends Envelope {
@@ -3199,6 +3245,7 @@ export const ROUTES = {
   "snapshots.get": { method: "GET", path: "/v1/projects/{project}/snapshots/{snapshot}", request: "null", reply: "SnapshotReply", body: null },
   "snapshots.update": { method: "POST", path: "/v1/projects/{project}/snapshots/{snapshot}/update", request: "SnapshotUpdateRequest", reply: "SnapshotReply", body: "application/json" },
   "snapshots.delete": { method: "POST", path: "/v1/projects/{project}/snapshots/{snapshot}/delete", request: "EmptyRequest", reply: "SnapshotReply", body: "application/json" },
+  "snapshots.bytes": { method: "POST", path: "/v1/projects/{project}/snapshots/{snapshot}/bytes", request: "null", reply: "SnapshotReceivedReply", body: "application/octet-stream" },
   "runs.list": { method: "GET", path: "/v1/projects/{project}/runs", request: "null", reply: "RunListReply", body: null },
   "runs.create": { method: "POST", path: "/v1/projects/{project}/runs", request: "RunCreateRequest", reply: "RunReply", body: "application/json" },
   "runs.get": { method: "GET", path: "/v1/projects/{project}/runs/{run}", request: "null", reply: "RunReply", body: null },

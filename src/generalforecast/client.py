@@ -175,8 +175,10 @@ class Client(_Base):
     `GF_API_KEY`, then the credentials file `gf login` writes. `GF_PROJECT`
     and `GF_URL` override the project and server. Requests honour
     `HTTPS_PROXY` and the system CA bundle unless `trust_env=False`. Safe
-    requests are retried `retries` times after a transient failure. Use it
-    as a context manager, or call `close`.
+    requests are retried `retries` times after a transient failure: a lost
+    connection, a 502, 503 or 504, or a 429 that passes, but not a 429 for
+    a standing limit such as `run_limit_reached`. Use it as a context
+    manager, or call `close`.
     """
 
     def __init__(
@@ -540,7 +542,12 @@ def login(
 
 
 def logout() -> None:
-    """Forgets this process's login; a token `gf.login()` minted is revoked too."""
+    """Forgets this process's login; a token `gf.login()` minted is revoked too.
+
+    Raises:
+        Error: When the service did not revoke the token, which stays valid
+            until it expires; the login is forgotten all the same.
+    """
     session = _auth.SESSION
     _auth.SESSION = None
     reset()
@@ -549,8 +556,6 @@ def logout() -> None:
     transport = _http.Transport(connection(session.url, session.token, session.project))
     try:
         transport.send(_http.auth_logout())
-    except Error:
-        pass
     finally:
         transport.close()
 

@@ -195,7 +195,11 @@ before anything is sent.
 `experiments`, `predictors`, `fine_tunes`, `sources`, `keys` and `models`. Every error is a
 `gf.Error` with `message`, `hint`, `code`, `reason`, `request_id` and
 `recoverable`, false only for `Internal`, `Unavailable` and failed runs or
-deploys.
+deploys. Reads, and writes named by their id, are sent again after a lost
+connection, a 502, 503 or 504, or a 429 that passes, such as `rate_limited`;
+a 429 for a limit that lifts only when you end a run or delete data
+(`run_limit_reached`, `quota_exceeded`, `snapshot_quota_exceeded`) is raised
+at once.
 
 ## License
 

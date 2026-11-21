@@ -321,24 +321,30 @@ class ErrorCode(StrEnum):
     """The ErrorCode values.
 
     ValidationError 422, NotFound 404, Unauthorized 401, CapacityExceeded 422,
-    ModelNotReady 503, Internal 500, Conflict 409 (a compare-and-swap on a stale
+    ModelNotReady 503 (a model, or the runtime or pool serving it, is still loading,
+    starting or compiling), Internal 500, Conflict 409 (a compare-and-swap on a stale
     generation), Unsupported 501 (an operation this server does not offer, such as a
     hosted route on gf serve), PaymentRequired 402 (the workspace's plan or credit does
     not cover the request), AmbiguousReference 422 (a short model name whose task
-    nothing decides: pass `task`, or the full id). Hosted fine-tuning's gates, with
-    their `reason`: `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
-    Enterprise plan) and `credits_exhausted` (an enforced workspace has used its
-    credits, which also refuses predictions); `Unauthorized` 403
-    `fine_tuning_unavailable` (fine-tuning is not turned on for the project);
-    `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs queued or
-    running as it may), `quota_exceeded` (the project's training data would pass its
-    quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`,
-    and lift only when the caller ends a run or deletes data, so clients do not retry
-    them; a 429 `rate_limited` passes on its own and may be retried. A run's create is
-    refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
-    queued or running) or `base_mismatch` (the fine-tune's versions train from another
-    base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
-    base).
+    nothing decides: pass `task`, or the full id), Unavailable 503 or 504 (a service
+    the request needs, such as a database, storage or a control plane, is down for now
+    or did not answer in time). Every 503 carries `Retry-After`, and a client may retry
+    it, as it may a 504. A code the server raises that is not in this enum is sent as
+    the enum code it folds into, with the code itself, in snake case, as `reason`:
+    `CredentialUnavailable` 503 is `Unavailable` with reason `credential_unavailable`.
+    Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
+    `plan_required` (fine-tuning needs a Pro or Enterprise plan) and
+    `credits_exhausted` (an enforced workspace has used its credits, which also refuses
+    predictions); `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not
+    turned on for the project); `CapacityExceeded` 429 `run_limit_reached` (the project
+    has as many runs queued or running as it may), `quota_exceeded` (the project's
+    training data would pass its quota) and `snapshot_quota_exceeded`. Those three 429s
+    carry `limit` and `actual`, and lift only when the caller ends a run or deletes
+    data, so clients do not retry them; a 429 `rate_limited` passes on its own and may
+    be retried. A run's create is refused with `Conflict` 409 `run_active` (another run
+    of the fine-tune is still queued or running) or `base_mismatch` (the fine-tune's
+    versions train from another base), and with `ValidationError` 422
+    `base_is_fine_tune` (a fine-tune sent as the base).
     """
 
     ValidationError = "ValidationError"
@@ -351,6 +357,7 @@ class ErrorCode(StrEnum):
     Unsupported = "Unsupported"
     PaymentRequired = "PaymentRequired"
     AmbiguousReference = "AmbiguousReference"
+    Unavailable = "Unavailable"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -421,8 +428,8 @@ class Inputs(Payload):
     """The Inputs schema.
 
     inputs by rule rather than by list: `exclude` removes columns from the inferred
-    set, `types` overrides inferred types; forecast predictors use `past` and `future`
-    instead
+    set, `types` overrides inferred types; a forecaster's `past` and `future` are
+    inputs whatever else is, and its other inputs are past covariates
     """
 
     exclude: tuple[str, ...] | None = None
@@ -497,15 +504,15 @@ class Manifest(Payload):
     the ad hoc predictor: a predictor's fields, with `context` as rows or by reference
     to a snapshot the service holds (`{"snapshot": "<digest>"}`, uploaded with `PUT
     /snapshots?digest=`), and `queries` as rows, or as the Arrow stream the request is.
-    `task` decides a short model name's entry; `exclude`, `types`, `past` and `future`
-    take a predictor spec's forms beside `inputs`'
+    `exclude`, `types`, `past` and `future` take a predictor spec's forms beside
+    `inputs`, or sit in `inputs` as `Inputs`, once. The target column decides a short
+    model name's entry; there is no `task`
     """
 
     model: ModelField
     target: str
     context: tuple[Row, ...] | SnapshotReference
     queries: tuple[Row, ...]
-    task: Task | None = None
     exclude: tuple[str, ...] | None = None
     types: dict[str, ColumnType] | None = None
     past: tuple[str, ...] | None = None
@@ -524,7 +531,6 @@ class Manifest(Payload):
     selection: Selection | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("task", "task", False, _decode_Task),
         Field("exclude", "exclude", False, _items(_text)),
         Field("types", "types", False, _mapping(_decode_ColumnType)),
         Field("past", "past", False, _items(_text)),
@@ -666,16 +672,21 @@ _decode_AsOfRequest: Decoder = _union(_text, _number)
 
 @dataclass(frozen=True, kw_only=True)
 class Queries(Payload):
-    """A predictor's payload: the queries, and `as_of` for a live context."""
+    """The Queries schema.
+
+    a predictor's payload: the queries, `as_of` for a live context, and `context` for a
+    predictor whose lock takes its context with each request, which only gf serve
+    serves. The environment is the route's `?env=`.
+    """
 
     queries: tuple[Row, ...]
     as_of: AsOfRequest | None = None
-    env: Name | None = None
+    context: tuple[Row, ...] | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("queries", "queries", True, _items(_decode_Row)),
         Field("as_of", "as_of", False, _decode_AsOfRequest),
-        Field("env", "env", False, _decode_Name),
+        Field("context", "context", False, _items(_decode_Row)),
     )
 
 
@@ -1301,8 +1312,9 @@ class Model(Payload):
     """The Model schema.
 
     the catalog's description of a served model: `model` is the resolved id with its
-    content digest, `limits` what one call may send here, `warm_shapes` the shapes
-    compiled at startup
+    content digest, `limits` the model's own sizes as the catalog gives them (the same
+    from gf serve and the hosted plane), and `warm_shapes` the shapes compiled at
+    startup, empty where none were
     """
 
     short: str | None
@@ -3676,6 +3688,9 @@ class SyntheticBatchCreated(Payload):
     count: int
     snapshots: tuple[Name, ...]
     state: SyntheticBatchState
+    created: float
+    origin: Origin
+    url: str
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_SyntheticBatchName),
@@ -3683,6 +3698,9 @@ class SyntheticBatchCreated(Payload):
         Field("count", "count", True, _integer),
         Field("snapshots", "snapshots", True, _items(_decode_Name)),
         Field("state", "state", True, _decode_SyntheticBatchState),
+        Field("created", "created", True, _number),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("url", "url", True, _text),
     )
 
 
@@ -3733,6 +3751,9 @@ class SyntheticBatch(Payload):
     count: int
     snapshots: tuple[Name, ...]
     state: SyntheticBatchState
+    created: float
+    origin: Origin
+    url: str
     seed: int
     options: SyntheticBatchCreate
     tables: tuple[SyntheticTable, ...]
@@ -3744,6 +3765,9 @@ class SyntheticBatch(Payload):
         Field("count", "count", True, _integer),
         Field("snapshots", "snapshots", True, _items(_decode_Name)),
         Field("state", "state", True, _decode_SyntheticBatchState),
+        Field("created", "created", True, _number),
+        Field("origin", "origin", True, _record(Origin)),
+        Field("url", "url", True, _text),
         Field("seed", "seed", True, _integer),
         Field("options", "options", True, _record(SyntheticBatchCreate)),
         Field("tables", "tables", True, _items(_record(SyntheticTable))),
@@ -4148,10 +4172,12 @@ class Metrics(Payload):
     serving facts: `context` is the context the environment is serving now,
     `accepted_version`/`serving_version` compare the newest accepted write of a live
     context with the one being served, `fresh` says whether they agree (null without a
-    context)
+    context); `error` is set while the environment serves its last good view and a
+    rebuild of it keeps failing, else null
     """
 
     status: State
+    error: str | None
     context: ServingContext | None
     accepted_version: int | str | None
     serving_version: int | str | None
@@ -4162,6 +4188,7 @@ class Metrics(Payload):
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("status", "status", True, _decode_State),
+        Field("error", "error", True, _union(_text, _null)),
         Field("context", "context", True, _union(_record(ServingContext), _null)),
         Field(
             "accepted_version",
@@ -4657,10 +4684,15 @@ class Source(Payload):
 
     name: Name
     kind: SourceKind
-    state: Literal["ready", "failing", "expired"]
+    access: Literal["service_account", "secret"]
+    state: Literal[
+        "untested", "connected", "unauthorized", "not_found", "unavailable", "expired"
+    ]
     config: dict[str, str]
     secret_expires: str | None
     tested_at: str | None
+    tables: int | None
+    contexts: int
     error: str | None
     origin: Origin
     created: str
@@ -4669,10 +4701,25 @@ class Source(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Name),
         Field("kind", "kind", True, _decode_SourceKind),
-        Field("state", "state", True, _literal("ready", "failing", "expired")),
+        Field("access", "access", True, _literal("service_account", "secret")),
+        Field(
+            "state",
+            "state",
+            True,
+            _literal(
+                "untested",
+                "connected",
+                "unauthorized",
+                "not_found",
+                "unavailable",
+                "expired",
+            ),
+        ),
         Field("config", "config", True, _mapping(_text)),
         Field("secret_expires", "secret_expires", True, _union(_text, _null)),
         Field("tested_at", "tested_at", True, _union(_text, _null)),
+        Field("tables", "tables", True, _union(_integer, _null)),
+        Field("contexts", "contexts", True, _integer),
         Field("error", "error", True, _union(_text, _null)),
         Field("origin", "origin", True, _record(Origin)),
         Field("created", "created", True, _text),
@@ -4682,11 +4729,13 @@ class Source(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class SourceList(Payload):
-    """The SourceList schema."""
+    """`available` says whether this plane can connect sources at all."""
 
+    available: bool
     sources: tuple[Source, ...]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("available", "available", True, _boolean),
         Field("sources", "sources", True, _items(_record(Source))),
     )
 
@@ -7858,29 +7907,37 @@ class SourceCreate(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class SourceTable(Payload):
-    """The SourceTable schema."""
+    """A table of the source's location, as the warehouse lists it."""
 
     name: str
-    rows: int | None
-    bytes: int | None
-    updated: str | None
+    type: str
+    readable: bool
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _text),
-        Field("rows", "rows", True, _union(_integer, _null)),
-        Field("bytes", "bytes", True, _union(_integer, _null)),
-        Field("updated", "updated", True, _union(_text, _null)),
+        Field("type", "type", True, _text),
+        Field("readable", "readable", True, _boolean),
     )
 
 
 @dataclass(frozen=True, kw_only=True)
 class SourceTables(Payload):
-    """The SourceTables schema."""
+    """The SourceTables schema.
 
+    the tables of the source's location, the BigQuery `project` and `dataset`, whose
+    names start with `prefix`; `more` says the warehouse holds more than were listed
+    """
+
+    project: str
+    dataset: str
     tables: tuple[SourceTable, ...]
+    more: bool
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("project", "project", True, _text),
+        Field("dataset", "dataset", True, _text),
         Field("tables", "tables", True, _items(_record(SourceTable))),
+        Field("more", "more", True, _boolean),
     )
 
 
@@ -8002,6 +8059,43 @@ class ReceivedReply(Payload):
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
         Field("result", "result", True, _record(Received)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SnapshotReceived(Payload):
+    """The SnapshotReceived schema.
+
+    the bytes of a snapshot's upload the plane holds so far, of the `bytes` it declared
+    """
+
+    name: Name
+    received: int
+    bytes: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _decode_Name),
+        Field("received", "received", True, _integer),
+        Field("bytes", "bytes", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SnapshotReceivedReply(Payload):
+    """The SnapshotReceivedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SnapshotReceived
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SnapshotReceived)),
     )
 
 
@@ -9098,6 +9192,14 @@ ROUTES: tuple[Route, ...] = (
         EmptyRequest,
         SnapshotReply,
         "application/json",
+    ),
+    Route(
+        "snapshots.bytes",
+        "POST",
+        "/v1/projects/{project}/snapshots/{snapshot}/bytes",
+        None,
+        SnapshotReceivedReply,
+        "application/octet-stream",
     ),
     Route("runs.list", "GET", "/v1/projects/{project}/runs", None, RunListReply, None),
     Route(

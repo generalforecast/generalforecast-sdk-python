@@ -49,7 +49,8 @@ from generalforecast.types import (
     Snapshot,
     Source,
     SourceKind,
-    SourceTable,
+    SourceList,
+    SourceTables,
     SyntheticBatch,
     Tag,
     Task,
@@ -531,8 +532,8 @@ class Predictors(_Sync):
 class Sources(_Sync):
     """Sources: workspace connections to warehouses and buckets."""
 
-    def list(self) -> builtins.list[Source]:
-        """The workspace's sources."""
+    def list(self) -> SourceList:
+        """The workspace's sources; `available` is False where the service connects none."""
         return self._run(_ops.source_list())
 
     def get(self, source: str | Source) -> Source:
@@ -551,8 +552,11 @@ class Sources(_Sync):
 
     def tables(
         self, source: str | Source, *, prefix: str | None = None
-    ) -> builtins.list[SourceTable]:
-        """A source's tables."""
+    ) -> SourceTables:
+        """A source's tables, only those whose names start with `prefix` when given.
+
+        `more` says the warehouse holds more than were listed.
+        """
         return self._run(_ops.source_tables(source, prefix))
 
     def preview(
@@ -770,13 +774,12 @@ class Runs(_Sync):
     def list(
         self,
         *,
-        name: str | None = None,
         state: str | None = None,
         data_digest: str | None = None,
         tag: str | None = None,
     ) -> builtins.list[FineTuneRun]:
         """The project's runs, only those matching what is given."""
-        params = {"name": name, "state": state, "data_digest": data_digest, "tag": tag}
+        params = {"state": state, "data_digest": data_digest, "tag": tag}
         return self._run(_ops.run_list(params))
 
     def wait(
@@ -1197,7 +1200,7 @@ class AsyncPredictors(_Async):
 class AsyncSources(_Async):
     """`Sources`, awaited."""
 
-    async def list(self) -> builtins.list[Source]:
+    async def list(self) -> SourceList:
         """See `Sources.list`."""
         return await self._run(_ops.source_list())
 
@@ -1217,7 +1220,7 @@ class AsyncSources(_Async):
 
     async def tables(
         self, source: str | Source, *, prefix: str | None = None
-    ) -> builtins.list[SourceTable]:
+    ) -> SourceTables:
         """See `Sources.tables`."""
         return await self._run(_ops.source_tables(source, prefix))
 
@@ -1403,13 +1406,12 @@ class AsyncRuns(_Async):
     async def list(
         self,
         *,
-        name: str | None = None,
         state: str | None = None,
         data_digest: str | None = None,
         tag: str | None = None,
     ) -> builtins.list[FineTuneRun]:
         """See `Runs.list`."""
-        params = {"name": name, "state": state, "data_digest": data_digest, "tag": tag}
+        params = {"state": state, "data_digest": data_digest, "tag": tag}
         return await self._run(_ops.run_list(params))
 
     async def wait(

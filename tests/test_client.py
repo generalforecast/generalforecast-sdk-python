@@ -95,6 +95,19 @@ def test_transient_failures_of_safe_requests_are_retried(fake):
     assert len(fake.calls_to("POST", r".*/keys")) == 1
 
 
+def test_a_429_is_retried_only_when_it_can_pass(fake):
+    fake.throttle["runs_list"] = ["rate_limited"]
+    assert gf.fine_tunes.runs.list() == []
+    assert len(fake.calls_to("GET", r".*/runs")) == 2
+    # A standing limit lifts only once the caller ends a run or deletes data.
+    for reason in ("run_limit_reached", "quota_exceeded", "snapshot_quota_exceeded"):
+        fake.throttle["runs_list"] = [reason]
+        with pytest.raises(gf.CapacityExceeded) as error:
+            gf.fine_tunes.runs.list()
+        assert error.value.reason == reason and error.value.limit == 1
+    assert len(fake.calls_to("GET", r".*/runs")) == 5
+
+
 def test_proxies_from_the_environment_are_honoured_unless_trust_env_is_false(fake, env):
     env.setenv("GF_PROJECT", "acme")
     env.setenv("HTTP_PROXY", "http://127.0.0.1:9")
@@ -154,10 +167,7 @@ def test_login_runs_the_device_flow_and_holds_the_token_in_memory(
     env.delenv("GF_API_KEY")
     me = gf.login()
     out = capsys.readouterr().out
-    assert (
-        f"Open {'https://app.generalforecast.com/device'} and enter the code WXHG-PTRB"
-        in out
-    )
+    assert f"Open {fake.url}/device and enter the code WXHG-PTRB" in out
     assert (
         "Logged in as maya@acme.com, project acme. This session holds a token until"
         in out
@@ -170,6 +180,21 @@ def test_login_runs_the_device_flow_and_holds_the_token_in_memory(
     assert fake.calls_to("GET", "/v1/auth/status")[-1].headers.get("authorization")
     gf.logout()
     assert _auth.SESSION is None and fake.calls_to("POST", "/v1/auth/logout")
+
+
+def test_a_failed_revoke_on_logout_is_raised_once_the_login_is_forgotten(fake, env):
+    env.delenv("GF_API_KEY")
+    gf.login()
+    fake.fail["auth_logout"] = 1
+    with pytest.raises(gf.Unavailable):
+        gf.logout()
+    assert _auth.SESSION is None
+
+
+def test_a_key_that_never_expires_reads_as_one(fake):
+    me = gf.whoami()
+    assert me.key.name == "notebook-maya-mbp" and me.key.expires is None
+    assert me.token_expires is None and me.key.state == "active"
 
 
 def test_an_interrupted_login_asks_for_a_key(fake, env, monkeypatch, capsys):
