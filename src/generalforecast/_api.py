@@ -589,15 +589,22 @@ class Usage(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class Timing(Payload):
-    """Where a call's time went, queueing and cold start apart from compute."""
+    """The Timing schema.
+
+    where a call's time went, queueing and cold start apart from compute;
+    `compile_seconds` is the time its steps spent compiling or loading programs they
+    waited on, which `compute_seconds`, its own execution, leaves out
+    """
 
     queued_seconds: float
     cold_start_seconds: float
     compute_seconds: float
+    compile_seconds: float | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("queued_seconds", "queued_seconds", True, _number),
         Field("cold_start_seconds", "cold_start_seconds", True, _number),
+        Field("compile_seconds", "compile_seconds", False, _number),
         Field("compute_seconds", "compute_seconds", True, _number),
     )
 
@@ -851,7 +858,11 @@ class PredictionAccepted(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class Limits(Payload):
-    """The most a model accepts in one call."""
+    """The Limits schema.
+
+    the sizes a model was trained and measured to; a call past them is admitted by the
+    device's memory and carries a note
+    """
 
     context_rows: int
     queries: int

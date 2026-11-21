@@ -193,10 +193,15 @@ export interface Usage {
   gpu_seconds?: number | null;
 }
 
-/** where a call's time went, queueing and cold start apart from compute */
+/**
+ * where a call's time went, queueing and cold start apart from compute;
+ * `compile_seconds` is the time its steps spent compiling or loading programs they
+ * waited on, which `compute_seconds`, its own execution, leaves out
+ */
 export interface Timing {
   queued_seconds: number;
   cold_start_seconds: number;
+  compile_seconds?: number;
   compute_seconds: number;
 }
 
@@ -307,7 +312,10 @@ export interface PredictionAccepted extends Envelope {
   result: PredictionStatus;
 }
 
-/** the most a model accepts in one call */
+/**
+ * the sizes a model was trained and measured to; a call past them is admitted by the
+ * device's memory and carries a note
+ */
 export interface Limits {
   context_rows: number;
   queries: number;
