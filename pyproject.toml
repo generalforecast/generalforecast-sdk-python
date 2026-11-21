@@ -1,6 +1,6 @@
 [project]
 name = "generalforecast"
-version = "0.2.5"
+version = "0.2.6"
 description = "Python SDK and gf CLI for General Forecast: contexts, experiments and predictors on structured data foundation models"
 readme = "README.md"
 license = "MIT"
@@ -39,7 +39,12 @@ Repository = "https://github.com/generalforecast/generalforecast-sdk-python"
 Issues = "https://github.com/generalforecast/generalforecast-sdk-python/issues"
 
 [dependency-groups]
-dev = ["pytest>=8.3", "pyyaml>=6.0.2", "ruff==0.16.10"]
+dev = [
+    "pytest>=8.3",
+    "pyyaml>=6.0.2",
+    "ruff==0.16.10",
+    "scikit-learn>=1.6",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]

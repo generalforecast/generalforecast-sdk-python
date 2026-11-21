@@ -137,6 +137,10 @@ class _Base:
         self._state = _ops.State()
         self._sleep: Callable[[float], Any] = time.sleep
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        """The client itself: a connection is shared, so scikit-learn's `clone` keeps it."""
+        return self
+
     @property
     def url(self) -> str:
         """The server this client talks to."""
