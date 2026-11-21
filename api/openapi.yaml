@@ -2689,6 +2689,7 @@ paths:
                           model: general-forecast/kumo-tabular-medium-classifier
                           short: kumo-medium
                           model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                          base_digest: null
                           task: classification
                           context: customers
                           context_version: 8
@@ -2803,11 +2804,14 @@ paths:
                       revision:
                         predictor: adult-income
                         number: 1
+                        status: building
+                        lock_digest: "sha256:6e8a0c2e4f6a8c0e2a4c6e8a0c2e4f6a8c0e2a4c6e8a0c2e4f6a8c0e2a4c6e8a"
                         spec: {context: adult, model: tabicl-v2, target: income}
                         resolved:
                           model: general-forecast/tabicl-v2-classifier
                           short: tabicl-v2
                           model_digest: "sha256:7a01c2e4b6d8f0a2c4e6f8a0b2d4f6a8c0e2f4a6b8d0f2a4c6e8f0a2b4d6f8a0"
+                          base_digest: null
                           task: classification
                           context: adult
                           context_version: 1
@@ -2911,6 +2915,7 @@ paths:
                         model: general-forecast/kumo-tabular-medium-classifier
                         short: kumo-medium
                         model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                        base_digest: null
                         task: classification
                         context: customers
                         context_version: 8
@@ -3013,11 +3018,14 @@ paths:
                       revision:
                         predictor: churn
                         number: 5
+                        status: building
+                        lock_digest: "sha256:3c5e7a9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c"
                         spec: {context: customers, model: kumo-medium, target: churned}
                         resolved:
                           model: general-forecast/kumo-tabular-medium-classifier
                           short: kumo-medium
                           model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                          base_digest: null
                           task: classification
                           context: customers
                           context_version: 8
@@ -3104,11 +3112,14 @@ paths:
                       revision:
                         predictor: churn
                         number: 5
+                        status: building
+                        lock_digest: "sha256:3c5e7a9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c"
                         spec: {context: customers, model: kumo-medium, target: churned}
                         resolved:
                           model: general-forecast/kumo-tabular-medium-classifier
                           short: kumo-medium
                           model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                          base_digest: null
                           task: classification
                           context: customers
                           context_version: 8
@@ -3142,11 +3153,14 @@ paths:
                       revision:
                         predictor: churn
                         number: 5
+                        status: ready
+                        lock_digest: "sha256:3c5e7a9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c"
                         spec: {context: customers, model: kumo-medium, target: churned}
                         resolved:
                           model: general-forecast/kumo-tabular-medium-classifier
                           short: kumo-medium
                           model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                          base_digest: null
                           task: classification
                           context: customers
                           context_version: 8
@@ -3181,11 +3195,14 @@ paths:
                       revision:
                         predictor: churn
                         number: 5
+                        status: pending
+                        lock_digest: "sha256:3c5e7a9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c"
                         spec: {context: customers, model: kumo-medium, target: churned}
                         resolved:
                           model: general-forecast/kumo-tabular-medium-classifier
                           short: kumo-medium
                           model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                          base_digest: null
                           task: classification
                           context: customers
                           context_version: 8
@@ -3226,11 +3243,14 @@ paths:
                       revisions:
                       - predictor: churn
                         number: 5
+                        status: ready
+                        lock_digest: "sha256:3c5e7a9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c"
                         spec: {context: customers, model: kumo-medium, target: churned}
                         resolved:
                           model: general-forecast/kumo-tabular-medium-classifier
                           short: kumo-medium
                           model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                          base_digest: null
                           task: classification
                           context: customers
                           context_version: 8
@@ -3270,11 +3290,14 @@ paths:
                     result:
                       predictor: churn
                       number: 5
+                      status: ready
+                      lock_digest: "sha256:3c5e7a9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c"
                       spec: {context: customers, model: kumo-medium, target: churned}
                       resolved:
                         model: general-forecast/kumo-tabular-medium-classifier
                         short: kumo-medium
                         model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8"
+                        base_digest: null
                         task: classification
                         context: customers
                         context_version: 8
@@ -10973,12 +10996,19 @@ components:
     Revision:
       type: object
       description: "an immutable spec with what it resolved to; the plane keeps its lock beside it"
-      required: [predictor, number, spec, resolved, origin, created]
+      required: [predictor, number, status, lock_digest, spec, resolved, origin, created]
       additionalProperties: false
       properties:
         predictor:
           $ref: "#/components/schemas/Name"
         number: {type: integer, minimum: 1}
+        status:
+          type: string
+          enum: [pending, building, ready, failed, stopped]
+          description: "where the revision's build stands: `pending` once registered (a dry run's plan is one), `building` while its program is prepared, `ready` once it can serve, `failed` when its build failed, `stopped` once retired; whether an environment serves it is the environment's `state`"
+        lock_digest:
+          $ref: "#/components/schemas/Digest"
+          description: "the digest of the lock the plane keeps beside the revision: what it resolved to, pinned; two revisions with one lock serve the same predictions"
         spec:
           $ref: "#/components/schemas/Spec"
         resolved:
@@ -13447,7 +13477,7 @@ components:
     Resolved:
       type: object
       description: "what a spec resolved to against its context version's rows, by the engine's `resolve`: the full model id and digest, the task, inputs and their types. A deploy compares these, so a short name and its full id are one predictor"
-      required: [model, short, model_digest, task, context, context_version, context_digest, inputs, types]
+      required: [model, short, model_digest, base_digest, task, context, context_version, context_digest, inputs, types]
       additionalProperties: false
       properties:
         model:
@@ -13458,6 +13488,11 @@ components:
           - "null"
         model_digest:
           $ref: "#/components/schemas/Digest"
+        base_digest:
+          oneOf:
+          - $ref: "#/components/schemas/Digest"
+          - type: "null"
+          description: "for a derived model, a project's fine-tune, the digest of the base it was trained from, as its `derived.base_digest` gives it; null for a catalog model"
         task:
           $ref: "#/components/schemas/Task"
         context:

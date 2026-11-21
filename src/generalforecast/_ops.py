@@ -377,6 +377,7 @@ def context_create(
     time: str | None = None,
     freshness: str | timedelta = "15m",
     wait: bool = True,
+    poll: float | None = None,
 ) -> Op:
     """Creates a context from exactly one origin (1.2)."""
     _checked_name(name, "context")
@@ -407,7 +408,8 @@ def context_create(
             payload["freshness_seconds"] = seconds
         reply = yield _http.contexts_create(payload)
         found = load(Context, reply.result)
-        return (yield from _settle(found, wait, "Reading" if live else "Importing"))
+        verb = "Reading" if live else "Importing"
+        return (yield from _settle(found, wait, verb, poll))
     if table is not None or sql is not None:
         raise InvalidInput(
             "table= and sql= read from a source", hint="pass source= with them"
@@ -467,7 +469,7 @@ def context_create(
         payload["columns"] = _types(columns, "columns")
     reply = yield _http.contexts_create(payload)
     found = yield from _upload(name, reply.result, body, rows, data)
-    return (yield from _settle(found, wait))
+    return (yield from _settle(found, wait, poll=poll))
 
 
 def _upload(
@@ -503,13 +505,16 @@ def _upload(
     return replace(found, state="uploading" if found.state == "ready" else found.state)
 
 
-def _settle(found: Context, wait: bool, verb: str = "Importing") -> Op:
-    """Polls a context until it is ready, or raises when it failed.
+def _settle(
+    found: Context, wait: bool, verb: str = "Importing", poll: float | None = None
+) -> Op:
+    """Polls a context until it is ready, every `poll` seconds, or raises when it failed.
 
     While the service imports it, the progress line says `verb` (`Importing`,
     `Refreshing`, or `Reading` for a live context's first read) and the rows
     read so far.
     """
+    _checked_poll(poll)
     if not wait:
         return found
     attempt = 0
@@ -520,7 +525,7 @@ def _settle(found: Context, wait: bool, verb: str = "Importing") -> Op:
             yield Say(text + read, log=text)
         else:
             yield Say(f"Verifying {found.name}")
-        yield Sleep(_poll(attempt))
+        yield Sleep(_poll(attempt, poll))
         attempt += 1
         reply = yield _http.contexts_get(found.name)
         unchanged = found.unchanged
@@ -532,7 +537,9 @@ def _settle(found: Context, wait: bool, verb: str = "Importing") -> Op:
     return found
 
 
-def context_upload(context: Any, data: Any, *, wait: bool = True) -> Op:
+def context_upload(
+    context: Any, data: Any, *, wait: bool = True, poll: float | None = None
+) -> Op:
     """Uploads a new version of a snapshot context, unless its rows are unchanged.
 
     A context of that name that does not exist yet is created from the
@@ -551,14 +558,16 @@ def context_upload(context: Any, data: Any, *, wait: bool = True) -> Op:
             {"name": name, "kind": "snapshot", "data": spec}
         )
     found = yield from _upload(name, reply.result, body, rows, data)
-    return (yield from _settle(found, wait))
+    return (yield from _settle(found, wait, poll=poll))
 
 
-def context_refresh(context: Any, *, wait: bool = True) -> Op:
+def context_refresh(
+    context: Any, *, wait: bool = True, poll: float | None = None
+) -> Op:
     """Imports a new version of a source snapshot context."""
     name = name_of(context, "context")
     reply = yield _http.contexts_refresh(name)
-    return (yield from _settle(load(Context, reply.result), wait, "Refreshing"))
+    return (yield from _settle(load(Context, reply.result), wait, "Refreshing", poll))
 
 
 def _records(rows: Any) -> list[dict[str, Any]]:
