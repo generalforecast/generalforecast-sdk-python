@@ -90,7 +90,7 @@ def context(fake: Fake, name: str, **values: Any) -> dict[str, Any]:
         "name": name, "kind": "snapshot", "state": "ready", "version": 1, "versions": 1,
         "digest": service.digest(name), "rows": 32561, "id": None, "time": None, "source": None,
         "freshness_seconds": None, "read_at": None, "error": None, "predictors": [], "experiments": [],
-        "origin": service.origin(), "created": NOW, "updated": NOW,
+        "origin": service.origin(), "created": NOW, "updated": NOW, "file": None,
         "url": fake.link(f"data/contexts/{name}"), "_versions": [], "_rows": [],
         "columns": [{"name": n, "type": t, "missing": m, "distinct": None} for n, t, m in columns],
     }  # fmt: skip
@@ -100,7 +100,7 @@ def context(fake: Fake, name: str, **values: Any) -> dict[str, Any]:
 
 
 def adult_context(fake: Fake, **values: Any) -> dict[str, Any]:
-    return context(fake, "adult", columns=ADULT_COLUMNS, _rows=ADULT_ROWS,
+    return context(fake, "adult", columns=ADULT_COLUMNS, file="adult.csv", _rows=ADULT_ROWS,
                    updated="2026-11-21T09:12:04Z", **values)  # fmt: skip
 
 
@@ -290,14 +290,16 @@ CLI_KEY, CI_KEY, OLD_KEY = (
 def _keys(fake: Fake) -> None:
     from generalforecast.types import STANDARD_PERMISSIONS
 
-    for key_id, name, expires, revoked in (
-        (CLI_KEY, "cli-maya-mbp", 1803029524.0, None),
-        (CI_KEY, "ci-deploy", None, None),
-        (OLD_KEY, "old-laptop", 1780272000.0, 1780272000.0),
+    for key_id, name, prefix, expires, used, revoked in (
+        (CLI_KEY, "cli-maya-mbp", "gf_19ab", 1803029524.0, 1795255470.0, None),
+        (CI_KEY, "ci-deploy", "gf_8f2c", None, 1795255320.0, None),
+        (OLD_KEY, "old-laptop", "gf_02cd", 1780272000.0, None, 1780272000.0),
     ):  # fmt: skip
         fake.keys[key_id] = {"id": key_id, "project": fake.project, "name": name,
                              "permissions": list(STANDARD_PERMISSIONS), "created_at": 1785542400.0,
-                             "expires_at": expires, "revoked_at": revoked}  # fmt: skip
+                             "expires_at": expires, "revoked_at": revoked,
+                             "state": "revoked" if revoked else "active", "prefix": prefix,
+                             "last_used_at": used}  # fmt: skip
 
 
 def _all_contexts(fake: Fake) -> None:

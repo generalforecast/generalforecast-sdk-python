@@ -145,9 +145,10 @@ def fields(call: Call, rows: Sequence[tuple[str, str | Sequence[str]]]) -> None:
     call.out.details([(k, v, "") for k, v in rows if v], stream=call.out.out)
 
 
-def pinned(context: str, version: int | None) -> str:
-    """`adult version 1`."""
-    return context if version is None else f"{context} version {version}"
+def pinned(context: str, version: int | None, rows: int | None = None) -> str:
+    """`adult version 1, 32,561 rows`."""
+    text = context if version is None else f"{context} version {version}"
+    return text if rows is None else f"{text}, {plural(rows, 'row')}"
 
 
 def shape(context: Context | Snapshot) -> str:
@@ -258,10 +259,12 @@ def versioned(verb: str) -> Any:
 
 
 def context_source(context: Context) -> str:
-    """`upload`, `bigquery-acme`, `snowflake-prod, SQL`, `API`."""
+    """`upload adult.csv`, `bigquery-acme`, `snowflake-prod, SQL`, `API`."""
     if context.source is not None:
         return context.source.source + (", SQL" if context.source.sql else "")
-    return "API" if context.kind == "live" else "upload"
+    if context.kind == "live":
+        return "API"
+    return f"upload {context.file}" if context.file else "upload"
 
 
 def contexts_list(call: Call, contexts: list[Context]) -> None:
@@ -453,7 +456,7 @@ def _ref(value: str) -> tuple[str, int | None]:
 
 
 def change_value(change: Change, deploy: Deploy) -> tuple[str, str]:
-    """A change's sign and value: `~`, `kumo-small → kumo-medium`; `+ context` reads `adult version 1`."""
+    """A change's sign and value: `~`, `kumo-small → kumo-medium`; `+ context` reads `adult version 1, 32,561 rows`."""
     resolved = deploy.revision.resolved if deploy.revision else None
     before, after = change.before, change.after
     if change.field == "context":
@@ -463,7 +466,9 @@ def change_value(change: Change, deploy: Deploy) -> tuple[str, str]:
                 return "~", f"{new} version {v1} → {v2}"
             return "~", f"{pinned(old, v1)} → {pinned(new, v2)}"
         if after is not None and resolved is not None:
-            return "+", pinned(resolved.context, resolved.context_version)
+            return "+", pinned(
+                resolved.context, resolved.context_version, resolved.context_rows
+            )
     if change.field == "model" and before is None and after is not None and resolved:
         return "+", f"{after}, {full_model(resolved)}"
     if before is None:
@@ -550,9 +555,10 @@ def predictors_get(call: Call, info: PredictorInfo) -> None:
     if spec is not None:
         rows.append(("Task", f"{task or 'task to infer'}, target {spec.target}"))
     if resolved is not None:
+        context = (resolved.context, resolved.context_version, resolved.context_rows)
         rows += [
             ("Model", f"{short_model(resolved)}, {full_model(resolved)}"),
-            ("Context", pinned(resolved.context, resolved.context_version)),
+            ("Context", pinned(*context)),
         ]
     fields(call, rows)
     if info.environments:
@@ -634,11 +640,11 @@ def predictors_revisions(call: Call, revisions: list[Revision]) -> None:
 
 
 def predicted(call: Call, result: Predictions) -> None:
-    """`Predicted 1,000 rows in 2.1s  2.0 credits ($0.002)`, then the rows or the file."""
+    """`Predicted 1,000 rows in 2.1s  10 calls, 2.0 credits ($0.002)`, then the rows or the file."""
     call.out.status(
         "Predicted",
         f"{plural(result.rows, 'row')} in {duration(call.seconds())}  "
-        + usage(result.credits, result.usd),
+        + usage(result.credits, result.usd, result.calls),
     )
     for note in result.notes:
         call.out.warning(note)
@@ -755,17 +761,20 @@ def permissions(key: Key) -> str:
 
 
 def keys_list(call: Call, keys: list[Key]) -> None:
-    """Name, id, permissions and expiry; drops Permissions."""
+    """Name, id, permissions, expiry and last use."""
     rows = [
         [
             k.name,
             k.id,
             permissions(k),
             k.state if k.state != "active" else day(k.expires) or "never",
+            when(k.last_used) or "never",
         ]
         for k in keys
     ]
-    call.out.table(["Name", "Id", "Permissions", "Expires"], rows, drop=(2,))
+    call.out.table(
+        ["Name", "Id", "Permissions", "Expires", "Last used"], rows, drop=(4, 2)
+    )
 
 
 def key_created(verb: str, detail: str) -> Any:

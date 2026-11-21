@@ -1,14 +1,14 @@
 --- 100 columns, not a terminal
 $ gf contexts list
   Name       Kind      Source                 Rows  Updated       Used by
-  adult      snapshot  upload               32,561  52m ago       adult-income
+  adult      snapshot  upload adult.csv     32,561  52m ago       adult-income
   customers  snapshot  bigquery-acme        48,210  Nov 20 17:03  churn, churn-nov
   events     live      snowflake-prod, SQL  12,804  2m ago        conversion
   signups    live      API                   1,904  just now      none
 --- 100 columns, a terminal
 $ gf contexts list
   Name       Kind      Source                 Rows  Updated       Used by
-  adult      snapshot  upload               32,561  52m ago       adult-income
+  adult      snapshot  upload adult.csv     32,561  52m ago       adult-income
   customers  snapshot  bigquery-acme        48,210  Nov 20 17:03  churn, churn-nov
   events     live      snowflake-prod, SQL  12,804  2m ago        conversion
   signups    live      API                   1,904  just now      none

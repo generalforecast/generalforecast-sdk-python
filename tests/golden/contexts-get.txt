@@ -2,7 +2,7 @@
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload
+  Source   upload adult.csv
   Rows     32,561
   Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income, predictor adult-income
@@ -22,7 +22,7 @@ $ gf contexts get adult
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload
+  Source   upload adult.csv
   Rows     32,561
   Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income, predictor adult-income
@@ -42,7 +42,7 @@ $ gf contexts get adult
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload
+  Source   upload adult.csv
   Rows     32,561
   Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income, predictor adult-income
@@ -62,7 +62,7 @@ $ gf contexts get adult
 $ gf contexts get adult
   Name     adult
   Kind     snapshot, version 1 of 1
-  Source   upload
+  Source   upload adult.csv
   Rows     32,561
   Digest   sha256:7fdc3e8038e8
   Used by  experiment adult-income,
