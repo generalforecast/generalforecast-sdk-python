@@ -5,8 +5,9 @@
 
 The service's `GET /models` lists the catalog and `GET /models/{name}`
 shows one model. A reply's `limits` bound one call: context rows, query
-rows and input columns. `DEFAULTS` is the model `gf init` proposes for
-each task.
+rows and input columns, and for a wide table its `cells`, context rows
+times inputs, which leave it fewer rows. `DEFAULTS` is the model `gf init`
+proposes for each task.
 """
 
 from collections.abc import Iterable, Mapping
@@ -26,11 +27,18 @@ DEFAULTS: Mapping[str, str] = {
 
 @dataclass(frozen=True)
 class Limits:
-    """What one call to a model may carry."""
+    """What one call to a model may carry; `cells` is None where only `context_rows` bounds the rows."""
 
     context_rows: int
     queries: int
     inputs: int
+    cells: int | None = None
+
+    def rows(self, inputs: int) -> int:
+        """Most context rows one call carries with this many inputs."""
+        if self.cells is None or inputs <= 0:
+            return self.context_rows
+        return max(1, min(self.context_rows, self.cells // inputs))
 
 
 @dataclass(frozen=True)
@@ -56,7 +64,14 @@ class ModelInfo:
                 0
             ],
             task=str(value.get("task") or ""),
-            limits=Limits(bound("context_rows"), bound("queries"), bound("inputs")),
+            limits=Limits(
+                bound("context_rows"),
+                bound("queries"),
+                bound("inputs"),
+                cells
+                if type(cells := limits.get("cells")) is int and cells > 0
+                else None,
+            ),
         )
 
 

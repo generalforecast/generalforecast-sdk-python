@@ -8,7 +8,13 @@ import pytest
 
 import generalforecast as gf
 from generalforecast import _operations as ops
-from generalforecast.batches import MAX_BODY_BYTES, body_bytes, query_batches
+from generalforecast.batches import (
+    MAX_BODY_BYTES,
+    MAX_BODY_NODES,
+    body_bytes,
+    body_nodes,
+    query_batches,
+)
 from generalforecast.catalog import ModelInfo
 from generalforecast.contracts import MAX_QUERIES
 from generalforecast.service.contracts import ServiceError
@@ -233,3 +239,19 @@ def test_parts_also_stay_under_the_request_body_bound():
     assert all(body_bytes(call.payload) <= MAX_BODY_BYTES for call in calls)
     assert sum(len(call.payload["queries"]) for call in calls) == 3000
     assert result.table.column("label").to_pylist() == list(range(3000))
+
+
+def test_a_wide_tables_parts_also_stay_under_the_bodys_values():
+    # Short values in many columns reach the body's values before its bytes.
+    wide = pa.table({"x": list(range(400)), **{f"c{i}": [0] * 400 for i in range(999)}})
+    result, calls = drive(
+        ops.predictor_predict(
+            client(), "churn", wide, context=None, as_of=None, env=None
+        ),
+        scored,
+    )
+    assert len(calls) > 1
+    assert all(body_nodes(call.payload) <= MAX_BODY_NODES for call in calls)
+    assert all(body_bytes(call.payload) <= MAX_BODY_BYTES for call in calls)
+    assert sum(len(call.payload["queries"]) for call in calls) == 400
+    assert result.table.column("label").to_pylist() == list(range(400))

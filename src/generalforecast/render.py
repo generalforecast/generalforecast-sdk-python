@@ -245,9 +245,12 @@ def _model(args: argparse.Namespace, result: dict, out: term.Output) -> None:
     if args.action == "list":
         records([row(m) for m in result.get("models", [])], out)
     elif args.action == "show":
-        out.fields(
-            [(key, _scalar(value)) for key, value in row(result).items()], indent=0
-        )
+        shown = row(result)
+        cells = (result.get("limits") or {}).get("cells")
+        if cells:
+            # A wide table carries fewer rows: at most cells / inputs.
+            shown["context cells"] = cells
+        out.fields([(key, _scalar(value)) for key, value in shown.items()], indent=0)
 
 
 def _context(args: argparse.Namespace, result: dict, out: term.Output) -> None:

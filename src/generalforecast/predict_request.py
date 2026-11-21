@@ -242,16 +242,17 @@ class PredictRequest:
                     hint="the queries have " + ", ".join(query_table.column_names),
                 )
         limits = entry.limits
-        if (
-            task != "forecast"
-            and len(context_table) > limits.context_rows
-            and not selection
-        ):
-            raise _capacity(
-                "context", canonical, limits.context_rows, len(context_table)
-            )
         if len(chosen) > limits.inputs:
             raise _capacity("inputs", canonical, limits.inputs, len(chosen))
+        rows = limits.rows(len(chosen)) if task != "forecast" else limits.context_rows
+        if task != "forecast" and len(context_table) > rows and not selection:
+            raise _capacity(
+                "context",
+                canonical,
+                rows,
+                len(context_table),
+                inputs=len(chosen) if rows < limits.context_rows else None,
+            )
         classes: tuple[Any, ...] = ()
         if task == "classification":
             from generalforecast.tables import whole_numbers
@@ -381,7 +382,10 @@ def _whole_target(table: pa.Table, target: str, whole: Any) -> pa.Table:
     return table.set_column(table.schema.get_field_index(target), target, cast)
 
 
-def _capacity(what: str, model: str, limit: int, actual: int) -> Error:
+def _capacity(
+    what: str, model: str, limit: int, actual: int, inputs: int | None = None
+) -> Error:
+    """The refusal of a call past a model's limit; `inputs` names the width that lowered a context's rows."""
     from generalforecast.errors import CapacityExceeded
 
     unit = {
@@ -393,12 +397,16 @@ def _capacity(what: str, model: str, limit: int, actual: int) -> Error:
         "context with a predictor that reads it (`gf push`)",
         "inputs": "list the inputs the model should read, or exclude columns",
     }
+    at = "" if inputs is None else f" at {inputs:,} inputs"
     return CapacityExceeded(
         f"{what} exceed the limit for {model}"
         if what != "context"
         else f"context exceeds the limit for {model}",
-        because=f"this model {unit[0]} {limit:,} {unit[1]}; the request sent {actual:,}",
-        hint=hints[what],
+        because=f"this model {unit[0]} {limit:,} {unit[1]}{at}; "
+        f"the request sent {actual:,}",
+        hint=hints[what]
+        if inputs is None
+        else f"sample the context, list fewer inputs, or {hints[what]}",
         limit=limit,
         actual=actual,
         param=what,

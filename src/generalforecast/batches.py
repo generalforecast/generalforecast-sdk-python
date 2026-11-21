@@ -1,7 +1,7 @@
 """Query rows in calls the service takes, and their results as one.
 
 A call carries at most `MAX_QUERIES` query rows in a body of at most
-`MAX_BODY_BYTES`, so more go as several calls under one request id,
+`MAX_BODY_BYTES` and `MAX_BODY_NODES` JSON values, so more go as several calls under one request id,
 `<id>-1`, `<id>-2` and so on, and their results come back as if from one
 call, in the order the rows were given. A forecaster's series stay whole
 within one call, since a series' horizon is forecast at once.
@@ -49,11 +49,24 @@ def query_batches(table: pa.Table, series: Sequence[str], cap: int) -> list[np.n
 # part's payload keeps this much under it for the envelope around it.
 MAX_BODY_BYTES = 1_048_576
 ENVELOPE_BYTES = 4096
+# And the most JSON values, objects and arrays together, it may hold: a wide
+# table's rows reach this before its bytes. The envelope keeps the rest.
+MAX_BODY_NODES = 65_536
+ENVELOPE_NODES = 256
 
 
 def body_bytes(payload: Any) -> int:
     """About how many bytes a payload sends: its JSON, as loosely as it may be written."""
     return len(json.dumps(payload, default=str).encode())
+
+
+def body_nodes(payload: Any) -> int:
+    """How many JSON values a payload sends, objects and arrays among them, as the service counts them."""
+    if isinstance(payload, dict):
+        return 1 + sum(body_nodes(value) for value in payload.values())
+    if isinstance(payload, list | tuple):
+        return 1 + sum(body_nodes(value) for value in payload)
+    return 1
 
 
 def fitted(
@@ -62,17 +75,19 @@ def fitted(
     series: Sequence[str],
     payload: Callable[[pa.Table], Any],
 ) -> list[np.ndarray]:
-    """The batches split in halves until each one's payload fits a request body.
+    """The batches split in halves until each one's payload fits a request body, its bytes and its values.
 
     A batch that cannot halve, one row or one series, goes as it is, for
     the service to refuse if it must.
     """
     budget = MAX_BODY_BYTES - ENVELOPE_BYTES
+    nodes = MAX_BODY_NODES - ENVELOPE_NODES
     fitting: list[np.ndarray] = []
     pending = list(reversed(batches))
     while pending:
         rows = pending.pop()
-        if body_bytes(payload(table.take(pa.array(rows)))) <= budget:
+        made = payload(table.take(pa.array(rows)))
+        if body_bytes(made) <= budget and body_nodes(made) <= nodes:
             fitting.append(rows)
             continue
         halves = query_batches(
