@@ -87,7 +87,7 @@ STANDARD_PERMISSIONS: tuple[str, ...] = (
 )
 """The permissions the console pre-checks for a new key."""
 
-NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
 
 def instant(value: Any) -> datetime | None:
@@ -710,7 +710,7 @@ class Predictor:
         if not isinstance(self.name, str) or not NAME.match(self.name):
             raise InvalidInput(
                 f"`{self.name}` is not a predictor name",
-                hint="use lowercase letters, digits and hyphens, at most 64",
+                hint="start with a letter, then lowercase letters, digits and hyphens, at most 64",
                 param="name",
             )
         ref_of(self.context)
@@ -932,11 +932,17 @@ class Timing:
 
 @dataclass(frozen=True)
 class ContextUse:
-    """How much of the context a call read: whole, or retrieved past the device's memory."""
+    """How much of the context a call read: whole, or retrieved past the device's memory.
+
+    `cells` is rows times input columns, what the large-context line is
+    drawn on; the service leaves `used`, `core` and `cells` out when it has
+    nothing to say, and then the whole context was read.
+    """
 
     rows: int = 0
     used: Literal["exact", "retrieved"] = "exact"
     core: int | None = None
+    cells: int | None = None
 
 
 @dataclass(frozen=True, repr=False)

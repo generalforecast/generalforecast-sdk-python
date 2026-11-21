@@ -332,10 +332,10 @@ test("a capacity error carries limit and actual", async () => {
       );
     },
   });
-  const rows = Array.from({ length: 1000 }, (_, i) => ({ spend: i, churned: i % 2 }));
+  const rows = Array.from({ length: 12000 }, (_, i) => ({ spend: i }));
   await assert.rejects(
-    gf.predict({ model: "general-forecast/tabicl-v2-classifier", target: "churned", context: rows, queries: [{ spend: 1 }] }),
-    (error) => error instanceof GFError && error.code === "CapacityExceeded" && error.limit === 100000 && error.actual === 250000,
+    gf.predict({ model: "general-forecast/tabicl-v2-classifier", target: "churned", context: [{ spend: 1, churned: 0 }], queries: rows }),
+    (error) => error instanceof GFError && error.code === "CapacityExceeded" && error.limit === 10000 && error.actual === 12000,
   );
 });
 
@@ -343,16 +343,18 @@ test("predictors.list, predictors.get, models.list and models.get unwrap their r
   const gf = client();
   const predictors = await gf.predictors.list();
   assert.equal(predictors[0].name, "churn");
-  assert.deepEqual(predictors[0].limits, { context_rows: 100000, queries: 100, inputs: 32 });
+  assert.equal(predictors[0].resolved.short, "kumo-medium");
   const churn = await gf.predictors.get("churn");
-  assert.equal(churn.serving.compiled, true);
-  assert.equal(churn.environments.length, 2);
+  assert.equal(churn.spec.model, "kumo-medium");
+  assert.equal(churn.environments.production.state, "ready");
+  assert.equal(Object.keys(churn.environments).length, 2);
   await assert.rejects(gf.predictors.get("nothing"), (error) => error instanceof GFError && error.code === "NotFound");
   const models = await gf.models.list();
   // The catalog lists each model by its pinned id.
   assert.match(models[0].model, /^general-forecast\/tabicl-v2-classifier@sha256:[0-9a-f]{64}$/);
   assert.equal(models.length, 1);
   assert.equal(models[0].task, "classification");
+  assert.equal(models[0].short, "tabicl-v2");
   const model = await gf.models.get("tabicl-v2-classifier");
   assert.equal(model.name, "general-forecast/tabicl-v2-classifier");
   await assert.rejects(gf.models.get("nothing"), (error) => error instanceof GFError && error.code === "NotFound");
@@ -405,9 +407,11 @@ test("contexts list, show, append and label through the envelope", async () => {
   const append = paired(ROUTES["contexts.append"].path, "POST")[0];
   const label = paired(ROUTES["contexts.label"].path, "POST")[0];
   const name = append.request.value.resource.name;
+  const shown = EXAMPLES.find((e) => e.path === ROUTES["contexts.get"].path && e.status === 200);
+  const stored = shown.value.resource.name;
   const contexts = await gf.contexts.list();
   assert.ok(contexts.length > 0);
-  assert.equal((await gf.contexts.get(name)).name, name);
+  assert.equal((await gf.contexts.get(stored)).name, stored);
   const appended = await gf.contexts.append(name, {
     writeId: append.request.value.payload.write_id,
     rows: append.request.value.payload.rows,
@@ -423,7 +427,7 @@ test("contexts list, show, append and label through the envelope", async () => {
     log.map((call) => `${call.method} ${call.pathname}`),
     [
       "GET /v1/projects/acme/contexts",
-      `GET /v1/projects/acme/contexts/${name}`,
+      `GET /v1/projects/acme/contexts/${stored}`,
       `POST /v1/projects/acme/contexts/${name}/append`,
       `POST /v1/projects/acme/contexts/${name}/label`,
     ],

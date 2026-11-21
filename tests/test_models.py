@@ -21,7 +21,13 @@ def frame(rows):
 
 def test_list_and_get_return_the_same_model_shape(fake):
     models = gf.models.list(task="classification")
-    assert {m.short for m in models} == {"tabicl-v2", "kumo-medium"}
+    assert {m.short for m in models} == {
+        "tabicl-v2",
+        "kumo-medium",
+        "kumo-small",
+        "kumo-large",
+        "mitra-2",
+    }
     one = gf.models.get("tabicl-v2", task="classification")
     assert one == next(m for m in models if m.id == one.id)
     assert (

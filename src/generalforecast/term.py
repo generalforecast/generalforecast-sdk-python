@@ -31,7 +31,7 @@ import sys
 import threading
 import time
 import unicodedata
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import IO, Any
 
@@ -623,7 +623,7 @@ class Output:
             self._progress = verb
 
     @contextlib.contextmanager
-    def working(self, *, log: bool = True) -> Iterator[Activity]:
+    def working(self, *, log: bool = True) -> Generator[Activity]:
         """Progress lines for work that takes a while, kept current until the block ends.
 
         The `Activity` it yields shows a line with `show(verb, message)`. On

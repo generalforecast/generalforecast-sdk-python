@@ -29,7 +29,7 @@ def test_sources_take_the_config_keys_of_their_kind(fake):
     assert gf.sources.test(source).name == "pg-replica"
     assert gf.sources.tables("pg-replica")[0].rows == 48210
     preview = gf.sources.preview("pg-replica", table="acme.analytics.customers")
-    assert list(preview.columns) == ["customer_id", "plan"]
+    assert list(preview.columns) == ["customer_id", "churned"]
     with pytest.raises(gf.InvalidInput):
         gf.sources.preview("pg-replica")
     gf.sources.delete("pg-replica")

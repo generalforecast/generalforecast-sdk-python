@@ -8,14 +8,14 @@ import type {
   ApiError,
   Envelope,
   ErrorCode,
+  Context,
+  ContextList,
   Label,
-  LiveContext,
-  LiveContextList,
   Manifest,
   Model,
   ModelList,
-  Predictor,
-  PredictorList,
+  PredictorInfo,
+  PredictorInfoList,
   Queries,
   Receipt,
   ResourceKind,
@@ -27,11 +27,11 @@ import { ERROR_CODES, ROUTES, VERSION } from "./types.js";
 export * from "./types.js";
 
 export interface Options {
-  /** an API key from `gf admin key create` */
+  /** an API key from `gf keys create`; omit for an unauthenticated gf serve */
   apiKey?: string;
   /** the project every route is scoped to */
   project: string;
-  /** the service, `https://app.generalforecast.com` by default */
+  /** `https://app.generalforecast.com` (the default) or a `gf serve` address */
   baseUrl?: string;
   /** replaces the global `fetch`, for tests and custom transports */
   fetch?: typeof fetch;
@@ -47,7 +47,6 @@ export type ManifestFragment = Omit<Manifest, "context" | "queries"> & {
 
 export interface PredictOptions {
   queries: Queries["queries"];
-  context?: Queries["context"];
   /** for a live context, the instant to read it as of: RFC 3339 text, epoch seconds or a Date */
   asOf?: string | number | Date;
   /** the hosted environment whose revision scores the queries; `production` if left out */
@@ -249,10 +248,9 @@ export class GeneralForecast {
 export class Predictors {
   constructor(private readonly client: GeneralForecast) {}
 
-  /** Score queries with a declared predictor; `context` only when its manifest declares `context: {request}`. */
+  /** Score queries with a predictor; its revision supplies the model, target and context. */
   async predict(name: string, options: PredictOptions): Promise<Result> {
     const payload: Queries = { queries: options.queries };
-    if (options.context !== undefined) payload.context = options.context;
     if (options.asOf !== undefined) {
       payload.as_of = options.asOf instanceof Date ? options.asOf.toISOString() : options.asOf;
     }
@@ -265,8 +263,8 @@ export class Predictors {
     );
   }
 
-  async list(): Promise<Predictor[]> {
-    const result = await this.client.call<PredictorList>(
+  async list(): Promise<PredictorInfo[]> {
+    const result = await this.client.call<PredictorInfoList>(
       ROUTES["predictors.list"],
       { project: this.client.project },
       { kind: "predictor", name: "predictors" },
@@ -274,8 +272,8 @@ export class Predictors {
     return result.predictors;
   }
 
-  async get(name: string): Promise<Predictor> {
-    return this.client.call<Predictor>(
+  async get(name: string): Promise<PredictorInfo> {
+    return this.client.call<PredictorInfo>(
       ROUTES["predictors.get"],
       { project: this.client.project, name },
       { kind: "predictor", name },
@@ -295,7 +293,7 @@ export class Models {
     return result.models;
   }
 
-  /** One served model by its name without the `general-forecast/` prefix, such as `tabicl-v2-classifier`. */
+  /** One model by its short name, such as `tabicl-v2`, or its name, such as `tabicl-v2-classifier`. */
   async get(name: string): Promise<Model> {
     return this.client.call<Model>(
       ROUTES["models.get"],
@@ -305,12 +303,12 @@ export class Models {
   }
 }
 
-/** Hosted live contexts: rows a predictor's context reads, appended and labeled as they arrive. */
+/** Hosted contexts: the data a model learns from; a live one's rows are appended and labeled as they arrive. */
 export class Contexts {
   constructor(private readonly client: GeneralForecast) {}
 
-  async list(): Promise<LiveContext[]> {
-    const result = await this.client.call<LiveContextList>(
+  async list(): Promise<Context[]> {
+    const result = await this.client.call<ContextList>(
       ROUTES["contexts.list"],
       { project: this.client.project },
       { kind: "context", name: "contexts" },
@@ -318,9 +316,9 @@ export class Contexts {
     return result.contexts;
   }
 
-  async get(name: string): Promise<LiveContext> {
-    return this.client.call<LiveContext>(
-      ROUTES["contexts.show"],
+  async get(name: string): Promise<Context> {
+    return this.client.call<Context>(
+      ROUTES["contexts.get"],
       { project: this.client.project, name },
       { kind: "context", name },
     );

@@ -87,13 +87,13 @@ def test_run_update_cancel_and_reads(adult):
     exp = gf.experiments.create(context="adult", target="income", models=MODELS)
     second = gf.experiments.run(exp, models=["kumo-large"])
     assert second.run.number == 2 and second.run.state == "finished"
+    # Only the fields given go; None leaves a field as it is, as the contract has it.
     updated = gf.experiments.update(
         "adult-income", holdout="20% stratified", title=None
     )
     assert updated.run.stale
     assert adult.experiments["adult-income"]["_updates"][0] == {
         "holdout": {"kind": "random", "fraction": 0.2, "stratify": True},
-        "title": None,
     }
     third = gf.experiments.run("adult-income", wait=False)
     cancelled = gf.experiments.cancel(third)

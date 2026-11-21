@@ -160,7 +160,9 @@ def test_promote_rollback_logs_and_delete(adult):
     back = gf.predictors.rollback("adult-income")
     assert back.revision == 1
     logs = gf.predictors.logs("adult-income", level="error", limit=2)
-    assert logs.entries[0].request_id == "r-3f1a92c0" and logs.next == "c2"
+    assert logs.entries[0].request_id == "r-3abb2401f119428db148927c6a0d358c"
+    assert logs.entries[1].level == "warn" and logs.entries[1].at.year == 2026
+    assert logs.next == "1795034671207000"
     query = adult.calls_to("GET", r".*/logs")[0].query
     assert query == {"limit": "2", "level": "error"}
     assert {p.name for p in gf.predictors.list()} == {"adult-income", "churn"}
