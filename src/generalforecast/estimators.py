@@ -9,7 +9,8 @@ its digest, so rows the service already holds are never sent again, and
 refuses at once, with `CapacityExceeded`, a context too big to send;
 `predict` sends the queries only. With `verbose`, each call prints one
 line to stderr; `usage_` adds up every call since `fit` and `last_usage_`
-holds the last one's. `estimate` prices a call without making it.
+holds the last one's (their `calls` count the estimator's calls to the
+service: the contract carries no count of the engine's own). `estimate` prices a call without making it.
 
 They follow scikit-learn's conventions (`get_params`, `set_params`,
 `clone`, fitted attributes ending in `_`, `__sklearn_tags__`) without
@@ -40,10 +41,10 @@ class NotFittedError(InvalidInput, AttributeError):
 
 
 def predicted_line(result: Predictions, context_rows: int, seconds: float) -> str:
-    """`Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 66 calls, 13.0 credits ($0.013) in 9.4s`."""
+    """`Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 13.0 credits ($0.013) in 9.4s`."""
     line = (
         f"Predicted {plural(result.rows, 'row')} with {_render.model_name(result.model)} "
-        f"from {plural(context_rows, 'context row')}: {plural(result.calls, 'call')}, "
+        f"from {plural(context_rows, 'context row')}: "
         f"{_render.credits(result.credits)} ({money(result.usd)}) in {duration(seconds)}"
     )
     if result.gpu_seconds:
@@ -162,9 +163,7 @@ class _Base:
         large = (
             LargeContext(gpu_seconds=result.gpu_seconds) if result.gpu_seconds else None
         )
-        self.last_usage_ = Estimate(
-            result.calls, result.rows, result.credits, result.usd, large
-        )
+        self.last_usage_ = Estimate(1, result.rows, result.credits, result.usd, large)
         self.usage_ = self.usage_ + self.last_usage_
         if self.verbose:
             line = predicted_line(result, self.context_rows_, monotonic() - started)
