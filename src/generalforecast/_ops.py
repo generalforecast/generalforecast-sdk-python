@@ -1264,7 +1264,7 @@ def _scored(
 def predictor_predict(predictor: Any, queries: Any, *, env: str, as_of: Any) -> Op:
     """Scores queries with a predictor, in parts by bytes."""
     name = name_of(predictor, "predictor")
-    payload: dict[str, Any] = {"env": env}
+    payload: dict[str, Any] = {}
     if as_of is not None:
         payload["as_of"] = (
             as_of.isoformat() if isinstance(as_of, datetime) else str(as_of)
@@ -1272,7 +1272,7 @@ def predictor_predict(predictor: Any, queries: Any, *, env: str, as_of: Any) -> 
     return (
         yield from _scored(
             queries,
-            lambda part: _http.predictors_predict(name, payload, part),
+            lambda part: _http.predictors_predict(name, env, payload, part),
             f"with {name} in {env}",
         )
     )

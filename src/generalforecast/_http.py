@@ -462,15 +462,16 @@ def predictors_delete(name: str) -> Request:
 
 
 def predictors_predict(
-    name: str, payload: Mapping[str, Any], queries: pa.Table
+    name: str, env: str, payload: Mapping[str, Any], queries: pa.Table
 ) -> Request:
-    """Scores one part of the queries with a predictor."""
+    """Scores one part of the queries with a predictor's `env` environment."""
     return Request(
         "POST",
         f"/predictors/{_segment(name)}/predict",
         "predictor",
         name,
         payload=payload,
+        params={"env": env},
         arrow=queries,
         retry=True,
         respond_async=True,
@@ -750,8 +751,13 @@ class Connection:
 
     def prepare(
         self, request: Request, rid: str
-    ) -> tuple[str, str, dict[str, str], bytes | None, dict[str, Any]]:
-        """The method, URL, headers, body and query of one try."""
+    ) -> tuple[str, str, dict[str, str], bytes | None, dict[str, Any] | None]:
+        """The method, URL, headers, body and query of one try.
+
+        The query is None when the request adds none: httpx replaces a URL's
+        whole query string with `params`, even an empty one, which would drop
+        the session from a signed upload URL.
+        """
         headers = {
             "Accept": f"{ARROW}, application/json"
             if request.arrow is not None
@@ -795,7 +801,7 @@ class Connection:
             value = self.envelope(request, rid) if request.envelope else request.payload
             body = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json"
-        return request.method, url, headers, body, dict(request.params)
+        return request.method, url, headers, body, dict(request.params) or None
 
     def envelope(self, request: Request, rid: str) -> dict[str, Any]:
         """The `gf/v1` envelope around a request's payload."""
