@@ -3,8 +3,9 @@
 
 """How results print: plain aligned text for terminals, HTML for notebooks.
 
-Text tables fit `WIDTH` columns by dropping columns in a named order; HTML
-escapes every value. Nothing here makes a network call.
+Text tables fit `WIDTH` columns by dropping columns in a named order
+(`term.columns`, which the CLI's tables use too); HTML escapes every value.
+Nothing here makes a network call.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import html
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from generalforecast.term import columns, duration
 from generalforecast.types import money
 
 if TYPE_CHECKING:
@@ -51,21 +53,6 @@ def metric_name(metric: str) -> str:
     return METRICS.get(key, metric.capitalize() if metric else "Score")
 
 
-def seconds(value: float) -> str:
-    """A duration as status lines show it: `0.21s`, `6.8s`, `41s`, `1m12s`."""
-    if value < 1:
-        return f"{value:.2f}s"
-    if value < 10:
-        return f"{value:.1f}s"
-    if value < 60:
-        return f"{value:.0f}s"
-    minutes, rest = divmod(round(value), 60)
-    if minutes < 60:
-        return f"{minutes}m{rest:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h{minutes:02d}m"
-
-
 def spaced(value: float) -> str:
     """A long duration with spaces, as a run's line shows it: `2m 10s`."""
     total = round(value)
@@ -84,47 +71,14 @@ def number(value: float | None, digits: int = 3) -> str:
 
 
 def credits(value: float) -> str:
-    """Credits as a short count: `31 credits`, `0.4 credits`."""
-    text = f"{value:,.0f}" if value >= 10 else f"{value:.1f}".rstrip("0").rstrip(".")
-    return f"{text or '0'} credits"
-
-
-def table(
-    header: Sequence[str],
-    rows: Sequence[Sequence[str]],
-    *,
-    drop: Sequence[int] = (),
-    right: Sequence[int] = (),
-    indent: int = 2,
-    width: int = WIDTH,
-) -> list[str]:
-    """Aligned columns two spaces apart, dropping columns in `drop` order until they fit."""
-    keep = list(range(len(header)))
-
-    def render(columns: list[int]) -> list[str]:
-        widths = {
-            c: max([len(header[c]), *(len(row[c]) for row in rows)]) for c in columns
-        }
-        lines = []
-        for row in [header, *rows]:
-            cells = []
-            for position, c in enumerate(columns):
-                cell = row[c]
-                last = position == len(columns) - 1
-                if c in right:
-                    cells.append(cell.rjust(widths[c]))
-                else:
-                    cells.append(cell if last else cell.ljust(widths[c]))
-            lines.append((" " * indent + "  ".join(cells)).rstrip())
-        return lines
-
-    lines = render(keep)
-    for column in drop:
-        if max(len(line) for line in lines) <= width:
-            break
-        keep.remove(column)
-        lines = render(keep)
-    return lines
+    """Credits as results show them: `0.4 credits`, `52.1 credits`, `1,204 credits`, `0.004 credits`."""
+    if value >= 1000:
+        text = f"{value:,.0f}"
+    elif value >= 0.05 or value == 0:
+        text = f"{value:.1f}"
+    else:
+        text = f"{value:.2g}"
+    return f"{text} credits"
 
 
 def _ranked(run: Run) -> list[Entry]:
@@ -134,35 +88,42 @@ def _ranked(run: Run) -> list[Entry]:
     return scored + others
 
 
+def model_name(model: str) -> str:
+    """A full model id without its owner and digest: `tabicl-v2-classifier`."""
+    return model.split("/")[-1].split("@")[0]
+
+
 def _model(entry: Entry) -> str:
-    return entry.short or entry.model.split("/")[-1].split("@")[0]
+    return entry.short or model_name(entry.model)
 
 
-def leaderboard(run: Run, *, width: int = WIDTH) -> list[str]:
-    """A run's leaderboard as aligned lines; drop order Interval, Time, Cost."""
+def leaderboard_table(
+    run: Run,
+) -> tuple[list[str], list[list[str]], str, tuple[int, ...]]:
+    """A run's leaderboard as a table: header, rows best first, alignment, and drop order Interval, Time, Cost."""
     header = ["", "Model", metric_name(run.metric), "Interval", "Time", "Cost"]
     rows = []
     for rank, entry in enumerate(_ranked(run), 1):
-        if entry.score is None:
-            score, interval = entry.state, ""
-        else:
-            score = number(entry.score)
-            interval = (
-                f"{number(entry.interval[0])} to {number(entry.interval[1])}"
-                if entry.interval
-                else ""
-            )
+        scored = entry.score is not None
         rows.append(
             [
                 str(rank),
                 _model(entry),
-                score,
-                interval,
-                seconds(entry.seconds) if entry.seconds else "",
+                number(entry.score) if scored else entry.state,
+                f"{number(entry.interval[0])} to {number(entry.interval[1])}"
+                if scored and entry.interval
+                else "",
+                duration(entry.seconds) if entry.seconds else "",
                 money(entry.usd) if entry.usd else "",
             ]
         )
-    return table(header, rows, drop=(3, 4, 5), right=(0,), width=width)
+    return header, rows, "><>", (3, 4, 5)
+
+
+def leaderboard(run: Run, *, width: int = WIDTH) -> list[str]:
+    """A run's leaderboard as aligned lines `width` wide."""
+    header, rows, align, drop = leaderboard_table(run)
+    return columns(header, rows, align=align, drop=drop, width=width).lines
 
 
 def _header(experiment: Experiment) -> str:
@@ -241,22 +202,8 @@ def _title(text: str) -> str:
 
 def leaderboard_html(run: Run) -> str:
     """A run's leaderboard as an HTML table, the best row bold."""
-    header = ["", "Model", metric_name(run.metric), "Interval", "Time", "Cost"]
-    rows = []
+    header, rows, _, _ = leaderboard_table(run)
     ranked = _ranked(run)
-    for rank, entry in enumerate(ranked, 1):
-        rows.append(
-            [
-                str(rank),
-                _model(entry),
-                number(entry.score) if entry.score is not None else entry.state,
-                f"{number(entry.interval[0])} to {number(entry.interval[1])}"
-                if entry.interval
-                else "",
-                seconds(entry.seconds) if entry.seconds else "",
-                money(entry.usd) if entry.usd else "",
-            ]
-        )
     best = 0 if ranked and ranked[0].score is not None else None
     return _html_table(header, rows, bold=best, numeric=(0, 2, 4, 5))
 
@@ -331,7 +278,7 @@ def predictor_text(info: PredictorInfo) -> str:
         for env in info.environments.values()
     ]
     if rows:
-        lines += table(["", "", "", ""], rows)[1:]
+        lines += columns(None, rows).lines
     if info.url:
         lines.append(f"  {info.url}")
     return "\n".join(lines)
@@ -345,7 +292,7 @@ def predictor_html(info: PredictorInfo) -> str:
             str(env.revision),
             env.state,
             f"{env.calls_today:,}",
-            seconds(env.p50_seconds) if env.p50_seconds else "",
+            duration(env.p50_seconds) if env.p50_seconds else "",
         ]
         for env in info.environments.values()
     ]
@@ -359,10 +306,8 @@ def predictor_html(info: PredictorInfo) -> str:
     return f"<div>{body}{_link(info.url)}</div>"
 
 
-def run_line(run: FineTuneRun) -> str:
-    """`credit-default@ft2  running  step 340/1,000  loss 0.412  val 0.398 (base 0.421)  2m 10s  31 credits`."""
-    model = run.model.split("/")[-1] or run.name
-    parts = [model, run.state]
+def _run_parts(run: FineTuneRun) -> list[str]:
+    parts = []
     if run.state == "queued" and run.waiting:
         parts.append(f"waiting for {run.waiting:,} tables")
     if run.phase:
@@ -375,17 +320,35 @@ def run_line(run: FineTuneRun) -> str:
     if run.loss is not None:
         parts.append(f"loss {run.loss:.3f}")
     if run.validation_loss is not None:
-        val = f"val {run.validation_loss:.3f}"
-        if run.base_validation_loss is not None:
-            val += f" (base {run.base_validation_loss:.3f})"
-        parts.append(val)
+        parts.append(f"val {validation(run.validation_loss, run.base_validation_loss)}")
     if run.seconds:
         parts.append(spaced(run.seconds))
     if run.credits:
         parts.append(credits(run.credits))
     if run.error:
         parts.append(f"error: {run.error}")
-    return "  ".join(parts)
+    return parts
+
+
+def validation(loss: float, base: float | None) -> str:
+    """`0.398 (base 0.421)`: a validation loss beside the base's."""
+    return f"{loss:.3f}" + (f" (base {base:.3f})" if base is not None else "")
+
+
+def run_name(run: FineTuneRun) -> str:
+    """`credit-default@ft2`, the run's model without its project."""
+    return run.model.split("/")[-1] or run.name
+
+
+def run_line(run: FineTuneRun) -> str:
+    """`credit-default@ft2  running  step 340/1,000  loss 0.412  val 0.398 (base 0.421)  2m 10s  31.0 credits`."""
+    return "  ".join([run_name(run), run.state, *_run_parts(run)])
+
+
+def run_progress(run: FineTuneRun) -> tuple[str, str]:
+    """A waited run's progress line, `Training credit-default@ft2  step 340/1,000 ...`, and its line in a log."""
+    head = f"{'Queued' if run.state == 'queued' else 'Training'} {run_name(run)}"
+    return "  ".join([head, *_run_parts(run)]), head
 
 
 def loss_chart(run: FineTuneRun, *, width: int = 360, height: int = 120) -> str:

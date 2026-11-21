@@ -18,13 +18,33 @@ import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import Any, Self
+from typing import Any, Protocol, Self
 
 from generalforecast import _auth, _http, _ops, _origin
 from generalforecast.errors import Error, InvalidInput, Timeout, Unauthorized
 from generalforecast.types import Me
 
 __all__ = ["AsyncClient", "Client", "login", "logout", "whoami"]
+
+
+class Progress(Protocol):
+    """What shows an operation's progress: its `Say` steps, and the steps it reaches.
+
+    A client's own is `_Line`; the CLI puts one in its place that prints a
+    line for each step reached.
+    """
+
+    def start(self) -> None:
+        """An operation starts."""
+
+    def say(self, step: _ops.Say) -> None:
+        """Shows a step's text, or clears the line for None."""
+
+    def reached(self, value: Any) -> None:
+        """A step of the operation is done."""
+
+    def clear(self) -> None:
+        """The operation ended."""
 
 
 class _Line:
@@ -38,21 +58,25 @@ class _Line:
     def start(self) -> None:
         self.started = time.monotonic()
 
-    def show(self, text: str | None) -> None:
+    def say(self, step: _ops.Say) -> None:
         if not self.enabled:
             return
-        if text is None:
+        if step.text is None:
             self.clear()
             return
+        text = step.text
         waited = time.monotonic() - self.started
         if waited >= 1:
-            from generalforecast._render import seconds
+            from generalforecast.term import duration
 
-            text = f"{text}  {seconds(waited)}"
+            text = f"{text}  {duration(waited)}"
         pad = " " * max(0, self.shown - len(text))
         sys.stderr.write(f"\r{text}{pad}")
         sys.stderr.flush()
         self.shown = len(text)
+
+    def reached(self, value: Any) -> None:
+        pass
 
     def clear(self) -> None:
         if self.enabled and self.shown:
@@ -107,7 +131,9 @@ class _Base:
             user_agent=f"generalforecast-python/{__version__}",
         )
         self.credential_source = resolved.source
-        self._line = _Line(_origin.interactive() if progress is None else progress)
+        self._line: Progress = _Line(
+            _origin.interactive() if progress is None else progress
+        )
         self._state = _ops.State()
         self._sleep: Callable[[float], Any] = time.sleep
 
@@ -210,7 +236,9 @@ class Client(_Base):
         if isinstance(step, _ops.Sleep):
             self._sleep(step.seconds)
         elif isinstance(step, _ops.Say):
-            self._line.show(step.text)
+            self._line.say(step)
+        elif isinstance(step, _ops.Reached):
+            self._line.reached(step.value)
         elif isinstance(step, _ops.Notify):
             step.callback(step.value)
         else:
@@ -322,7 +350,9 @@ class AsyncClient(_Base):
         if isinstance(step, _ops.Sleep):
             await self._sleep(step.seconds)
         elif isinstance(step, _ops.Say):
-            self._line.show(step.text)
+            self._line.say(step)
+        elif isinstance(step, _ops.Reached):
+            self._line.reached(step.value)
         elif isinstance(step, _ops.Notify):
             outcome = step.callback(step.value)
             if asyncio.iscoroutine(outcome):
@@ -391,12 +421,27 @@ def reset() -> None:
         _DEFAULT = None
 
 
-def _drive(transport: _http.Transport, op: _ops.Op) -> Any:
+def _drive(
+    transport: _http.Transport,
+    op: _ops.Op,
+    *,
+    say: Callable[[_ops.Say], Any] = lambda step: None,
+    reached: Callable[[Any], Any] = lambda value: None,
+) -> Any:
+    """Runs an operation with no client: its requests and sleeps, `say` and `reached` for its steps."""
     try:
         step = next(op)
         while True:
+            result = None
             try:
-                result = transport.send(step)
+                if isinstance(step, _http.Request):
+                    result = transport.send(step)
+                elif isinstance(step, _ops.Sleep):
+                    time.sleep(step.seconds)
+                elif isinstance(step, _ops.Say):
+                    say(step)
+                elif isinstance(step, _ops.Reached):
+                    reached(step.value)
             except Error as error:
                 step = op.throw(error)
                 continue
@@ -405,8 +450,8 @@ def _drive(transport: _http.Transport, op: _ops.Op) -> Any:
         return stop.value
 
 
-def _connection(
-    server: str, token: str | None, project: str | None
+def connection(
+    server: str, token: str | None, project: str | None, origin: str | None = None
 ) -> _http.Connection:
     from generalforecast import __version__
 
@@ -414,7 +459,7 @@ def _connection(
         url=server,
         token=token,
         project=project,
-        origin=_origin.detect().header(),
+        origin=origin or _origin.detect().header(),
         user_agent=f"generalforecast-python/{__version__}",
     )
 
@@ -438,9 +483,16 @@ def login(
     expires: Any = None
     minted = False
     if key is None:
-        transport = _http.Transport(_connection(server, None, None))
+        transport = _http.Transport(connection(server, None, None))
         try:
-            granted = _drive(transport, _ops.device_login(time.sleep, print))
+            granted = _drive(
+                transport,
+                _ops.device_login("notebook"),
+                reached=lambda grant: print(
+                    f"Open {grant['verification_uri']} and enter the code "
+                    f"{grant['user_code']}"
+                ),
+            )
             key = str(granted.get("access_token") or "")
             expires = granted.get("expires_at")
             project = project or granted.get("project")
@@ -454,7 +506,7 @@ def login(
         raise Unauthorized(
             "no key was given", hint="run gf.login() again, or pass key="
         )
-    transport = _http.Transport(_connection(server, key, project))
+    transport = _http.Transport(connection(server, key, project))
     try:
         me = _drive(transport, _ops.whoami(server))
     finally:
@@ -490,9 +542,7 @@ def logout() -> None:
     reset()
     if session is None or not session.minted:
         return
-    transport = _http.Transport(
-        _connection(session.url, session.token, session.project)
-    )
+    transport = _http.Transport(connection(session.url, session.token, session.project))
     try:
         transport.send(_http.auth_logout())
     except Error:

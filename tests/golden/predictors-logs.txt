@@ -1,0 +1,16 @@
+--- 100 columns, not a terminal
+$ gf predictors logs churn --limit 2
+  Nov 21 10:04:12  info  predict  r-3f1a92c0  100 rows  0.92s  key ci-deploy
+  Nov 21 10:04:15  warn  predict  r-77b0e1aa  missing column plan, filled empty
+--- 100 columns, a terminal
+$ gf predictors logs churn --limit 2
+  Nov 21 10:04:12  info  predict  r-3f1a92c0  100 rows  0.92s  key ci-deploy
+  Nov 21 10:04:15  warn  predict  r-77b0e1aa  missing column plan, filled empty
+--- 44 columns, not a terminal
+$ gf predictors logs churn --limit 2
+  Nov 21 10:04:12  info  predict  r-3f1a92c0  100 rows  0.92s  key ci-deploy
+  Nov 21 10:04:15  warn  predict  r-77b0e1aa  missing column plan, filled empty
+--- 44 columns, a terminal
+$ gf predictors logs churn --limit 2
+  Nov 21 10:04:12  info  predict  r-3f1a92c0  100 rows  0.92s  key ci-deploy
+  Nov 21 10:04:15  warn  predict  r-77b0e1aa  missing column plan, filled empty

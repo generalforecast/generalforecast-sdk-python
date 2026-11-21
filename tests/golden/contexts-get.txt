@@ -1,0 +1,81 @@
+--- 100 columns, not a terminal
+$ gf contexts get adult
+  Name     adult
+  Kind     snapshot, version 1 of 1
+  Source   upload adult.csv
+  Rows     32,561
+  Digest   sha256:5fb6a4c6f24b
+  Used by  experiment adult-income, predictor adult-income
+
+  Column          Type      Missing
+  age             number          0
+  workclass       category    1,836
+  fnlwgt          number          0
+  education       category        0
+  education_num   number          0
+  marital_status  category        0
+  occupation      category    1,843
+  relationship    category        0
+  and 7 more; -v shows every column
+        View https://app.generalforecast.com/?project=acme#/data/contexts/adult
+--- 100 columns, a terminal
+$ gf contexts get adult
+  Name     adult
+  Kind     snapshot, version 1 of 1
+  Source   upload adult.csv
+  Rows     32,561
+  Digest   sha256:5fb6a4c6f24b
+  Used by  experiment adult-income, predictor adult-income
+
+  Column          Type      Missing
+  age             number          0
+  workclass       category    1,836
+  fnlwgt          number          0
+  education       category        0
+  education_num   number          0
+  marital_status  category        0
+  occupation      category    1,843
+  relationship    category        0
+  and 7 more; -v shows every column
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/adult\https://app.generalforecast.com/?project=acme#/data/contexts/adult]8;;\
+--- 44 columns, not a terminal
+$ gf contexts get adult
+  Name     adult
+  Kind     snapshot, version 1 of 1
+  Source   upload adult.csv
+  Rows     32,561
+  Digest   sha256:5fb6a4c6f24b
+  Used by  experiment adult-income, predictor adult-income
+
+  Column          Type      Missing
+  age             number          0
+  workclass       category    1,836
+  fnlwgt          number          0
+  education       category        0
+  education_num   number          0
+  marital_status  category        0
+  occupation      category    1,843
+  relationship    category        0
+  and 7 more; -v shows every column
+        View https://app.generalforecast.com/?project=acme#/data/contexts/adult
+--- 44 columns, a terminal
+$ gf contexts get adult
+  Name     adult
+  Kind     snapshot, version 1 of 1
+  Source   upload adult.csv
+  Rows     32,561
+  Digest   sha256:5fb6a4c6f24b
+  Used by  experiment adult-income,
+           predictor adult-income
+
+  Column          Type      Missing
+  age             number          0
+  workclass       category    1,836
+  fnlwgt          number          0
+  education       category        0
+  education_num   number          0
+  marital_status  category        0
+  occupation      category    1,843
+  relationship    category        0
+  and 7 more; -v shows every column
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/adult\https://app.generalforecast.com/?project=acme#/data/contexts/adult]8;;\

@@ -1,0 +1,24 @@
+--- 100 columns, not a terminal
+$ gf contexts rows adult --limit 2
+  age  workclass         fnlwgt  education  education_num  marital_status      occupation
+   39  State-gov          77516  Bachelors             13  Never-married       Adm-clerical
+   50  Self-emp-not-inc   83311  Bachelors             13  Married-civ-spouse  Exec-managerial
+  and 8 more columns; widen the terminal or pass --json
+--- 100 columns, a terminal
+$ gf contexts rows adult --limit 2
+  age  workclass         fnlwgt  education  education_num  marital_status      occupation
+   39  State-gov          77516  Bachelors             13  Never-married       Adm-clerical
+   50  Self-emp-not-inc   83311  Bachelors             13  Married-civ-spouse  Exec-managerial
+  and 8 more columns; widen the terminal or pass --json
+--- 44 columns, not a terminal
+$ gf contexts rows adult --limit 2
+  age  workclass         fnlwgt  education
+   39  State-gov          77516  Bachelors
+   50  Self-emp-not-inc   83311  Bachelors
+  and 11 more columns; widen the terminal or pass --json
+--- 44 columns, a terminal
+$ gf contexts rows adult --limit 2
+  age  workclass         fnlwgt  education
+   39  State-gov          77516  Bachelors
+   50  Self-emp-not-inc   83311  Bachelors
+  and 11 more columns; widen the terminal or pass --json

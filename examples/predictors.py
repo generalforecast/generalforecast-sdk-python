@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: General Forecast, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Predictors as code: `gf.predictors.deploy(adult, churn, *demand)` makes production match."""
+"""Predictors as code: `gf deploy predictors.py` makes production match, as running this file does."""
 
 import generalforecast as gf
 

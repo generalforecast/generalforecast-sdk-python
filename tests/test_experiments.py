@@ -118,7 +118,7 @@ def test_wait_times_out_and_a_failed_run_is_not_recoverable(adult):
     with pytest.raises(gf.Error) as failed:
         gf.experiments.wait("adult-income")
     assert not failed.value.recoverable and failed.value.code == "RunFailed"
-    assert "out of memory" in failed.value.message
+    assert failed.value.note == "the engine ran out of memory"
 
 
 def test_a_service_refusal_keeps_its_hint(adult):

@@ -1,0 +1,30 @@
+--- 100 columns, not a terminal
+$ gf predictors create adult-income --context adult --model tabicl-v2 --target income
+     Created predictor adult-income revision 1  tabicl-v2-classifier, adult version 1
+   Deploying adult-income revision 1 to production
+    Deployed adult-income revision 1 to production in 3.7s
+        View https://app.generalforecast.com/?project=acme#/predictors/adult-income
+--- 100 columns, a terminal
+$ gf predictors create adult-income --context adult --model tabicl-v2 --target income
+[1;32m     Created[0m predictor adult-income revision 1  tabicl-v2-classifier, adult version 1
+[1;32m   Deploying[0m adult-income revision 1 to production  starting a replica
+[1;32m   Deploying[0m adult-income revision 1 to production  starting a replica  1s
+[1;32m    Deployed[0m adult-income revision 1 to production in 3.7s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/adult-income\https://app.generalforecast.com/?project=acme#/predictors/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf predictors create adult-income --context adult --model tabicl-v2 --target income
+     Created predictor adult-income revision 1  tabicl-v2-classifier, adult version 1
+   Deploying adult-income revision 1 to production
+    Deployed adult-income revision 1 to production in 3.7s
+        View https://app.generalforecast.com/?project=acme#/predictors/adult-income
+--- 44 columns, a terminal
+$ gf predictors create adult-income --context adult --model tabicl-v2 --target income
+[1;32m     Created[0m predictor adult-income
+             revision 1
+             tabicl-v2-classifier,
+             adult version 1
+[1;32m   Deploying[0m adult-income revision 1 to pr[0m…
+[1;32m   Deploying[0m adult-income revision 1 t[0m…  1s
+[1;32m    Deployed[0m adult-income revision 1 to
+             production in 3.7s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/adult-income\https://app.generalforecast.com/?project=acme#/predictors/adult-income]8;;\

@@ -104,6 +104,37 @@ for deploy in gf.predictors.deploy(adult, churn, env="staging"):
 gf.predictors.promote("churn", from_env="staging", env="production")
 ```
 
+## The `gf` command
+
+`gf <resource> <verb> [NAME] [flags]` is the Python API from a shell, word for
+word: `gf experiments wait adult-income --run 2` calls
+`gf.experiments.wait("adult-income", run=2)`. Status lines go to stderr and
+results to stdout; `--json` prints the result as one JSON object.
+
+```console
+$ gf login
+$ gf contexts create adult --file adult.csv
+   Uploading adult.csv  32,561 rows, 15 columns, 1.1 MiB
+     Created context adult version 1  32,561 rows, 15 columns in 3.4s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/adult
+$ gf experiments create --context adult --target income
+$ gf deploy predictors.py --env staging
+```
+
+`gf deploy FILE` runs a Python file of `gf.Predictor` definitions and deploys
+each, printing the plan first; it never prompts and never deletes a predictor
+the file leaves out. In CI:
+
+```yaml
+- run: uvx --from generalforecast gf contexts upload customers data/customers.parquet
+- run: uvx --from generalforecast gf deploy predictors.py --env staging
+- run: uvx --from generalforecast gf predictors promote churn --from staging --env production
+```
+
+`gf help <command>` lists a command's flags. Exit codes: 0 done (nothing to
+change included), 1 failed, 2 a command line `gf` cannot read or a question
+declined, 130 Ctrl-C, 141 a closed pipe.
+
 ## Contexts
 
 A context is uploaded (`data=`), imported from a source (`source=` with

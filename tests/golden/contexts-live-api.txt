@@ -1,0 +1,35 @@
+--- 100 columns, not a terminal
+$ gf contexts create signups --live --columns plan=category,seats=number,converted=boolean --id account_id --targets converted
+     Created live context signups  3 columns, rows arrive through the API
+        View https://app.generalforecast.com/?project=acme#/data/contexts/signups
+$ gf contexts append signups rows.csv
+    Appended 250 rows to signups  sequence 1,901
+$ gf contexts label signups outcomes.csv --target converted
+     Labeled 41 rows in signups
+--- 100 columns, a terminal
+$ gf contexts create signups --live --columns plan=category,seats=number,converted=boolean --id account_id --targets converted
+[1;32m     Created[0m live context signups  3 columns, rows arrive through the API
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/signups\https://app.generalforecast.com/?project=acme#/data/contexts/signups]8;;\
+$ gf contexts append signups rows.csv
+[1;32m    Appended[0m 250 rows to signups  sequence 1,901
+$ gf contexts label signups outcomes.csv --target converted
+[1;32m     Labeled[0m 41 rows in signups
+--- 44 columns, not a terminal
+$ gf contexts create signups --live --columns plan=category,seats=number,converted=boolean --id account_id --targets converted
+     Created live context signups  3 columns, rows arrive through the API
+        View https://app.generalforecast.com/?project=acme#/data/contexts/signups
+$ gf contexts append signups rows.csv
+    Appended 250 rows to signups  sequence 1,901
+$ gf contexts label signups outcomes.csv --target converted
+     Labeled 41 rows in signups
+--- 44 columns, a terminal
+$ gf contexts create signups --live --columns plan=category,seats=number,converted=boolean --id account_id --targets converted
+[1;32m     Created[0m live context signups  3
+             columns,
+             rows arrive through the API
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/signups\https://app.generalforecast.com/?project=acme#/data/contexts/signups]8;;\
+$ gf contexts append signups rows.csv
+[1;32m    Appended[0m 250 rows to signups  sequence
+             1,901
+$ gf contexts label signups outcomes.csv --target converted
+[1;32m     Labeled[0m 41 rows in signups

@@ -1,0 +1,12 @@
+--- 100 columns, not a terminal
+$ gf contexts delete signups --yes
+     Deleted context signups
+--- 100 columns, a terminal
+$ gf contexts delete signups --yes
+[1;32m     Deleted[0m context signups
+--- 44 columns, not a terminal
+$ gf contexts delete signups --yes
+     Deleted context signups
+--- 44 columns, a terminal
+$ gf contexts delete signups --yes
+[1;32m     Deleted[0m context signups

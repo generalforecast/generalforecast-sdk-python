@@ -4,9 +4,9 @@
 """Every operation, once, as a generator both clients drive.
 
 An operation yields `_http.Request`s and gets their `Reply`s back, yields
-`Sleep` to wait, `Say` to update the progress line, `Emit` to hand an item
-to an iterator and `Notify` to call a caller's callback; it returns the
-result. `Client` runs the steps in the calling thread and `AsyncClient`
+`Sleep` to wait, `Say` to update the progress line, `Reached` to mark a
+step done (the CLI prints a line for it), `Emit` to hand an item to an
+iterator and `Notify` to call a caller's callback; it returns the result. `Client` runs the steps in the calling thread and `AsyncClient`
 awaits them, so the two behave alike.
 """
 
@@ -35,6 +35,7 @@ from generalforecast.errors import (
 )
 from generalforecast.types import (
     COLUMN_TYPES,
+    DEFAULT_METHOD,
     NAME,
     PREDICTOR_FIELDS,
     SOURCE_KINDS,
@@ -98,9 +99,22 @@ class Sleep:
 
 @dataclass(frozen=True)
 class Say:
-    """Show this on the progress line, or clear it with None."""
+    """Show this on the progress line, or clear it with None.
+
+    The text starts with its verb, `Running run 1 ...`. `log` is what a
+    log that keeps one line per verb shows instead, when the text changes
+    as the work goes on.
+    """
 
     text: str | None
+    log: str | None = None
+
+
+@dataclass(frozen=True)
+class Reached:
+    """A step of the operation is done, such as an experiment created before its run is waited for."""
+
+    value: Any
 
 
 @dataclass(frozen=True)
@@ -255,27 +269,32 @@ def me_of(result: Mapping[str, Any], server: str, expires: Any = None) -> Me:
     )
 
 
-def device_login(sleep: Callable[[float], None], say: Callable[[str], None]) -> Op:
-    """Runs the device flow (3.6) and returns the token reply.
+def device_login(client: str) -> Op:
+    """Runs the device flow (3.6) for a `"cli"` or `"notebook"` client; returns the token reply.
+
+    Reaches the grant, with `verification_uri`, `verification_uri_complete`
+    and `user_code`, before it waits, so the caller can show them.
 
     Raises:
         Timeout: When the code expires before it is approved.
         Unauthorized: When the login is denied in the browser.
     """
-    reply = yield _http.device_login_start(_machine(), "notebook")
+    reply = yield _http.device_login_start(_machine(), client)
     grant = reply.result or {}
     for key in ("device_code", "user_code", "verification_uri"):
         if not isinstance(grant.get(key), str):
             raise InvalidInput("the server's device login is incomplete")
-    say(f"Open {grant['verification_uri']} and enter the code {grant['user_code']}")
+    yield Reached(grant)
     interval = float(grant.get("interval") or 5)
     deadline = time.monotonic() + float(grant.get("expires_in") or 600)
+    expired = Timeout(
+        "the login code expired", hint="run gf.login() again, or pass key="
+    )
     while True:
         if time.monotonic() >= deadline:
-            raise Timeout(
-                "the login code expired", hint="run gf.login() again, or pass key="
-            )
-        sleep(interval)
+            raise expired
+        yield Say("Waiting for approval")
+        yield Sleep(interval)
         try:
             reply = yield _http.device_login_token(grant["device_code"])
         except Error as error:
@@ -285,9 +304,7 @@ def device_login(sleep: Callable[[float], None], say: Callable[[str], None]) -> 
                 interval = min(interval + 5, 60)
                 continue
             if error.reason == "expired_token":
-                raise Timeout(
-                    "the login code expired", hint="run gf.login() again, or pass key="
-                ) from None
+                raise expired from None
             raise
         return reply.result or {}
 
@@ -370,7 +387,7 @@ def context_create(
             payload["freshness_seconds"] = seconds
         reply = yield _http.contexts_create(payload)
         found = load(Context, reply.result)
-        return (yield from _settle(found, wait))
+        return (yield from _settle(found, wait, "Reading" if live else "Importing"))
     if table is not None or sql is not None:
         raise InvalidInput(
             "table= and sql= read from a source", hint="pass source= with them"
@@ -429,11 +446,13 @@ def context_create(
     if columns is not None:
         payload["columns"] = _types(columns, "columns")
     reply = yield _http.contexts_create(payload)
-    found = yield from _upload(name, reply.result, body, rows.num_rows)
+    found = yield from _upload(name, reply.result, body, rows, data)
     return (yield from _settle(found, wait))
 
 
-def _upload(name: str, result: Mapping[str, Any], body: bytes, rows: int) -> Op:
+def _upload(
+    name: str, result: Mapping[str, Any], body: bytes, rows: Any, data: Any
+) -> Op:
     """Sends an opened upload's bytes, to a signed URL or the bytes route."""
     found = load(Context, result)
     upload = result.get("upload")
@@ -443,7 +462,10 @@ def _upload(name: str, result: Mapping[str, Any], body: bytes, rows: int) -> Op:
     url = upload.get("url")
     chunk = int(upload.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
     total = len(body)
-    yield Say(f"Uploading {name}  {rows:,} rows, {_data.size(total)}")
+    yield Say(
+        f"Uploading {_data.file_name(data) or name}  {rows.num_rows:,} rows, "
+        f"{rows.num_columns:,} columns, {_data.size(total)}"
+    )
     offset = 0
     while offset < total:
         piece = body[offset : offset + chunk]
@@ -461,14 +483,23 @@ def _upload(name: str, result: Mapping[str, Any], body: bytes, rows: int) -> Op:
     return replace(found, state="uploading" if found.state == "ready" else found.state)
 
 
-def _settle(found: Context, wait: bool) -> Op:
-    """Polls a context until it is ready, or raises when it failed."""
+def _settle(found: Context, wait: bool, verb: str = "Importing") -> Op:
+    """Polls a context until it is ready, or raises when it failed.
+
+    While the service imports it, the progress line says `verb` (`Importing`,
+    `Refreshing`, or `Reading` for a live context's first read) and the rows
+    read so far.
+    """
     if not wait:
         return found
     attempt = 0
     while found.state not in ("ready", "failed"):
-        verb = "Importing" if found.state == "importing" else "Verifying"
-        yield Say(f"{verb} {found.name}")
+        if found.state == "importing" and found.source is not None:
+            text = f"{verb} {found.name} from {found.source.source}"
+            read = f"  {found.rows:,} rows" if found.rows else ""
+            yield Say(text + read, log=text)
+        else:
+            yield Say(f"Verifying {found.name}")
         yield Sleep(_poll(attempt))
         attempt += 1
         reply = yield _http.contexts_get(found.name)
@@ -490,7 +521,7 @@ def context_upload(context: Any, data: Any, *, wait: bool = True) -> Op:
     reply = yield _http.contexts_version(
         name, {"data": _upload_spec(rows, body, digest, data)}
     )
-    found = yield from _upload(name, reply.result, body, rows.num_rows)
+    found = yield from _upload(name, reply.result, body, rows, data)
     return (yield from _settle(found, wait))
 
 
@@ -498,7 +529,7 @@ def context_refresh(context: Any, *, wait: bool = True) -> Op:
     """Imports a new version of a source snapshot context."""
     name = name_of(context, "context")
     reply = yield _http.contexts_refresh(name)
-    return (yield from _settle(load(Context, reply.result), wait))
+    return (yield from _settle(load(Context, reply.result), wait, "Refreshing"))
 
 
 def _records(rows: Any) -> list[dict[str, Any]]:
@@ -706,6 +737,7 @@ def experiment_create(
         payload["models"] = _names(models, "models")
     reply = yield _http.experiments_create(payload)
     found = load(Experiment, reply.result)
+    yield Reached(found)
     if not wait or found.run is None:
         return found
     return (
@@ -770,12 +802,16 @@ def experiment_list(context: Any = None) -> Op:
             return found
 
 
-def _progress(run: Run) -> str:
+def _progress(name: str, run: Run) -> Say:
+    """`Running run 1 of adult-income  2 of 3 models finished`; a log keeps `... 3 models`."""
     total = len(run.leaderboard) or len(run.models)
     finished = sum(1 for e in run.leaderboard if e.state in ("finished", "failed"))
+    verb = "Queued" if run.state == "queued" else "Running"
+    head = f"{verb} run {run.number} of {name}"
+    models = f"{total} model" if total == 1 else f"{total} models"
     if run.state == "queued":
-        return f"Queued run {run.number}  {total} models"
-    return f"Running run {run.number}  {finished} of {total} models finished"
+        return Say(f"{head}  {models}")
+    return Say(f"{head}  {finished} of {models} finished", log=f"{head}  {models}")
 
 
 def experiment_wait(
@@ -804,7 +840,7 @@ def experiment_wait(
                 timeout,
                 f"gf.experiments.wait({name!r}) picks it up again",
             )
-        yield Say(_progress(current))
+        yield _progress(name, current)
         yield Sleep(_poll(attempt))
         attempt += 1
         run = current.number
@@ -874,20 +910,26 @@ def predictor_spec(name: str, values: Mapping[str, Any]) -> Predictor:
         raise InvalidInput(f"gf.Predictor(): {error}") from None
 
 
+def _env_arg(env: str) -> str:
+    return "" if env == "production" else f", env={env!r}"
+
+
 def _env_wait(name: str, env: str, revision: int | None, timeout: float | None) -> Op:
     deadline = _deadline(timeout)
     attempt = 0
     while True:
         reply = yield _http.predictors_environment(name, env)
-        found = load(Environment, {"name": env, **(reply.result or {})})
+        result = reply.result or {}
+        found = load(Environment, {"name": env, **result})
         current = revision is None or found.revision == revision
         if current and found.state == "ready":
             return found
         if current and found.state in ("failed", "stopped"):
             raise failed(
                 f"{name} revision {found.revision} failed to start in {env}",
-                found.error,
+                result.get("error"),
                 code="DeployFailed",
+                hint=f"see gf.predictors.logs({name!r}{_env_arg(env)}, level='error')",
             )
         if _past(deadline):
             raise _not_done(
@@ -896,12 +938,14 @@ def _env_wait(name: str, env: str, revision: int | None, timeout: float | None) 
                 f"gf.predictors.get({name!r}) shows its environments",
             )
         shown = revision if revision is not None else found.revision
-        yield Say(f"Deploying {name} revision {shown} to {env}  starting a replica")
+        text = f"Deploying {name} revision {shown} to {env}"
+        yield Say(f"{text}  starting a replica", log=text)
         yield Sleep(_poll(attempt))
         attempt += 1
 
 
 def _deployed(deploy: Deploy, wait: bool, timeout: float | None) -> Op:
+    yield Reached(deploy)
     if not wait or deploy.action == "unchanged":
         return deploy
     number = deploy.revision.number if deploy.revision else None
@@ -1001,13 +1045,13 @@ WAITING = {
 }
 
 
-def _answered(request: _http.Request, label: str) -> Op:
+def _answered(request: _http.Request, label: str, log: str) -> Op:
     """Sends a prediction part and follows a 202 until it is answered."""
     reply = yield request
     while reply.status == 202:
         status = reply.result or {}
         state = str(status.get("state") or "starting")
-        yield Say(f"{label}  {WAITING.get(state, state)}")
+        yield Say(f"{label}  {WAITING.get(state, state)}", log=log)
         wait = status.get("retry_after") or reply.headers.get("retry-after") or 1
         yield Sleep(min(max(float(wait), 0.0), 30.0))
         location = reply.headers.get("location") or str(status.get("id") or "")
@@ -1079,6 +1123,7 @@ def predictions_of(reply: _http.Reply) -> Predictions:
         if isinstance(context, Mapping) and "used" in context
         else None,
         notes=tuple(str(n) for n in result.get("notes") or ()),
+        calls=int(used("calls", 1)),
     )
 
 
@@ -1106,24 +1151,27 @@ def combined(parts: Sequence[Predictions]) -> Predictions:
         if timings
         else None,
         notes=tuple(dict.fromkeys(n for p in parts for n in p.notes)),
+        calls=sum(p.calls for p in parts),
     )
 
 
 def _scored(
     queries: Any,
     request: Callable[[Any], _http.Request],
-    label: str,
+    what: str,
     series: Sequence[str] = (),
 ) -> Op:
+    """Sends the queries in parts; the progress line says `Predicting N rows {what}`."""
     rows = _data.table(queries, what="queries")
     parts = _data.split(rows, series=series)
+    label = f"Predicting {rows.num_rows:,} rows {what}"
     answers = []
     for index, part in enumerate(parts):
         shown = (
             label if len(parts) == 1 else f"{label}  part {index + 1} of {len(parts)}"
         )
-        yield Say(shown)
-        reply = yield from _answered(request(part), shown)
+        yield Say(shown, log=label)
+        reply = yield from _answered(request(part), shown, label)
         answers.append(predictions_of(reply))
     return combined(answers)
 
@@ -1140,7 +1188,7 @@ def predictor_predict(predictor: Any, queries: Any, *, env: str, as_of: Any) -> 
         yield from _scored(
             queries,
             lambda part: _http.predictors_predict(name, payload, part),
-            f"Predicting with {name} in {env}",
+            f"with {name} in {env}",
         )
     )
 
@@ -1239,7 +1287,7 @@ def model_predict(
         yield from _scored(
             queries,
             lambda part: _http.predict(payload, part),
-            f"Predicting with {model}  {rows:,} context rows",
+            f"with {model}  {rows:,} context rows",
             series,
         )
     )
@@ -1765,23 +1813,21 @@ def _data_items(items: Sequence[Any]) -> Op:
     return out
 
 
-def run_create(
+def run_request(
     name: str,
     *,
     base: str,
-    data: Sequence[Any] | None,
-    method: Any,
-    plan: Plan | None,
-    phases: Sequence[Phase] | None,
-    architecture: Sequence[ArchitectureChange],
-    evaluation: Evaluation | None,
-    budget: Budget | None,
-    seed: int | None,
-    tags: Sequence[str],
-    wait: bool,
-    progress: Any,
+    data: Sequence[Any] | None = None,
+    method: Any = DEFAULT_METHOD,
+    plan: Plan | None = None,
+    phases: Sequence[Phase] | None = None,
+    architecture: Sequence[ArchitectureChange] = (),
+    evaluation: Evaluation | None = None,
+    budget: Budget | None = None,
+    seed: int | None = None,
+    tags: Sequence[str] = (),
 ) -> Op:
-    """Starts the run that publishes the fine-tune `name`'s next version."""
+    """The payload that starts a run, its data resolved and pinned by name; nothing is started."""
     _checked_name(name, "fine-tune")
     if not isinstance(base, str) or not base:
         raise InvalidInput("a run needs base=, the model it trains from", param="base")
@@ -1845,8 +1891,15 @@ def run_create(
         payload["seed"] = seed
     if tags:
         payload["tags"] = list(tags)
+    return payload
+
+
+def run_create(name: str, *, wait: bool, progress: Any, **settings: Any) -> Op:
+    """Starts the run that publishes the fine-tune `name`'s next version."""
+    payload = yield from run_request(name, **settings)
     reply = yield _http.runs_create(payload)
     run = load(FineTuneRun, reply.result)
+    yield Reached(run)
     if not wait:
         return run
     return (yield from run_wait(run.model, None, progress))
@@ -1930,7 +1983,8 @@ def run_wait(run: Any, timeout: float | None, progress: Any) -> Op:
         if progress is None:
             from generalforecast import _render
 
-            yield Say(_render.run_line(found))
+            text, log = _render.run_progress(found)
+            yield Say(text, log=log)
         yield Sleep(_poll(attempt) * 2)
         attempt += 1
 

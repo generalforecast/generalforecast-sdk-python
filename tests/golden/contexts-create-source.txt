@@ -1,0 +1,25 @@
+--- 100 columns, not a terminal
+$ gf contexts create customers --source bigquery-acme --table acme.analytics.customers --id customer_id
+   Importing customers from bigquery-acme
+     Created context customers version 1  48,210 rows, 9 columns in 5.8s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/customers
+--- 100 columns, a terminal
+$ gf contexts create customers --source bigquery-acme --table acme.analytics.customers --id customer_id
+[1;32m   Importing[0m customers from bigquery-acme
+[1;32m   Importing[0m customers from bigquery-acme  31,200 rows  1s
+[1;32m   Importing[0m customers from bigquery-acme  31,200 rows  2s
+[1;32m     Created[0m context customers version 1  48,210 rows, 9 columns in 5.8s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/customers\https://app.generalforecast.com/?project=acme#/data/contexts/customers]8;;\
+--- 44 columns, not a terminal
+$ gf contexts create customers --source bigquery-acme --table acme.analytics.customers --id customer_id
+   Importing customers from bigquery-acme
+     Created context customers version 1  48,210 rows, 9 columns in 5.8s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/customers
+--- 44 columns, a terminal
+$ gf contexts create customers --source bigquery-acme --table acme.analytics.customers --id customer_id
+[1;32m   Importing[0m customers from bigquery-acme
+[1;32m   Importing[0m customers from bigquery-a[0m…  1s
+[1;32m   Importing[0m customers from bigquery-a[0m…  2s
+[1;32m     Created[0m context customers version 1
+             48,210 rows, 9 columns in 5.8s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/customers\https://app.generalforecast.com/?project=acme#/data/contexts/customers]8;;\

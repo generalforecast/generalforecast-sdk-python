@@ -1,0 +1,20 @@
+--- 100 columns, not a terminal
+$ gf experiments slices adult-income --model tabicl-v2
+  Column          Value           Rows  AUROC  Change
+  marital_status  Never-married  2,140  0.884  -0.047
+  education       HS-grad        2,096  0.902  -0.029
+--- 100 columns, a terminal
+$ gf experiments slices adult-income --model tabicl-v2
+  Column          Value           Rows  AUROC  Change
+  marital_status  Never-married  2,140  0.884  -0.047
+  education       HS-grad        2,096  0.902  -0.029
+--- 44 columns, not a terminal
+$ gf experiments slices adult-income --model tabicl-v2
+  Column          Value           Rows  AUROC  Change
+  marital_status  Never-married  2,140  0.884  -0.047
+  education       HS-grad        2,096  0.902  -0.029
+--- 44 columns, a terminal
+$ gf experiments slices adult-income --model tabicl-v2
+  Column          Value           Rows  AUROC  Change
+  marital_status  Never-married  2,140  0.884  -0.047
+  education       HS-grad        2,096  0.902  -0.029

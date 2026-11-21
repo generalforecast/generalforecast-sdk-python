@@ -1,0 +1,22 @@
+--- 100 columns, not a terminal
+$ gf predictors create churn --context customers --model kumo-med --target churned
+error: no model named `kumo-med`
+help: a similar model exists: `kumo-medium`; `gf models list` shows them all
+[exit 1]
+--- 100 columns, a terminal
+$ gf predictors create churn --context customers --model kumo-med --target churned
+[1merror:[0m no model named `kumo-med`
+[1mhelp:[0m a similar model exists: `kumo-medium`; `gf models list` shows them all
+[exit 1]
+--- 44 columns, not a terminal
+$ gf predictors create churn --context customers --model kumo-med --target churned
+error: no model named `kumo-med`
+help: a similar model exists: `kumo-medium`; `gf models list` shows them all
+[exit 1]
+--- 44 columns, a terminal
+$ gf predictors create churn --context customers --model kumo-med --target churned
+[1merror:[0m no model named `kumo-med`
+[1mhelp:[0m a similar model exists:
+      `kumo-medium`; `gf models list` shows
+      them all
+[exit 1]

@@ -1,0 +1,20 @@
+--- 100 columns, not a terminal
+$ gf experiments list
+  Name          Context    Target   Runs  Best         Score        Origin    Updated
+  adult-income  adult      income      2  tabicl-v2    AUROC 0.931  notebook  45m ago
+  churn-nov     customers  churned     3  kumo-medium  AUROC 0.871  console   45m ago
+--- 100 columns, a terminal
+$ gf experiments list
+  Name          Context    Target   Runs  Best         Score        Origin    Updated
+  adult-income  adult      income      2  tabicl-v2    AUROC 0.931  notebook  45m ago
+  churn-nov     customers  churned     3  kumo-medium  AUROC 0.871  console   45m ago
+--- 44 columns, not a terminal
+$ gf experiments list
+  Name          Target   Runs  Best         Score
+  adult-income  income      2  tabicl-v2    AUROC 0.931
+  churn-nov     churned     3  kumo-medium  AUROC 0.871
+--- 44 columns, a terminal
+$ gf experiments list
+  Name          Target   Runs  Best         Score
+  adult-income  income      2  tabicl-v2    AUROC 0.931
+  churn-nov     churned     3  kumo-medium  AUROC 0.871

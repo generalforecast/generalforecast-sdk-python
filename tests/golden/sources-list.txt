@@ -1,0 +1,20 @@
+--- 100 columns, not a terminal
+$ gf sources list
+  Name            Kind       State  Tested
+  bigquery-acme   BigQuery   ready  Nov 21 08:02
+  snowflake-prod  Snowflake  ready  Nov 20 16:10
+--- 100 columns, a terminal
+$ gf sources list
+  Name            Kind       State  Tested
+  bigquery-acme   BigQuery   ready  Nov 21 08:02
+  snowflake-prod  Snowflake  ready  Nov 20 16:10
+--- 44 columns, not a terminal
+$ gf sources list
+  Name            Kind       State  Tested
+  bigquery-acme   BigQuery   ready  Nov 21 08:02
+  snowflake-prod  Snowflake  ready  Nov 20 16:10
+--- 44 columns, a terminal
+$ gf sources list
+  Name            Kind       State  Tested
+  bigquery-acme   BigQuery   ready  Nov 21 08:02
+  snowflake-prod  Snowflake  ready  Nov 20 16:10

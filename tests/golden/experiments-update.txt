@@ -1,0 +1,17 @@
+--- 100 columns, not a terminal
+$ gf experiments update adult-income --holdout "20% stratified"
+     Updated experiment adult-income  runs 1 and 2 are now stale
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 100 columns, a terminal
+$ gf experiments update adult-income --holdout "20% stratified"
+[1;32m     Updated[0m experiment adult-income  runs 1 and 2 are now stale
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf experiments update adult-income --holdout "20% stratified"
+     Updated experiment adult-income  runs 1 and 2 are now stale
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 44 columns, a terminal
+$ gf experiments update adult-income --holdout "20% stratified"
+[1;32m     Updated[0m experiment adult-income  runs
+             1 and 2 are now stale
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\

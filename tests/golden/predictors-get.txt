@@ -1,0 +1,46 @@
+--- 100 columns, not a terminal
+$ gf predictors get adult-income
+  Name     adult-income
+  Task     classification, target income
+  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:d0f1d0
+  Context  adult version 1, 32,561 rows
+
+  Environment  Revision  State  Calls today    p50
+  production          2  ready        1,204  0.90s
+  staging             2  ready            0
+        View https://app.generalforecast.com/?project=acme#/predictors/adult-income
+--- 100 columns, a terminal
+$ gf predictors get adult-income
+  Name     adult-income
+  Task     classification, target income
+  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:d0f1d0
+  Context  adult version 1, 32,561 rows
+
+  Environment  Revision  State  Calls today    p50
+  production          2  ready        1,204  0.90s
+  staging             2  ready            0
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/adult-income\https://app.generalforecast.com/?project=acme#/predictors/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf predictors get adult-income
+  Name     adult-income
+  Task     classification, target income
+  Model    kumo-medium, general-forecast/kumo-tabular-medium-classifier@sha256:d0f1d0
+  Context  adult version 1, 32,561 rows
+
+  Environment  Revision  State  Calls today    p50
+  production          2  ready        1,204  0.90s
+  staging             2  ready            0
+        View https://app.generalforecast.com/?project=acme#/predictors/adult-income
+--- 44 columns, a terminal
+$ gf predictors get adult-income
+  Name     adult-income
+  Task     classification, target income
+  Model    kumo-medium, general-forecast/
+           kumo-tabular-medium-
+           classifier@sha256:d0f1d0
+  Context  adult version 1, 32,561 rows
+
+  Environment  Revision  State  Calls today    p50
+  production          2  ready        1,204  0.90s
+  staging             2  ready            0
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/predictors/adult-income\https://app.generalforecast.com/?project=acme#/predictors/adult-income]8;;\

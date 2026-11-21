@@ -1,0 +1,24 @@
+--- 100 columns, not a terminal
+$ gf keys list
+  Name          Id        Permissions  Expires      Last used
+  cli-maya-mbp  key_19ab  standard     Feb 19 2027  just now
+  ci-deploy     key_8f2c  standard     never        3m ago
+  old-laptop    key_02cd  standard     revoked      never
+--- 100 columns, a terminal
+$ gf keys list
+  Name          Id        Permissions  Expires      Last used
+  cli-maya-mbp  key_19ab  standard     Feb 19 2027  just now
+  ci-deploy     key_8f2c  standard     never        3m ago
+  old-laptop    key_02cd  standard     revoked      never
+--- 44 columns, not a terminal
+$ gf keys list
+  Name          Id        Expires
+  cli-maya-mbp  key_19ab  Feb 19 2027
+  ci-deploy     key_8f2c  never
+  old-laptop    key_02cd  revoked
+--- 44 columns, a terminal
+$ gf keys list
+  Name          Id        Expires
+  cli-maya-mbp  key_19ab  Feb 19 2027
+  ci-deploy     key_8f2c  never
+  old-laptop    key_02cd  revoked

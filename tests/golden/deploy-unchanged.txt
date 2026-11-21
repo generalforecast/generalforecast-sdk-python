@@ -1,0 +1,36 @@
+--- 100 columns, not a terminal
+$ gf deploy predictors.py
+     Loading predictors.py  4 predictors
+    Planning production
+  = adult-income  revision 2, unchanged
+  = churn         revision 5, unchanged
+  = demand-us     revision 12, unchanged
+  = demand-eu     revision 9, unchanged
+    Finished nothing to deploy in 1.0s
+--- 100 columns, a terminal
+$ gf deploy predictors.py
+[1;32m     Loading[0m predictors.py  4 predictors
+[1;32m    Planning[0m production
+  [1;2m=[0m adult-income  revision 2, unchanged
+  [1;2m=[0m churn         revision 5, unchanged
+  [1;2m=[0m demand-us     revision 12, unchanged
+  [1;2m=[0m demand-eu     revision 9, unchanged
+[1;32m    Finished[0m nothing to deploy in 1.0s
+--- 44 columns, not a terminal
+$ gf deploy predictors.py
+     Loading predictors.py  4 predictors
+    Planning production
+  = adult-income  revision 2, unchanged
+  = churn         revision 5, unchanged
+  = demand-us     revision 12, unchanged
+  = demand-eu     revision 9, unchanged
+    Finished nothing to deploy in 1.0s
+--- 44 columns, a terminal
+$ gf deploy predictors.py
+[1;32m     Loading[0m predictors.py  4 predictors
+[1;32m    Planning[0m production
+  [1;2m=[0m adult-income  revision 2, unchanged
+  [1;2m=[0m churn         revision 5, unchanged
+  [1;2m=[0m demand-us     revision 12, unchanged
+  [1;2m=[0m demand-eu     revision 9, unchanged
+[1;32m    Finished[0m nothing to deploy in 1.0s

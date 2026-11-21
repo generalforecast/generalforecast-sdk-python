@@ -1,0 +1,70 @@
+--- 100 columns, not a terminal
+$ gf fine-tunes runs list
+  Run                 State     Base              Step   Loss  Val loss   Cost  Created
+  credit-default@ft1  finished  tabicl-v2  1,000/1,000  0.410     0.398  $0.26  Oct 23 2025
+  credit-default@ft2  queued    tabicl-v2      0/1,000                          Oct 23 2025
+$ gf fine-tunes runs get credit-default@ft1
+  Run         credit-default@ft1
+  State       finished
+  Base        tabicl-v2
+  Data        credit-2026-01 sha256:35ab91712b77
+  Method      type lora, rank 16
+  Step        1,000/1,000
+  Loss        0.410
+  Validation  0.398 (base 0.421)
+  Published   acme/credit-default@ft1, step 1,000
+  Cost        260.0 credits ($0.26)
+  Created     Oct 23 2025
+--- 100 columns, a terminal
+$ gf fine-tunes runs list
+  Run                 State     Base              Step   Loss  Val loss   Cost  Created
+  credit-default@ft1  finished  tabicl-v2  1,000/1,000  0.410     0.398  $0.26  Oct 23 2025
+  credit-default@ft2  queued    tabicl-v2      0/1,000                          Oct 23 2025
+$ gf fine-tunes runs get credit-default@ft1
+  Run         credit-default@ft1
+  State       finished
+  Base        tabicl-v2
+  Data        credit-2026-01 sha256:35ab91712b77
+  Method      type lora, rank 16
+  Step        1,000/1,000
+  Loss        0.410
+  Validation  0.398 (base 0.421)
+  Published   acme/credit-default@ft1, step 1,000
+  Cost        260.0 credits ($0.26)
+  Created     Oct 23 2025
+--- 44 columns, not a terminal
+$ gf fine-tunes runs list
+  Run                 State            Step  Val loss
+  credit-default@ft1  finished  1,000/1,000     0.398
+  credit-default@ft2  queued        0/1,000
+$ gf fine-tunes runs get credit-default@ft1
+  Run         credit-default@ft1
+  State       finished
+  Base        tabicl-v2
+  Data        credit-2026-01 sha256:35ab91712b77
+  Method      type lora, rank 16
+  Step        1,000/1,000
+  Loss        0.410
+  Validation  0.398 (base 0.421)
+  Published   acme/credit-default@ft1, step 1,000
+  Cost        260.0 credits ($0.26)
+  Created     Oct 23 2025
+--- 44 columns, a terminal
+$ gf fine-tunes runs list
+  Run                 State            Step  Val loss
+  credit-default@ft1  finished  1,000/1,000     0.398
+  credit-default@ft2  queued        0/1,000
+$ gf fine-tunes runs get credit-default@ft1
+  Run         credit-default@ft1
+  State       finished
+  Base        tabicl-v2
+  Data        credit-2026-01
+              sha256:35ab91712b77
+  Method      type lora, rank 16
+  Step        1,000/1,000
+  Loss        0.410
+  Validation  0.398 (base 0.421)
+  Published   acme/credit-default@ft1,
+              step 1,000
+  Cost        260.0 credits ($0.26)
+  Created     Oct 23 2025

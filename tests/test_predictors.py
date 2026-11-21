@@ -102,10 +102,15 @@ def test_a_failed_start_is_not_recoverable(adult):
     with pytest.raises(gf.Error) as error:
         gf.predictors.update("adult-income", model="kumo-medium")
     assert error.value.code == "DeployFailed" and not error.value.recoverable
-    assert error.value.message == (
-        "adult-income revision 2 failed to start in production: "
-        "the replica exited loading the model"
+    assert (
+        error.value.message == "adult-income revision 2 failed to start in production"
     )
+    assert error.value.note == "the replica exited loading the model"
+    assert error.value.hint == (
+        "production still serves revision 1; "
+        "see gf.predictors.logs('adult-income', level='error')"
+    )
+    assert error.value.request_id == "r-8f2c41d0"
 
 
 def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):

@@ -14,7 +14,7 @@ import os
 import secrets
 import stat
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
 from generalforecast.errors import Error, InvalidInput, Unsupported
@@ -139,7 +139,7 @@ def write_private(path: str | os.PathLike[str], data: bytes) -> None:
 
 
 @contextlib.contextmanager
-def private_lock(path: str | os.PathLike[str]) -> Iterator[None]:
+def private_lock(path: str | os.PathLike[str]) -> Generator[None]:
     """Holds an exclusive advisory lock on the owner-only path.lock sibling."""
     _supported()
     assert fcntl is not None

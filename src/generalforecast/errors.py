@@ -310,16 +310,38 @@ def from_wire(
     )
 
 
-def failed(what: str, error: Any, *, code: str, request_id: str | None = None) -> Error:
+def failed(
+    what: str,
+    error: Any,
+    *,
+    code: str,
+    request_id: str | None = None,
+    hint: str | None = None,
+) -> Error:
     """A run, training or deploy that ended `failed`: not recoverable by the caller.
 
-    `error` is the resource's `error`, a message or an error object; an
-    object's code picks the class.
+    `what` is the message. The resource's `error`, a message or an error
+    object, is the note; an object's code picks the class, and its hint
+    comes before `hint`.
     """
-    if isinstance(error, Mapping):
-        found = from_wire(error, None, request_id)
-        found.message = f"{what}: {found.message}"
-        found.recoverable = False
-        return found
-    detail = f": {error}" if isinstance(error, str) and error else ""
-    return Error(f"{what}{detail}", code=code, request_id=request_id, recoverable=False)
+    cause = from_wire(error, None, request_id) if isinstance(error, Mapping) else None
+    if cause is None:
+        note = error if isinstance(error, str) and error else None
+        return Error(
+            what,
+            note=note,
+            hint=hint,
+            code=code,
+            request_id=request_id,
+            recoverable=False,
+        )
+    cls = _BY_CODE.get(str(error.get("code")), Error)
+    return cls(
+        what,
+        note=cause.message,
+        hint="; ".join(h for h in (cause.hint, hint) if h) or None,
+        code=cause.code if cls is not Error else code,
+        reason=cause.reason,
+        request_id=cause.request_id,
+        recoverable=False,
+    )

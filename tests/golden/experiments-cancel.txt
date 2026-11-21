@@ -1,0 +1,17 @@
+--- 100 columns, not a terminal
+$ gf experiments cancel adult-income
+   Cancelled run 2 of adult-income  1 of 1 models stopped, $0.004 spent
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 100 columns, a terminal
+$ gf experiments cancel adult-income
+[1;32m   Cancelled[0m run 2 of adult-income  1 of 1 models stopped, $0.004 spent
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf experiments cancel adult-income
+   Cancelled run 2 of adult-income  1 of 1 models stopped, $0.004 spent
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 44 columns, a terminal
+$ gf experiments cancel adult-income
+[1;32m   Cancelled[0m run 2 of adult-income  1 of 1
+             models stopped, $0.004 spent
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\

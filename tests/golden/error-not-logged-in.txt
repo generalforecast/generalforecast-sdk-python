@@ -1,0 +1,21 @@
+--- 100 columns, not a terminal
+$ gf contexts list
+error: not logged in
+help: run `gf login`, or set GF_API_KEY for unattended use
+[exit 1]
+--- 100 columns, a terminal
+$ gf contexts list
+[1merror:[0m not logged in
+[1mhelp:[0m run `gf login`, or set GF_API_KEY for unattended use
+[exit 1]
+--- 44 columns, not a terminal
+$ gf contexts list
+error: not logged in
+help: run `gf login`, or set GF_API_KEY for unattended use
+[exit 1]
+--- 44 columns, a terminal
+$ gf contexts list
+[1merror:[0m not logged in
+[1mhelp:[0m run `gf login`,
+      or set GF_API_KEY for unattended use
+[exit 1]

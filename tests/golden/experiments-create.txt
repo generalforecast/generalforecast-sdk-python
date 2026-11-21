@@ -1,0 +1,46 @@
+--- 100 columns, not a terminal
+$ gf experiments create --context adult --target income --models kumo-medium,tabicl-v2,mitra-2
+     Created experiment adult-income  classification, 6,513 held-out rows, about $0.039
+     Running run 1 of adult-income  3 models
+    Finished run 1 in 1m12s  19,539 rows, $0.039
+     Model        AUROC  Interval        Time  Cost
+  1  tabicl-v2    0.931  0.925 to 0.937  38s   $0.013
+  2  kumo-medium  0.929  0.923 to 0.935  51s   $0.013
+  3  mitra-2      0.918  0.911 to 0.925  44s   $0.013
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 100 columns, a terminal
+$ gf experiments create --context adult --target income --models kumo-medium,tabicl-v2,mitra-2
+[1;32m     Created[0m experiment adult-income  classification, 6,513 held-out rows, about $0.039
+[1;32m     Running[0m run 1 of adult-income  1 of 3 models finished
+[1;32m     Running[0m run 1 of adult-income  1 of 3 models finished  1s
+[1;32m    Finished[0m run 1 in 1m12s  19,539 rows, $0.039
+     Model        AUROC  Interval        Time  Cost
+  1  tabicl-v2    0.931  0.925 to 0.937  38s   $0.013
+  2  kumo-medium  0.929  0.923 to 0.935  51s   $0.013
+  3  mitra-2      0.918  0.911 to 0.925  44s   $0.013
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\
+--- 44 columns, not a terminal
+$ gf experiments create --context adult --target income --models kumo-medium,tabicl-v2,mitra-2
+     Created experiment adult-income  classification, 6,513 held-out rows, about $0.039
+     Running run 1 of adult-income  3 models
+    Finished run 1 in 1m12s  19,539 rows, $0.039
+     Model        AUROC  Time  Cost
+  1  tabicl-v2    0.931  38s   $0.013
+  2  kumo-medium  0.929  51s   $0.013
+  3  mitra-2      0.918  44s   $0.013
+        View https://app.generalforecast.com/?project=acme#/experiments/adult-income
+--- 44 columns, a terminal
+$ gf experiments create --context adult --target income --models kumo-medium,tabicl-v2,mitra-2
+[1;32m     Created[0m experiment adult-income
+             classification,
+             6,513 held-out rows,
+             about $0.039
+[1;32m     Running[0m run 1 of adult-income  1 of 3[0m…
+[1;32m     Running[0m run 1 of adult-income  1 [0m…  1s
+[1;32m    Finished[0m run 1 in 1m12s  19,539 rows,
+             $0.039
+     Model        AUROC  Time  Cost
+  1  tabicl-v2    0.931  38s   $0.013
+  2  kumo-medium  0.929  51s   $0.013
+  3  mitra-2      0.918  44s   $0.013
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/experiments/adult-income\https://app.generalforecast.com/?project=acme#/experiments/adult-income]8;;\

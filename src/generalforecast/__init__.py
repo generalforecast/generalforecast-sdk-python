@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from generalforecast.types import ArchitectureChange as ArchitectureChange
     from generalforecast.types import Budget as Budget
     from generalforecast.types import Evaluation as Evaluation
+    from generalforecast.types import FineTuneSpec as FineTuneSpec
     from generalforecast.types import Full as Full
     from generalforecast.types import Holdout as Holdout
     from generalforecast.types import InputAdapter as InputAdapter
@@ -86,6 +87,7 @@ __all__ = [
     "Conflict",
     "Error",
     "Evaluation",
+    "FineTuneSpec",
     "Forecaster",
     "Full",
     "Holdout",
@@ -138,6 +140,7 @@ _EXPORTS = {
     "ArchitectureChange": ("generalforecast.types", "ArchitectureChange"),
     "Budget": ("generalforecast.types", "Budget"),
     "Evaluation": ("generalforecast.types", "Evaluation"),
+    "FineTuneSpec": ("generalforecast.types", "FineTuneSpec"),
     "Full": ("generalforecast.types", "Full"),
     "InputAdapter": ("generalforecast.types", "InputAdapter"),
     "LoRA": ("generalforecast.types", "LoRA"),

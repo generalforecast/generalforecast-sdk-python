@@ -1,0 +1,17 @@
+--- 100 columns, not a terminal
+$ gf keys rotate key_8f2c --yes
+     Rotated key ci-deploy  the old token stops working now; shown once
+gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb
+--- 100 columns, a terminal
+$ gf keys rotate key_8f2c --yes
+[1;32m     Rotated[0m key ci-deploy  the old token stops working now; shown once
+gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb
+--- 44 columns, not a terminal
+$ gf keys rotate key_8f2c --yes
+     Rotated key ci-deploy  the old token stops working now; shown once
+gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb
+--- 44 columns, a terminal
+$ gf keys rotate key_8f2c --yes
+[1;32m     Rotated[0m key ci-deploy  the old token
+             stops working now; shown once
+gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb

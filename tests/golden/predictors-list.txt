@@ -1,0 +1,20 @@
+--- 100 columns, not a terminal
+$ gf predictors list
+  Name          Model        Context       Production  Staging  Calls today
+  adult-income  kumo-medium  adult v1      2 ready     2 ready        1,204
+  churn         kumo-small   customers v7  4 ready     5 ready       18,540
+--- 100 columns, a terminal
+$ gf predictors list
+  Name          Model        Context       Production  Staging  Calls today
+  adult-income  kumo-medium  adult v1      2 ready     2 ready        1,204
+  churn         kumo-small   customers v7  4 ready     5 ready       18,540
+--- 44 columns, not a terminal
+$ gf predictors list
+  Name          Model        Production
+  adult-income  kumo-medium  2 ready
+  churn         kumo-small   4 ready
+--- 44 columns, a terminal
+$ gf predictors list
+  Name          Model        Production
+  adult-income  kumo-medium  2 ready
+  churn         kumo-small   4 ready

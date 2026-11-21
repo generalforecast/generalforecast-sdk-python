@@ -1,0 +1,29 @@
+--- 100 columns, not a terminal
+$ gf contexts create events --source snowflake-prod --sql-file events.sql --live --freshness 5m --time event_at
+     Reading events from snowflake-prod
+     Created live context events  read from snowflake-prod at call time, fresh for 5m
+        Read 12,804 rows, 11 columns in 3.3s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/events
+--- 100 columns, a terminal
+$ gf contexts create events --source snowflake-prod --sql-file events.sql --live --freshness 5m --time event_at
+[1;32m     Reading[0m events from snowflake-prod
+[1;32m     Reading[0m events from snowflake-prod  31,200 rows  1s
+[1;32m     Created[0m live context events  read from snowflake-prod at call time, fresh for 5m
+[1;32m        Read[0m 12,804 rows, 11 columns in 3.3s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/events\https://app.generalforecast.com/?project=acme#/data/contexts/events]8;;\
+--- 44 columns, not a terminal
+$ gf contexts create events --source snowflake-prod --sql-file events.sql --live --freshness 5m --time event_at
+     Reading events from snowflake-prod
+     Created live context events  read from snowflake-prod at call time, fresh for 5m
+        Read 12,804 rows, 11 columns in 3.3s
+        View https://app.generalforecast.com/?project=acme#/data/contexts/events
+--- 44 columns, a terminal
+$ gf contexts create events --source snowflake-prod --sql-file events.sql --live --freshness 5m --time event_at
+[1;32m     Reading[0m events from snowflake-prod
+[1;32m     Reading[0m events from snowflake-pro[0m…  1s
+[1;32m     Created[0m live context events  read from
+             snowflake-prod at call time,
+             fresh for 5m
+[1;32m        Read[0m 12,804 rows, 11 columns
+             in 3.3s
+[1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/events\https://app.generalforecast.com/?project=acme#/data/contexts/events]8;;\
