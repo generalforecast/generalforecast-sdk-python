@@ -82,7 +82,7 @@ REFUSED = {("predictors.predict", "declared"), ("predictors.predict", "context")
            ("snapshots.create_synthetic", "unknown_field"), ("snapshots.update", "digest")}  # fmt: skip
 
 
-def test_the_contracts_examples_keep_to_its_schemas_but_for_its_known_defects():
+def test_the_contracts_examples_keep_to_its_schemas():
     broken = []
     for op in contract.operations():
         for status, reply in op.body.get("responses", {}).items():
