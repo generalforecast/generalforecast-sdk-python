@@ -839,17 +839,25 @@ def predictions_get(fake: Fake, call: Call, prediction: str) -> Any:
     raise AssertionError("handled by the server, which replays the original")
 
 
+LARGE_CONTEXT_ROWS = 31250  # a million cells at 32 inputs
+
+
 def estimate(fake: Fake, call: Call) -> Any:
     queries = call.payload["queries"]
     calls = -(-queries // 100)
-    return ok(
-        {
-            "calls": calls,
-            "rows": queries,
-            "credits": 0.002 * queries,
-            "usd": 0.000002 * queries,
+    out = {
+        "calls": calls,
+        "rows": queries,
+        "credits": 0.002 * queries,
+        "usd": 0.000002 * queries,
+    }
+    if call.payload["context_rows"] > LARGE_CONTEXT_ROWS:
+        out["large_context"] = {
+            "gpu_seconds": 1.5 * calls,
+            "credits": 3.0 * calls,
+            "usd": 0.003 * calls,
         }
-    )
+    return ok(out)
 
 
 def models_list(fake: Fake, call: Call) -> Any:
