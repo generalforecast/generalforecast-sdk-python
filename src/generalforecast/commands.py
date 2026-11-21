@@ -289,7 +289,6 @@ def _model_info(info: Any) -> dict:
         "limits": {
             "context_rows": limits.context_rows,
             "inputs": limits.inputs,
-            **({} if limits.cells is None else {"cells": limits.cells}),
         },
     }
 

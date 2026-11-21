@@ -6089,10 +6089,6 @@ components:
         context_rows: {type: integer, minimum: 1}
         queries: {type: integer, minimum: 1}
         inputs: {type: integer, minimum: 1}
-        cells:
-          type: integer
-          minimum: 1
-          description: the most context rows times inputs one call sends; a table of more inputs than cells / context_rows sends cells / inputs rows
 
     Shape:
       type: object

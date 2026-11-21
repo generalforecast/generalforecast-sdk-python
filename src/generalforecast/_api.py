@@ -741,13 +741,11 @@ class Limits(Payload):
     context_rows: int
     queries: int
     inputs: int
-    cells: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("context_rows", "context_rows", True, _integer),
         Field("queries", "queries", True, _integer),
         Field("inputs", "inputs", True, _integer),
-        Field("cells", "cells", False, _integer),
     )
 
 

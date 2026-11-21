@@ -262,7 +262,6 @@ export interface Limits {
   context_rows: number;
   queries: number;
   inputs: number;
-  cells?: number;
 }
 
 /** a compiled program's shape */

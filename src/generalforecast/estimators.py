@@ -86,8 +86,8 @@ class _Base:
                 hint="call fit with the labeled rows first",
             )
 
-    def _check_rows(self, rows: int, inputs: int = 0) -> None:
-        """Refuses more training rows than one request carries at `inputs` columns, unless a selection draws them."""
+    def _check_rows(self, rows: int) -> None:
+        """Refuses more training rows than one request carries, unless a selection draws them."""
         from generalforecast.catalog import ModelInfo
 
         client = self._hosted()
@@ -96,12 +96,11 @@ class _Base:
         seen = getattr(client, "_models_seen", None)
         if isinstance(seen, dict):
             seen[self.model] = entry
-        limit = entry.limits.rows(inputs)
-        at = f" at {inputs:,} inputs" if limit < entry.limits.context_rows else ""
+        limit = entry.limits.context_rows
         if rows > limit and not getattr(self, "selection", None):
             raise CapacityExceeded(
                 f"{rows:,} training rows exceed one request",
-                because=f"{entry.id} reads at most {limit:,} context rows per call{at}",
+                because=f"{entry.id} reads at most {limit:,} context rows per call",
                 hint="push the rows as a context and a predictor that reads it "
                 "(`gf init`, `gf check`, `gf push`), or pass selection= to draw "
                 "each query's context from them",
@@ -162,7 +161,7 @@ class _Tabular(_Base):
                 f"X has {features.num_rows} rows and y has {len(labels)}",
                 param="y",
             )
-        self._check_rows(features.num_rows, features.num_columns)
+        self._check_rows(features.num_rows)
         self.feature_names_in_ = np.asarray(features.column_names, dtype=object)
         self.n_features_in_ = features.num_columns
         self.target_ = _target_name(features.column_names)

@@ -702,22 +702,6 @@ def test_more_training_rows_than_one_request_point_at_pushing_a_context(wire):
         gf.Regressor(client=hosted).predict(np.array([[1.0]]))
 
 
-def test_a_wide_table_carries_the_fewer_rows_its_models_cells_leave(wire):
-    wide = {
-        **MODEL,
-        "limits": {"context_rows": 100, "queries": 100, "inputs": 512, "cells": 400},
-    }
-    limits = ModelInfo.from_reply(wide).limits
-    assert (limits.cells, limits.rows(2), limits.rows(8)) == (400, 100, 50)
-    assert ModelInfo.from_reply(MODEL).limits.cells is None
-    wire.expect("GET", "/models/tabicl-v2-classifier", wide)
-    rows = np.arange(60 * 8, dtype=float).reshape(60, 8)
-    with client(wire) as hosted, pytest.raises(gf.CapacityExceeded) as raised:
-        gf.Classifier(client=hosted).fit(rows, [0, 1] * 30)
-    assert raised.value.message == "60 training rows exceed one request"
-    assert "50 context rows per call at 8 inputs" in raised.value.because
-
-
 def test_the_catalog_reads_ids_tasks_and_limits():
     catalog = Catalog.from_reply([MODEL])
     assert catalog.entry(MODEL_ID) == ModelInfo(
