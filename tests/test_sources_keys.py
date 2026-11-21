@@ -40,6 +40,8 @@ def test_keys_by_id_or_name(fake):
     new = gf.keys.create("ci-deploy")
     assert new.token.startswith("gf_live_") and "token" not in repr(new)
     assert new.key.state == "active" and new.key.expires is not None
+    assert new.key.owner.email == "maya@acme.com" and new.key.owner.subject
+    assert not new.key.service and not new.key.legacy and new.key.machine is None
     sent = fake.calls_to("POST", r".*/keys")[0].payload
     assert sent["expires_in"] == 90 * 86400 and "models:read" in sent["permissions"]
     never = gf.keys.create("forever", expires=None, permissions=["predictors:predict"])
