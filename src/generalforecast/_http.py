@@ -12,7 +12,9 @@ Choices the spec leaves open, made here:
 
 - A query part is an Arrow IPC stream whose schema metadata holds the
   request envelope as JSON under `gf.request`, so one body carries both.
-  A reply may be JSON, or an Arrow stream with the result under `gf.result`.
+  It asks for an Arrow answer, which carries the predictions as rows and
+  the reply envelope as JSON under `gf.result`, its result without
+  `predictions`; a reply may still be JSON.
 - `PUT /snapshots?digest=` with an empty body asks whether the service holds
   that snapshot (200) or not (404); the same PUT with the Arrow stream
   stores it.
@@ -751,7 +753,9 @@ class Connection:
     ) -> tuple[str, str, dict[str, str], bytes | None, dict[str, Any]]:
         """The method, URL, headers, body and query of one try."""
         headers = {
-            "Accept": "application/json, " + ARROW,
+            "Accept": f"{ARROW}, application/json"
+            if request.arrow is not None
+            else "application/json",
             "User-Agent": self.user_agent,
             "X-GF-Origin": self.origin,
             "X-GF-Request-ID": rid,
@@ -818,8 +822,17 @@ def interpret(
 
         table = _data.read_stream(content)
         meta = (table.schema.metadata or {}).get(b"gf.result")
-        result = json.loads(meta) if meta else {}
-        return Reply(status, result, headers, rid, table.replace_schema_metadata(None))
+        envelope = json.loads(meta) if meta else {}
+        if not isinstance(envelope, Mapping):
+            envelope = {}
+        echoed = envelope.get("request_id")
+        return Reply(
+            status,
+            envelope.get("result") or {},
+            headers,
+            echoed if isinstance(echoed, str) else rid,
+            table.replace_schema_metadata(None),
+        )
     value: Any = None
     if content:
         try:

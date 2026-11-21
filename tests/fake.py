@@ -18,7 +18,7 @@ import io
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -786,7 +786,8 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
                     "digest": held or digest(str(predictor)), "rows": 26048, "as_of": None},
         "usage": {"calls": -(-rows // 100), "rows": rows, "credits": 0.002 * rows,
                   "usd": 0.000002 * rows, "gpu_seconds": None},
-        "timing": {"queued_seconds": 0.1, "cold_start_seconds": 0.0, "compute_seconds": 0.4},
+        "timing": {"queued_seconds": 0.1, "cold_start_seconds": 0.0, "compile_seconds": 0.0,
+                   "compute_seconds": 0.4},
         "notes": [], "predictions": predictions,
     })  # fmt: skip
 
@@ -1245,6 +1246,40 @@ def _contract_problems(
     return problems
 
 
+def _accepts_arrow(headers: Mapping[str, str]) -> bool:
+    accept = headers.get("accept", "")
+    return any(part.split(";")[0].strip() == ARROW for part in accept.split(","))
+
+
+def _arrow_answer(data: dict[str, Any]) -> bytes:
+    """Predictions as the engine answers Arrow: rows `id`, `label`, `p_<class>`,
+    `value` and `q_<level>`, and the reply envelope, its result without
+    `predictions`, as JSON under `gf.result` in the schema metadata."""
+    result = dict(data["result"])
+    rows = []
+    for prediction in result.pop("predictions"):
+        row = {"id": prediction["id"]} if "id" in prediction else {}
+        if "label" in prediction:
+            row["label"] = prediction["label"]
+        row.update(
+            {f"p_{c}": p for c, p in (prediction.get("probabilities") or {}).items()}
+        )
+        if "value" in prediction:
+            row["value"] = prediction["value"]
+        row.update(
+            {f"q_{q}": v for q, v in (prediction.get("quantiles") or {}).items()}
+        )
+        rows.append(row)
+    table = pa.Table.from_pylist(rows)
+    table = table.replace_schema_metadata(
+        {"gf.result": json.dumps({**data, "result": result})}
+    )
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    return sink.getvalue().to_pybytes()
+
+
 def serve(fake: Fake) -> Callable[[], None]:
     """Starts the fake on loopback; returns a function that stops it."""
     pending: dict[str, tuple[int, Any, dict[str, str]]] = {}
@@ -1332,9 +1367,11 @@ def serve(fake: Fake) -> Callable[[], None]:
             fake.errors += _contract_problems(
                 self.command, parts.path, call, status, data
             )
-            raw = json.dumps(data).encode()
+            raw, kind = json.dumps(data).encode(), "application/json"
+            if status == 200 and call.table is not None and _accepts_arrow(headers):
+                raw, kind = _arrow_answer(data), ARROW
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(raw)))
             for key, value in extra.items():
                 self.send_header(key, value)

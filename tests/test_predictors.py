@@ -125,8 +125,12 @@ def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
     assert sum(c.table.num_rows for c in calls) == 100
     assert all(
         c.headers["content-type"] == "application/vnd.apache.arrow.stream"
+        and c.headers["accept"].startswith("application/vnd.apache.arrow.stream")
         for c in calls
     )
+    # Each part is answered as Arrow, its envelope under `gf.result`.
+    assert out.model.startswith("general-forecast/") and out.predictor == "adult-income"
+    assert out.request_id == calls[0].headers["x-gf-request-id"]
     assert out.rows == 100 and out.credits == pytest.approx(0.2)
     assert out.calls == len(calls)
     assert list(out.to_pandas().columns) == ["id", "label", "p_<=50K", "p_>50K"]
