@@ -1640,6 +1640,25 @@ _decode_Permission: Decoder = _union(
 
 
 @dataclass(frozen=True, kw_only=True)
+class KeyOwner(Payload):
+    """The KeyOwner schema.
+
+    the signed-in account behind a key: `issuer` and `subject` name it, and stay the
+    same when its email changes
+    """
+
+    issuer: str
+    subject: str
+    email: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("issuer", "issuer", True, _text),
+        Field("subject", "subject", True, _text),
+        Field("email", "email", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class Key(Payload):
     """`token` is present only in the create and rotate replies."""
 
@@ -1654,6 +1673,10 @@ class Key(Payload):
     prefix: str | None = None
     last_used_at: float | None = None
     ephemeral: bool | None = None
+    owner: KeyOwner | None = None
+    service: bool | None = None
+    legacy: bool | None = None
+    machine: str | None = None
     token: str | None = None
     replaces: str | None = None
 
@@ -1669,6 +1692,10 @@ class Key(Payload):
         Field("prefix", "prefix", False, _union(_text, _null)),
         Field("last_used_at", "last_used_at", False, _union(_number, _null)),
         Field("ephemeral", "ephemeral", False, _boolean),
+        Field("owner", "owner", False, _union(_record(KeyOwner), _null)),
+        Field("service", "service", False, _boolean),
+        Field("legacy", "legacy", False, _boolean),
+        Field("machine", "machine", False, _union(_text, _null)),
         Field("token", "token", False, _pattern("^gf_[A-Za-z0-9_-]{32,}$")),
         Field("replaces", "replaces", False, _pattern("^key-[0-9a-f]{20,24}$")),
     )
@@ -7801,12 +7828,14 @@ class EstimateQuery(Payload):
     context_rows: int
     queries: int
     task: Task | None = None
+    inputs: int | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("model", "model", True, _decode_ModelField),
         Field("task", "task", False, _decode_Task),
         Field("context_rows", "context_rows", True, _integer),
         Field("queries", "queries", True, _integer),
+        Field("inputs", "inputs", False, _integer),
     )
 
 

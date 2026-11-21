@@ -908,6 +908,9 @@ def sources_tables(fake: Fake, call: Call, name: str) -> Any:
 
 
 NEW_TOKEN = "gf_live_3kT9qR2mV8xPzL4wN7bY1cH6aaaaaaaa"
+# The signed-in account the fake's keys are made by.
+OWNER = {"issuer": "https://accounts.google.com", "subject": "108234567890123456789",
+         "email": "maya@acme.com"}  # fmt: skip
 ROTATED_TOKEN = "gf_live_Q8wE5tY1uI3oP7aS2dF6gH0jbbbbbbbb"
 
 
@@ -922,7 +925,8 @@ def keys_create(fake: Fake, call: Call) -> Any:
                          "permissions": p["permissions"], "created_at": EPOCH,
                          "expires_at": None if p["expires_in"] is None else EPOCH + p["expires_in"],
                          "revoked_at": None, "state": "active", "prefix": NEW_TOKEN[:7],
-                         "last_used_at": None}  # fmt: skip
+                         "last_used_at": None, "owner": OWNER, "service": False, "legacy": False,
+                         "machine": None}  # fmt: skip
     return ok({**fake.keys[key_id], "token": NEW_TOKEN})
 
 
