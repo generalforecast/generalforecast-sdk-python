@@ -1,0 +1,160 @@
+# SPDX-FileCopyrightText: General Forecast, Inc.
+# SPDX-License-Identifier: MIT
+
+import pandas as pd
+import pytest
+
+import generalforecast as gf
+
+
+def adult(rows=200):
+    return pd.DataFrame(
+        {
+            "age": [20 + i % 50 for i in range(rows)],
+            "workclass": ["State-gov" if i % 3 else "Private" for i in range(rows)],
+            "income": ["<=50K" if i % 4 else ">50K" for i in range(rows)],
+        }
+    )
+
+
+def test_create_uploads_in_chunks_and_waits_until_ready(fake):
+    fake.chunk_bytes = 512
+    ctx = gf.contexts.create("adult", data=adult())
+    assert ctx.state == "ready" and ctx.version == 1 and ctx.rows == 200
+    assert [c.name for c in ctx.columns] == ["age", "workclass", "income"]
+    assert ctx.url.endswith("#/data/contexts/adult")
+    assert repr(ctx) == "Context adult  snapshot v1  200 rows  3 columns"
+    created = fake.calls_to("POST", r".*/contexts")[0].payload
+    assert created["kind"] == "snapshot" and created["data"]["format"] == "parquet"
+    assert created["data"]["digest"].startswith("sha256:")
+    chunks = fake.calls_to("POST", r".*/versions/1/bytes")
+    assert len(chunks) > 1 and all(len(c.body) <= 512 for c in chunks)
+    assert [int(c.query["offset"]) for c in chunks][:2] == [0, 512]
+
+
+def test_the_same_rows_again_are_unchanged_and_send_no_bytes(fake):
+    gf.contexts.create("adult", data=adult())
+    sent = len(fake.calls_to("POST", r".*/bytes"))
+    again = gf.contexts.upload("adult", adult())
+    assert again.unchanged and again.version == 1
+    assert repr(again).endswith("unchanged")
+    assert len(fake.calls_to("POST", r".*/bytes")) == sent
+    changed = gf.contexts.upload(again, adult(300))
+    assert changed.version == 2 and not changed.unchanged
+
+
+def test_a_path_is_read_and_named(fake, tmp_path):
+    path = tmp_path / "adult.csv"
+    adult().to_csv(path, index=False)
+    gf.contexts.create("adult", data=str(path))
+    assert (
+        fake.calls_to("POST", r".*/contexts")[0].payload["data"]["file"] == "adult.csv"
+    )
+
+
+def test_a_source_import_polls_until_ready(fake):
+    ctx = gf.contexts.create(
+        "customers",
+        source="bigquery-acme",
+        table="acme.analytics.customers",
+        id="customer_id",
+    )
+    assert ctx.state == "ready" and ctx.rows == 48210
+    payload = fake.calls_to("POST", r".*/contexts")[0].payload
+    assert payload["source"] == {
+        "source": "bigquery-acme",
+        "table": "acme.analytics.customers",
+    }
+    assert payload["id"] == "customer_id" and payload["kind"] == "snapshot"
+    refreshed = gf.contexts.refresh("customers")
+    assert refreshed.state == "ready"
+
+
+def test_live_contexts_from_a_source_and_from_the_api(fake):
+    gf.contexts.create(
+        "events",
+        source="snowflake-prod",
+        sql="select 1",
+        live=True,
+        freshness="5m",
+        time="event_at",
+    )
+    events = fake.calls_to("POST", r".*/contexts")[0].payload
+    assert events["kind"] == "live" and events["freshness_seconds"] == 300
+    assert events["source"] == {"source": "snowflake-prod", "sql": "select 1"}
+    signups = gf.contexts.create(
+        "signups",
+        live=True,
+        columns={"plan": "category", "seats": "number", "converted": "boolean"},
+        id="account_id",
+        targets=["converted"],
+    )
+    assert signups.kind == "live"
+    receipt = gf.contexts.append(
+        "signups", pd.DataFrame({"account_id": [1, 2], "plan": ["team", "free"]})
+    )
+    assert receipt.rows == 2 and receipt.sequence > 0
+    labeled = gf.contexts.label(
+        signups,
+        pd.DataFrame({"account_id": [1], "converted": [True]}),
+        target="converted",
+        idempotency_key="labels-1",
+    )
+    assert labeled.write_id == "labels-1"
+    assert fake.writes[-1]["labels"] == [{"id": 1, "value": True}]
+
+
+def test_seeding_a_live_context_infers_columns_and_appends(fake):
+    gf.contexts.create("seeded", live=True, data=adult(5), id="age")
+    payload = fake.calls_to("POST", r".*/contexts")[0].payload
+    assert payload["columns"] == {
+        "age": "number",
+        "workclass": "category",
+        "income": "category",
+    }
+    assert len(fake.writes[0]["rows"]) == 5
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"data": adult(), "source": "bq"},
+        {"source": "bq"},
+        {"source": "bq", "table": "t", "sql": "s"},
+        {"table": "t"},
+        {"live": True},
+        {"data": adult(), "targets": ["income"]},
+        {"source": "bq", "table": "t", "live": True, "freshness": "30s"},
+    ],
+)
+def test_create_takes_exactly_one_origin(fake, kwargs):
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.contexts.create("x", **kwargs)
+    assert error.value.recoverable
+    assert not fake.calls_to("POST", r".*/contexts")
+
+
+def test_get_pins_versions_and_rows_page(fake):
+    gf.contexts.create("adult", data=adult())
+    gf.contexts.upload("adult", adult(300))
+    assert gf.contexts.get("adult@1").version == 1
+    assert gf.contexts.get("adult", version=1).rows == 200
+    assert gf.contexts.get("adult").version == 2
+    rows = gf.contexts.rows("adult", limit=5)
+    assert list(rows.columns) == ["age", "workclass", "income"] and len(rows) == 5
+    assert [c.name for c in gf.contexts.list()] == ["adult"]
+    with pytest.raises(gf.InvalidInput):
+        gf.contexts.get("adult@latest")
+
+
+def test_delete_is_refused_while_a_predictor_serves_it(fake):
+    gf.contexts.create("adult", data=adult())
+    fake.contexts["adult"]["predictors"] = ["adult-income"]
+    with pytest.raises(gf.Conflict) as error:
+        gf.contexts.delete("adult")
+    assert error.value.reason == "context_in_use" and error.value.request_id
+    fake.contexts["adult"]["predictors"] = []
+    gf.contexts.delete("adult")
+    with pytest.raises(gf.NotFound):
+        gf.contexts.get("adult")

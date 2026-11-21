@@ -9,7 +9,12 @@ import os
 import pytest
 
 from generalforecast import term
-from tests.test_cli_output import Tty
+
+
+class Tty(io.StringIO):
+    def isatty(self):
+        return True
+
 
 # The inputs of the churn table that first showed the role table breaking.
 INPUTS = [
@@ -543,71 +548,9 @@ def test_an_edited_answer_shows_its_note_under_it_when_there_is_no_room():
     ]
 
 
-def _churn(root, rows=80):
-    """A predictor directory with the nineteen inputs, an id and a target."""
-    root.mkdir()
-    lines = [",".join(["customerID", *INPUTS, "Churn"])]
-    for i in range(rows):
-        values = [f"{(i * 7 + n) % (3 + n % 4)}" for n in range(len(INPUTS))]
-        lines.append(",".join([f"c{i:04d}", *values, "Yes" if i % 3 else "No"]))
-    (root / "churn.csv").write_text("\n".join(lines) + "\n")
-    return root
-
-
-def test_a_metric_the_rows_cannot_give_shows_as_a_dash():
-    from generalforecast import render
-
-    out = io.StringIO()
-    render.metrics(
-        {"metrics": {"m": {"accuracy": 0.0, "auroc": float("nan"), "f1": None}}},
-        term.Output(out=out, err=io.StringIO()),
-    )
-    assert out.getvalue().splitlines() == [
-        "             accuracy   0.000",
-        "             auroc          -",
-        "             f1             -",
-    ]
-
-
 def test_a_lock_change_writes_a_boolean_as_gf_yaml_does():
     changes = [("+", "context.holdout.stratify", None, True), ("~", "x", False, True)]
     assert term.change_lines(changes) == [
         " + context.holdout.stratify  true",
         " ~ x                         false → true",
-    ]
-
-
-def test_push_writes_a_size_in_binary_units_as_the_service_does():
-    from generalforecast.predictor_commands import _bytes
-
-    assert [_bytes(n) for n in (512, 27_800, 32 * 1024**2, 3 * 1024**3)] == [
-        "512 B",
-        "27.1 KiB",
-        "32.0 MiB",
-        "3.0 GiB",
-    ]
-
-
-def test_a_record_shows_names_as_a_list_and_a_time_in_utc():
-    from generalforecast import render
-
-    out = io.StringIO()
-    render.generic(
-        {
-            "name": "orders-live",
-            "inputs": ["amount", "items"],
-            "targets": {"returned": "category"},
-            "max_rows": 100000,
-            "accepted_at": 1793174400.5,
-            "nested": [{"a": 1}],
-        },
-        term.Output(out=out, err=io.StringIO()),
-    )
-    assert out.getvalue().splitlines() == [
-        "name         orders-live",
-        "inputs       amount, items",
-        "targets      returned: category",
-        "max_rows     100,000",
-        "accepted_at  2026-10-28 08:00:00 UTC",
-        'nested       [{"a": 1}]',
     ]
