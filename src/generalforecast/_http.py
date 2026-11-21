@@ -492,11 +492,21 @@ def predict(payload: Mapping[str, Any], queries: pa.Table) -> Request:
     )
 
 
+# The seconds a poll asks the service to hold it until the prediction is
+# answered (`Prefer: wait`), so the answer comes as it lands rather than at
+# the next poll; under the client's timeout and the service's own limit.
+POLL_WAIT_SECONDS = 25
+
+
 def prediction_get(location: str) -> Request:
-    """Polls a prediction the service accepted to answer later."""
+    """Polls a prediction the service accepted to answer later, waiting up to POLL_WAIT_SECONDS for it."""
     prediction = location.rstrip("/").rsplit("/", 1)[-1]
     return Request(
-        "GET", f"/predictions/{_segment(prediction)}", "prediction", prediction
+        "GET",
+        f"/predictions/{_segment(prediction)}",
+        "prediction",
+        prediction,
+        headers={"Prefer": f"wait={POLL_WAIT_SECONDS}"},
     )
 
 

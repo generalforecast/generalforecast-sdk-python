@@ -159,7 +159,9 @@ def test_a_prediction_accepted_for_later_is_waited_for(adult, capsys):
     client = gf.Client(progress=True)
     out = client.predictors.predict("adult-income", pd.DataFrame({"age": [1, 2]}))
     assert out.rows == 2
-    assert adult.calls_to("GET", r".*/predictions/pred-.*")
+    [poll] = adult.calls_to("GET", r".*/predictions/pred-.*")
+    # The poll asks to be held until the prediction is answered.
+    assert poll.headers["prefer"] == "wait=25"
     assert "waiting for a GPU (cold start)" in capsys.readouterr().err
     client.close()
 
