@@ -1,7 +1,7 @@
 [project]
 name = "generalforecast"
-version = "0.2.2"
-description = "Python SDK and gf CLI for General Forecast: hosted predictors on structured data foundation models"
+version = "0.2.3"
+description = "Python SDK and gf CLI for General Forecast: contexts, experiments and predictors on structured data foundation models"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,11 +19,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "certifi>=2024.2.2",
     "httpx==0.28.1",
     "numpy>=2.5.3",
     "pandas>=2.2",
     "pyarrow>=24",
-    "pyyaml>=6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +39,7 @@ Repository = "https://github.com/generalforecast/generalforecast-sdk-python"
 Issues = "https://github.com/generalforecast/generalforecast-sdk-python/issues"
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff==0.16.10"]
+dev = ["jsonschema>=4.23", "pytest>=8.3", "pyyaml>=6.0.2", "ruff==0.16.10"]
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -54,6 +54,10 @@ include = ["/src", "/tests", "/api", "/README.md", "/LICENSE"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+# The README quickstart is the spec's notebook example, laid out as written.
+extend-exclude = ["README.md"]
 
 [tool.ruff.lint]
 extend-select = ["B", "D", "I", "RUF", "UP"]

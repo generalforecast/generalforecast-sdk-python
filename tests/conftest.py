@@ -1,191 +1,49 @@
 # SPDX-FileCopyrightText: General Forecast, Inc.
 # SPDX-License-Identifier: MIT
 
-"""HTTP contract recorder, not a model or provider implementation."""
+"""The fake service, a clean environment, and waits that take no time."""
 
-import json
-import threading
-from collections import deque
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
-from typing import cast
-from urllib.parse import parse_qsl
+import asyncio
+import time
 
-import pyarrow as pa
 import pytest
 
-from generalforecast.service.boundary import (
-    Request,
-    Resource,
-    ResourceKind,
-    Scope,
-    success,
-)
-from generalforecast.tabular import table_digest
-from generalforecast.transport import PLATFORM_PROBE
-from generalforecast.validation import bytes_digest
+from generalforecast import _auth, client
+from tests.fake import TOKEN, Fake, serve
 
 
 @pytest.fixture
-def wire():
-    expected = deque()
-    state = SimpleNamespace(
-        expected=expected, requests=[], errors=[], corrupt=False, probes=0
-    )
+def env(monkeypatch, tmp_path):
+    """No credentials, profiles or proxies leak in from the machine running the tests."""
+    for name in ("GF_API_KEY", "GF_PROJECT", "GF_URL", "HTTPS_PROXY", "HTTP_PROXY",
+                 "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):  # fmt: skip
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("GF_KEYCHAIN", "0")
+    monkeypatch.setattr(_auth, "SESSION", None)
+    client.reset()
+    yield monkeypatch
+    client.reset()
 
-    def expect(method, path, result=None, *, payload=None, status=200):
-        expected.append((method, "/v1/projects/test" + path, payload, result, status))
 
-    state.expect = expect
+@pytest.fixture
+def fake(env):
+    """The fake service, with `GF_URL` and `GF_API_KEY` pointing at it."""
+    service = Fake()
+    stop = serve(service)
+    env.setenv("GF_URL", service.url)
+    env.setenv("GF_API_KEY", TOKEN)
+    slept = []
+    real_async_sleep = asyncio.sleep
 
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, format, *_args):
-            pass
+    async def no_wait(seconds, *args, **kwargs):
+        slept.append(seconds)
+        await real_async_sleep(0)
 
-        def do_GET(self):
-            self.reply()
-
-        def do_POST(self):
-            self.reply()
-
-        def reply(self):
-            if self.path == PLATFORM_PROBE:
-                state.probes += 1
-                data = json.dumps(
-                    {"error": {"code": "Unauthenticated", "message": "fixture"}}
-                ).encode()
-                self.send_response(401)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                return
-            try:
-                method, path, payload, result, status = expected.popleft()
-                # An Arrow snapshot names itself in its query.
-                sent, _, query = self.path.partition("?")
-                assert self.command == method and (
-                    self.path == path or (sent == path and sent.endswith("/snapshots"))
-                )
-                assert self.headers["Authorization"] == "Bearer fixture-key"
-                assert self.headers["X-GF-Project"] == "test"
-                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                if (
-                    self.headers.get("Content-Type")
-                    == "application/vnd.apache.arrow.stream"
-                ):
-                    named = dict(parse_qsl(query))["name"]
-                    request = Request(
-                        Scope("test", self.headers["X-GF-Request-ID"]),
-                        Resource("snapshot", named),
-                        {},
-                    )
-                    table = pa.ipc.open_stream(raw).read_all()
-                    result = {
-                        "name": named,
-                        "state": "ready",
-                        "digest": table_digest(table),
-                        "rows": table.num_rows,
-                    }
-                    if state.corrupt:
-                        result["rows"] = (
-                            True if state.corrupt == "boolean" else result["rows"] + 1
-                        )
-                    state.requests.append((sent, table))
-                elif (
-                    self.headers.get("Content-Type")
-                    == "application/vnd.generalforecast.python-source+tar"
-                ):
-                    predictor = self.path.split("/")[5]
-                    request = Request(
-                        Scope("test", self.headers["X-GF-Request-ID"]),
-                        Resource("predictor", predictor),
-                        {},
-                    )
-                    if payload is not None:
-                        assert raw == payload
-                    if result is None:
-                        result = {
-                            "receipt_version": 1,
-                            "kind": "python-source",
-                            "project": "test",
-                            "predictor": predictor,
-                            "source": bytes_digest(raw),
-                            "size": len(raw),
-                        }
-                    state.requests.append((self.path, raw))
-                elif self.command == "POST":
-                    request = Request.parse(json.loads(raw))
-                    assert request.payload == payload
-                    assert request.scope.project == "test"
-                    state.requests.append((self.path, request.payload))
-                else:
-                    assert not raw
-                    parts = self.path.split("?")[0].split("/")
-                    kind = {
-                        "predictors": "predictor",
-                        "contexts": "context",
-                        "models": "model",
-                        "runs": "run",
-                        "snapshots": "snapshot",
-                    }[parts[4]]
-                    resource = parts[5] if len(parts) > 5 else parts[4]
-                    # A synthetic batch is named after `/snapshots/synthetic/`.
-                    if (
-                        kind == "snapshot"
-                        and resource == "synthetic"
-                        and len(parts) > 6
-                    ):
-                        resource = parts[6]
-                    # A fine-tune's version names the fine-tune, as the plane's
-                    # does; a run is named by its model without the project.
-                    if kind == "model":
-                        resource = resource.split("@ft")[0]
-                    request = Request(
-                        Scope("test", self.headers["X-GF-Request-ID"]),
-                        Resource(cast(ResourceKind, kind), resource),
-                        {},
-                    )
-                    state.requests.append((self.path, None))
-                response = (
-                    success(request, result)
-                    if status == 200
-                    # A refusal is its code, or the whole error object.
-                    else {"error": result}
-                    if isinstance(result, dict)
-                    else {
-                        "error": {
-                            "code": result,
-                            "message": "service rejected the request",
-                        }
-                    }
-                )
-            except (
-                AssertionError,
-                IndexError,
-                KeyError,
-                ValueError,
-                TypeError,
-            ) as error:
-                state.errors.append(str(error))
-                status, response = (
-                    500,
-                    {"error": {"code": "FixtureError", "message": "contract mismatch"}},
-                )
-            data = json.dumps(response).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
-    worker.start()
-    state.url = f"http://127.0.0.1:{server.server_port}"
-    yield state
-    server.shutdown()
-    server.server_close()
-    worker.join()
-    assert not state.errors, state.errors
-    assert not expected, expected
+    env.setattr(time, "sleep", slept.append)
+    env.setattr(asyncio, "sleep", no_wait)
+    service.slept = slept
+    yield service
+    client.reset()
+    stop()
+    assert not service.errors, service.errors

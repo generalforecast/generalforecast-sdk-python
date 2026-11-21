@@ -14,10 +14,10 @@ import os
 import secrets
 import stat
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
-from generalforecast.service.contracts import ServiceError
+from generalforecast.errors import Error, InvalidInput, Unsupported
 
 try:
     import fcntl
@@ -44,11 +44,7 @@ def secure_persistence_supported() -> bool:
 
 def _supported() -> None:
     if not secure_persistence_supported():
-        raise ServiceError(
-            "UnsupportedOperation",
-            "secure private files are unavailable on this platform",
-            501,
-        )
+        raise Unsupported("secure private files are unavailable on this platform")
 
 
 def _private(info: os.stat_result) -> None:
@@ -57,14 +53,10 @@ def _private(info: os.stat_result) -> None:
         or info.st_mode & 0o077
         or info.st_uid != os.geteuid()
     ):
-        raise ServiceError(
-            "ValidationError",
-            "requires a private regular file owned by the current user",
-            422,
-        )
+        raise InvalidInput("requires a private regular file owned by the current user")
 
 
-def _unopenable(error: OSError) -> ServiceError:
+def _unopenable(error: OSError) -> Error:
     """The error for a private file that cannot be opened, naming its errno.
 
     A link refused by `O_NOFOLLOW` is not a private regular file; any other
@@ -72,16 +64,12 @@ def _unopenable(error: OSError) -> ServiceError:
     """
     code = errno.errorcode.get(error.errno or 0, "unknown")
     if error.errno in (errno.ELOOP, errno.EMLINK):
-        return ServiceError(
-            "ValidationError",
+        return InvalidInput(
             "requires a private regular file owned by the current user, "
-            f"not a link ({code})",
-            422,
+            f"not a link ({code})"
         )
-    return ServiceError(
-        "ValidationError",
-        f"private file cannot be opened: {os.strerror(error.errno or 0).lower()} ({code})",
-        422,
+    return InvalidInput(
+        f"private file cannot be opened: {os.strerror(error.errno or 0).lower()} ({code})"
     )
 
 
@@ -100,9 +88,7 @@ def read_private(
     except FileNotFoundError:
         if missing_ok:
             return None
-        raise ServiceError(
-            "ValidationError", "private file is unavailable", 422
-        ) from None
+        raise InvalidInput("private file is unavailable") from None
     except OSError as error:
         raise _unopenable(error) from error
     try:
@@ -114,7 +100,7 @@ def read_private(
     finally:
         os.close(fd)
     if size > limit:
-        raise ServiceError("ValidationError", "private file is too large", 422)
+        raise InvalidInput("private file is too large")
     return b"".join(chunks)
 
 
@@ -153,7 +139,7 @@ def write_private(path: str | os.PathLike[str], data: bytes) -> None:
 
 
 @contextlib.contextmanager
-def private_lock(path: str | os.PathLike[str]) -> Iterator[None]:
+def private_lock(path: str | os.PathLike[str]) -> Generator[None]:
     """Holds an exclusive advisory lock on the owner-only path.lock sibling."""
     _supported()
     assert fcntl is not None

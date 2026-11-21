@@ -1,0 +1,296 @@
+# SPDX-FileCopyrightText: General Forecast, Inc.
+# SPDX-License-Identifier: MIT
+
+"""Tables on their way to the service: read, normalized, hashed, split.
+
+Whatever a caller holds (pandas, Polars, Arrow, or a file) becomes one
+normalized Arrow table. A context goes up once as an Arrow snapshot named
+by its digest; queries go as Arrow streams split by bytes, never by a
+fixed row count (section 3.9 of the surface spec).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import os
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import pyarrow as pa
+
+from generalforecast.errors import CapacityExceeded, InvalidInput
+
+if TYPE_CHECKING:
+    import pandas
+
+SNAPSHOT_MAX_BYTES = 32 * 1024 * 1024
+"""The largest snapshot one PUT carries; the plane stores the same ceiling."""
+
+QUERY_PART_BYTES = 8 * 1024 * 1024
+"""The most Arrow bytes of queries one prediction request carries."""
+
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+"""The chunk size a context upload uses when the service names none."""
+
+FILE_FORMATS = {
+    ".csv": "csv",
+    ".tsv": "tsv",
+    ".parquet": "parquet",
+    ".pq": "parquet",
+    ".arrow": "arrow",
+    ".feather": "arrow",
+    ".jsonl": "jsonl",
+    ".ndjson": "jsonl",
+}
+
+ARROW_STREAM = "application/vnd.apache.arrow.stream"
+
+
+def _from_file(path: Path) -> pa.Table:
+    kind = FILE_FORMATS.get(path.suffix.lower())
+    if kind is None:
+        raise InvalidInput(
+            f"`{path}` is not a file this reads",
+            hint="pass a .csv, .tsv, .parquet, .arrow, .feather or .jsonl file",
+        )
+    if not path.is_file():
+        raise InvalidInput(f"no file at `{path}`")
+    try:
+        if kind in ("csv", "tsv"):
+            from pyarrow import csv
+
+            options = csv.ParseOptions(delimiter="\t" if kind == "tsv" else ",")
+            return csv.read_csv(path, parse_options=options)
+        if kind == "parquet":
+            import pyarrow.parquet as pq
+
+            return pq.read_table(path)
+        if kind == "jsonl":
+            from pyarrow import json
+
+            return json.read_json(path)
+        from pyarrow import feather
+
+        return feather.read_table(path)
+    except (pa.ArrowException, OSError) as error:
+        raise InvalidInput(f"cannot read `{path}`: {error}") from None
+
+
+def table(data: Any, *, what: str = "data") -> pa.Table:
+    """Rows as one normalized Arrow table.
+
+    Takes a pandas or Polars frame, an Arrow table or record batch, a path
+    to a .csv, .tsv, .parquet, .arrow, .feather or .jsonl file, a mapping
+    of columns, or a list of row mappings. Schema metadata is dropped and
+    dictionary columns decoded and large strings made plain, so the same
+    rows always hash alike.
+
+    Raises:
+        InvalidInput: For anything that is not rows, or rows Arrow cannot hold.
+    """
+    module = type(data).__module__.split(".")[0]
+    try:
+        if isinstance(data, pa.Table):
+            result = data
+        elif isinstance(data, pa.RecordBatch):
+            result = pa.Table.from_batches([data])
+        elif isinstance(data, (str, os.PathLike)):
+            result = _from_file(Path(os.fspath(data)).expanduser())
+        elif module == "pandas":
+            if getattr(data, "ndim", None) == 1:
+                data = data.to_frame()
+            result = pa.Table.from_pandas(data, preserve_index=False)
+        elif module == "polars":
+            if type(data).__name__ == "LazyFrame":
+                data = data.collect()
+            result = data.to_arrow()
+        elif isinstance(data, Mapping):
+            result = pa.table(dict(data))
+        elif isinstance(data, list) and all(isinstance(row, Mapping) for row in data):
+            result = pa.Table.from_pylist([dict(row) for row in data])
+        else:
+            raise InvalidInput(
+                f"{what} must be a DataFrame, an Arrow table or a file path",
+                hint="pass a pandas or Polars DataFrame, a pyarrow.Table, "
+                "or a .csv, .parquet, .arrow or .jsonl path",
+                param=what,
+            )
+    except (pa.ArrowException, TypeError, ValueError) as error:
+        raise InvalidInput(
+            f"{what} cannot be read as a table: {error}",
+            hint="give each column one type; convert mixed object columns first",
+            param=what,
+        ) from None
+    names = result.column_names
+    if len(set(names)) != len(names) or not all(
+        isinstance(n, str) and n for n in names
+    ):
+        raise InvalidInput(f"{what} needs unique, non-empty column names", param=what)
+    columns = []
+    for column in result.columns:
+        if pa.types.is_dictionary(column.type):
+            column = column.cast(column.type.value_type)
+        if pa.types.is_large_string(column.type):
+            column = column.cast(pa.string())
+        elif pa.types.is_large_binary(column.type):
+            column = column.cast(pa.binary())
+        columns.append(column)
+    return pa.table(columns, names=names).combine_chunks()
+
+
+def stream(data: pa.Table, metadata: Mapping[str, str] | None = None) -> bytes:
+    """A table's Arrow IPC stream: deterministic, with `metadata` on its schema."""
+    schema = data.schema.remove_metadata()
+    if metadata:
+        schema = schema.with_metadata(dict(metadata))
+    sink = io.BytesIO()
+    with pa.ipc.new_stream(sink, schema) as writer:
+        writer.write_table(data.replace_schema_metadata(schema.metadata))
+    return sink.getvalue()
+
+
+def read_stream(body: bytes) -> pa.Table:
+    """The table an Arrow IPC stream holds."""
+    return pa.ipc.open_stream(body).read_all()
+
+
+def digest(body: bytes) -> str:
+    """The content digest a snapshot is named by."""
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def parquet(data: pa.Table) -> bytes:
+    """A table as Parquet bytes, how a context upload sends it."""
+    import pyarrow.parquet as pq
+
+    sink = io.BytesIO()
+    pq.write_table(data, sink, compression="zstd")
+    return sink.getvalue()
+
+
+def file_name(data: Any) -> str | None:
+    """The file name a context's source shows, for data given as a path."""
+    if isinstance(data, (str, os.PathLike)):
+        return Path(os.fspath(data)).name
+    return None
+
+
+def column_types(data: pa.Table) -> dict[str, str]:
+    """Each column's `ColumnType`, read from its Arrow type."""
+    types: dict[str, str] = {}
+    for field in data.schema:
+        kind = field.type
+        if pa.types.is_boolean(kind):
+            types[field.name] = "boolean"
+        elif (
+            pa.types.is_integer(kind)
+            or pa.types.is_floating(kind)
+            or pa.types.is_decimal(kind)
+        ):
+            types[field.name] = "number"
+        elif pa.types.is_timestamp(kind):
+            types[field.name] = "timestamp"
+        elif pa.types.is_date(kind):
+            types[field.name] = "date"
+        else:
+            types[field.name] = "category"
+    return types
+
+
+def check_snapshot(body: bytes, rows: int, *, what: str = "context") -> None:
+    """Refuses, before anything is sent, a snapshot past the one ceiling.
+
+    Raises:
+        CapacityExceeded: Naming the size, the limit and the fix.
+    """
+    if len(body) <= SNAPSHOT_MAX_BYTES:
+        return
+    raise CapacityExceeded(
+        f"the {what} is {size(len(body))} as Arrow ({rows:,} rows), past the "
+        f"{size(SNAPSHOT_MAX_BYTES)} one snapshot holds",
+        hint='store it as a context, `gf.contexts.create("name", data=rows)`, which '
+        "uploads in chunks, and pass that context instead",
+        param=what,
+        limit=SNAPSHOT_MAX_BYTES,
+        actual=len(body),
+    )
+
+
+def size(count: int) -> str:
+    """A byte count as `1.1 MiB`."""
+    value = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    raise AssertionError("unreachable")
+
+
+def split(
+    data: pa.Table, *, max_bytes: int | None = None, series: Sequence[str] = ()
+) -> list[pa.Table]:
+    """Queries in parts of at most `max_bytes` Arrow bytes each, in order.
+
+    A forecast's series stay whole: rows of one series never straddle two
+    parts. A single row, or series, past `max_bytes` is a part on its own.
+    `max_bytes` defaults to `QUERY_PART_BYTES`.
+    """
+    max_bytes = max_bytes or QUERY_PART_BYTES
+    if data.num_rows == 0:
+        return [data]
+    if series:
+        return _split_series(data, max_bytes, series)
+    parts: list[pa.Table] = []
+    start = 0
+    per_row = max(1, data.nbytes // max(1, data.num_rows))
+    while start < data.num_rows:
+        count = max(1, min(data.num_rows - start, max_bytes // per_row))
+        while True:
+            part = data.slice(start, count)
+            if count == 1 or len(stream(part)) <= max_bytes:
+                break
+            count //= 2
+        parts.append(part)
+        start += count
+    return parts
+
+
+def _split_series(
+    data: pa.Table, max_bytes: int, series: Sequence[str]
+) -> list[pa.Table]:
+    missing = [column for column in series if column not in data.column_names]
+    if missing:
+        raise InvalidInput(f"the queries have no series column `{missing[0]}`")
+    keys = list(zip(*(data.column(c).to_pylist() for c in series), strict=True))
+    groups: dict[tuple[Any, ...], list[int]] = {}
+    for index, key in enumerate(keys):
+        groups.setdefault(key, []).append(index)
+    per_row = max(1, data.nbytes // data.num_rows)
+    parts: list[pa.Table] = []
+    current: list[int] = []
+    for indices in groups.values():
+        if current and (len(current) + len(indices)) * per_row > max_bytes:
+            parts.append(data.take(current))
+            current = []
+        current.extend(indices)
+    if current:
+        parts.append(data.take(current))
+    return parts
+
+
+def frame(columns: Any, rows: Any) -> pandas.DataFrame:
+    """A reply's `{columns, rows}` as a DataFrame.
+
+    `columns` are names or `{name, type}` objects; `rows` are lists in
+    column order or mappings by name.
+    """
+    import pandas
+
+    names = [c["name"] if isinstance(c, Mapping) else str(c) for c in columns or ()]
+    rows = list(rows or ())
+    if rows and isinstance(rows[0], Mapping):
+        found = pandas.DataFrame.from_records(rows)
+        return found[[n for n in names if n in found.columns]] if names else found
+    return pandas.DataFrame.from_records(rows, columns=names or None)

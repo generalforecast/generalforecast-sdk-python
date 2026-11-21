@@ -11,7 +11,7 @@ import pytest
 
 from generalforecast import _files
 from generalforecast._files import private_lock, read_private, write_private
-from generalforecast.service.contracts import ServiceError
+from generalforecast.errors import Error
 
 posix = pytest.mark.skipif(
     not _files.secure_persistence_supported(), reason="POSIX-only guarantees"
@@ -27,10 +27,10 @@ def test_atomic_write_is_private_and_replaces_only_regular_files(tmp_path):
     assert path.stat().st_mode & 0o777 == 0o600
     assert (path.parent.stat().st_mode & 0o777) == 0o700
     assert sorted(p.name for p in path.parent.iterdir()) == ["profiles.json"]
-    with pytest.raises(ServiceError, match="too large"):
+    with pytest.raises(Error, match="too large"):
         read_private(path, limit=2)
     assert read_private(tmp_path / "missing", limit=1, missing_ok=True) is None
-    with pytest.raises(ServiceError):
+    with pytest.raises(Error):
         read_private(tmp_path / "missing", limit=1)
 
 
@@ -49,10 +49,10 @@ def test_reads_and_writes_reject_indirect_or_shared_files(tmp_path, kind):
         os.mkfifo(path, 0o600)
     else:
         path.mkdir(mode=0o700)
-    with pytest.raises(ServiceError) as error:
+    with pytest.raises(Error) as error:
         read_private(path, limit=10)
     assert error.value.code == "ValidationError"
-    with pytest.raises(ServiceError):
+    with pytest.raises(Error):
         write_private(path, b"y")
     assert other.read_bytes() == b"x"
 
@@ -83,10 +83,10 @@ def test_unsupported_platform_fails_typed_without_writing(tmp_path, monkeypatch)
         lambda: read_private(tmp_path / "x", limit=1),
         lambda: write_private(tmp_path / "x", b"x"),
     ):
-        with pytest.raises(ServiceError) as error:
+        with pytest.raises(Error) as error:
             call()
-        assert error.value.code == "UnsupportedOperation"
-    with pytest.raises(ServiceError), private_lock(tmp_path / "x"):
+        assert error.value.code == "Unsupported"
+    with pytest.raises(Error), private_lock(tmp_path / "x"):
         pass
     assert not list(tmp_path.iterdir())
 
@@ -103,7 +103,7 @@ def test_named_pipe_is_rejected_without_blocking(tmp_path):
     signal.alarm(5)
     try:
         for missing_ok in (False, True):
-            with pytest.raises(ServiceError) as error:
+            with pytest.raises(Error) as error:
                 read_private(fifo, limit=10, missing_ok=missing_ok)
             assert error.value.code == "ValidationError"
     finally:

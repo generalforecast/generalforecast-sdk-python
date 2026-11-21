@@ -76,4 +76,5 @@ jobs:
           uv venv /tmp/wheel
           uv pip install --python /tmp/wheel/bin/python dist/*.whl
           /tmp/wheel/bin/gf --help
-          /tmp/wheel/bin/gf serve 2>&1 | grep -q "local serving is not part of gf"
+          /tmp/wheel/bin/gf --version
+          /tmp/wheel/bin/python -c "import generalforecast as gf; gf.Client, gf.Predictor, gf.Classifier"

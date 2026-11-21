@@ -26,5 +26,11 @@ history = pd.DataFrame(
         "units": np.r_[np.arange(60.0) % 7, 10 + np.arange(60.0) % 5],
     }
 )
-forecaster = gf.Forecaster(target="units", time="date", series="sku", horizon=7)
-print(forecaster.fit(history).forecast())
+future = pd.DataFrame(
+    {
+        "date": np.tile(pd.date_range("2025-03-02", periods=7, freq="D"), 2),
+        "sku": np.repeat(["a", "b"], 7),
+    }
+)
+forecaster = gf.Forecaster(target="units", time="date", series=["sku"], horizon=7)
+print(forecaster.fit(history).forecast(future))

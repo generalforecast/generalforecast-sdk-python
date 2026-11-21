@@ -18,8 +18,8 @@ export type ModelName = string;
 
 /**
  * the model a run publishes, `<project>/<name>@ft<version>`, which names the run too:
- * the fine-tune it trains and the version it publishes, as the catalog and `gf.yaml`
- * name that version
+ * the fine-tune it trains and the version it publishes, as the catalog and a
+ * predictor's `model` name that version
  */
 export type RunModel = string;
 
@@ -46,7 +46,7 @@ export type Digest = string;
 
 export type Task = "classification" | "regression" | "forecast";
 
-export type ResourceKind = "predictor" | "model" | "project" | "api-key" | "secret" | "context" | "source" | "workspace" | "snapshot" | "run" | "prediction";
+export type ResourceKind = "predictor" | "model" | "project" | "api-key" | "secret" | "context" | "source" | "workspace" | "snapshot" | "run" | "prediction" | "experiment" | "estimate";
 
 /** what the envelope is about; GET lists use the collection name */
 export interface Resource {
@@ -65,25 +65,24 @@ export interface Envelope {
 /**
  * ValidationError 422, NotFound 404, Unauthorized 401, CapacityExceeded 422,
  * ModelNotReady 503, Internal 500, Conflict 409 (a compare-and-swap on a stale
- * generation), Unsupported 501 (an operation this server does not offer),
- * PaymentRequired 402 (the workspace's plan or credit does not cover the request).
- * Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
- * `plan_required` (fine-tuning needs a Pro or Enterprise plan) and `credits_exhausted`
- * (an enforced workspace has used its credits, which also refuses predictions);
- * `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not turned on for the
- * project); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs,
- * Playground runs or evaluations queued or running as it may), `quota_exceeded` (the
- * project's training data would pass its quota) and `snapshot_quota_exceeded`. Those
- * three 429s carry `limit` and `actual`, and lift only when the caller ends a run or
- * deletes data, so clients do not retry them; a 429 `rate_limited` passes on its own
- * and may be retried. A run's create is refused with `Conflict` 409 `run_active`
- * (another run of the fine-tune is still queued or running) or `base_mismatch` (the
- * fine-tune's versions train from another base), and with `ValidationError` 422
- * `base_is_fine_tune` (a fine-tune sent as the base). An evaluation refuses a model
- * with `ValidationError` 422 `model_not_hostable` (another task's model, or one the
- * service does not host).
+ * generation), Unsupported 501 (an operation this server does not offer, such as a
+ * hosted route on gf serve), PaymentRequired 402 (the workspace's plan or credit does
+ * not cover the request), AmbiguousReference 422 (a short model name whose task nothing
+ * decides: pass `task`, or the full id). Hosted fine-tuning's gates, with their
+ * `reason`: `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
+ * Enterprise plan) and `credits_exhausted` (an enforced workspace has used its credits,
+ * which also refuses predictions); `Unauthorized` 403 `fine_tuning_unavailable`
+ * (fine-tuning is not turned on for the project); `CapacityExceeded` 429
+ * `run_limit_reached` (the project has as many runs queued or running as it may),
+ * `quota_exceeded` (the project's training data would pass its quota) and
+ * `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`, and lift only
+ * when the caller ends a run or deletes data, so clients do not retry them; a 429
+ * `rate_limited` passes on its own and may be retried. A run's create is refused with
+ * `Conflict` 409 `run_active` (another run of the fine-tune is still queued or running)
+ * or `base_mismatch` (the fine-tune's versions train from another base), and with
+ * `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the base).
  */
-export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired"] as const;
+export const ERROR_CODES = ["ValidationError", "NotFound", "Unauthorized", "CapacityExceeded", "ModelNotReady", "Internal", "Conflict", "Unsupported", "PaymentRequired", "AmbiguousReference"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /**
@@ -109,7 +108,7 @@ export interface ErrorReply extends Envelope {
 export type Row = Record<string, string | number | boolean | null>;
 
 /**
- * a column's kind, the one vocabulary gf.yaml's `inputs.types` and gf.lock use: whole
+ * a column's kind, the engine's vocabulary an ad hoc call's `inputs.types` takes: whole
  * numbers, real numbers, 0/1 flags, categories, free text, dates and times, and
  * booleans
  */
@@ -140,11 +139,31 @@ export interface Selection {
 }
 
 /**
- * the ad hoc predictor: the gf.yaml fields, with `context` and `queries` as rows
- * instead of a context declaration; `name` and `resources` are file-only
+ * a model by its short name, such as `tabicl-v2`, or its full id; a short name resolves
+ * to its family's entry for the task given, else the task inferred from the target
+ * column, else the family's only task
+ */
+export type ModelField = ModelId | ModelName;
+
+/** a context the service holds by its digest */
+export interface SnapshotReference {
+  snapshot: Digest;
+}
+
+/**
+ * the ad hoc predictor: a predictor's fields, with `context` as rows or by reference to
+ * a snapshot the service holds (`{"snapshot": "<digest>"}`, uploaded with `PUT
+ * /snapshots?digest=`), and `queries` as rows, or as the Arrow stream the request is.
+ * `task` decides a short model name's entry; `exclude`, `types`, `past` and `future`
+ * take a predictor spec's forms beside `inputs`'
  */
 export interface Manifest {
-  model: ModelId;
+  task?: Task;
+  exclude?: string[];
+  types?: Record<string, ColumnType>;
+  past?: string[];
+  future?: string[];
+  model: ModelField;
   target: string;
   id?: string;
   inputs?: string[] | Inputs;
@@ -156,8 +175,43 @@ export interface Manifest {
   quantiles?: number[];
   outputs?: Array<"label" | "value" | "probabilities" | "quantiles">;
   selection?: Selection;
-  context: Row[];
+  context: Row[] | SnapshotReference;
   queries: Row[];
+}
+
+/**
+ * what a call is billed: its scored rows, and past the large-context line
+ * (`large_context_cells` in the price book) the GPU seconds of its own execution.
+ * `calls` is how many model calls the engine made, each as many queries as the model
+ * takes at once, as `/estimate` counts them
+ */
+export interface Usage {
+  calls?: number;
+  rows: number;
+  credits: number;
+  usd: number;
+  gpu_seconds?: number | null;
+}
+
+/**
+ * where a call's time went, queueing and cold start apart from compute;
+ * `compile_seconds` is the time its steps spent compiling or loading programs they
+ * waited on, which `compute_seconds`, its own execution, leaves out
+ */
+export interface Timing {
+  queued_seconds: number;
+  cold_start_seconds: number;
+  compile_seconds?: number;
+  compute_seconds: number;
+}
+
+export interface HeldSnapshot {
+  digest: Digest;
+  rows: number;
+}
+
+export interface HeldSnapshotReply extends Envelope {
+  result: HeldSnapshot;
 }
 
 export interface ManifestRequest extends Envelope {
@@ -172,14 +226,11 @@ export interface ManifestRequest extends Envelope {
  */
 export type AsOfRequest = string | number;
 
-/**
- * the declared predictor payload; `context` only when the manifest declares `context:
- * {request: ...}`
- */
+/** a predictor's payload: the queries, and `as_of` for a live context */
 export interface Queries {
   queries: Row[];
-  context?: Row[];
   as_of?: AsOfRequest;
+  env?: Name;
 }
 
 export interface QueriesRequest extends Envelope {
@@ -195,10 +246,11 @@ export type ContextKind = "snapshot" | "request" | "live";
 export type AsOf = string | null;
 
 /**
- * the context a prediction actually used. `source` is the context's kind; `name` names
- * a live context; `version` is a live context's accepted sequence; `digest` is a
- * snapshot's content digest; `rows` counts the rows read; `as_of` is the instant a live
- * context was read as of. Each field a source does not have is null.
+ * the context a prediction actually used, the same shape from gf serve and the hosted
+ * platform. `source` is the context's kind; `name` names a live context; `version` is a
+ * live context's accepted sequence; `digest` is a snapshot's content digest; `rows`
+ * counts the rows read; `as_of` is the instant a live context was read as of. Each
+ * field a source does not have is null.
  */
 export interface ContextInfo {
   source: ContextKind;
@@ -207,10 +259,13 @@ export interface ContextInfo {
   digest: Digest | null;
   rows: number;
   as_of: AsOf;
+  used?: "exact" | "retrieved";
+  core?: number | null;
+  cells?: number;
 }
 
 /**
- * the query's id under the manifest's id column name when it declares one (omitted when
+ * the query's id under the predictor's id column name when it names one (omitted when
  * it does not); `label` and `probabilities` for classification, `value` for regression,
  * `value` and `quantiles` for forecasts
  */
@@ -230,6 +285,9 @@ export interface Result {
   revision?: number | null;
   environment?: Name | null;
   predictions: Prediction[];
+  usage?: Usage;
+  timing?: Timing;
+  notes?: string[];
 }
 
 export interface ResultReply extends Envelope {
@@ -255,8 +313,8 @@ export interface PredictionAccepted extends Envelope {
 }
 
 /**
- * a model's bounds: the most context rows and inputs one call sends it, and `queries`,
- * how many query rows it scores in one pass
+ * the sizes a model was trained and measured to; a call past them is admitted by the
+ * device's memory and carries a note
  */
 export interface Limits {
   context_rows: number;
@@ -273,155 +331,14 @@ export interface Shape {
 }
 
 /**
- * an input column as gf.lock pins it: its kind (null when a request or live context's
- * rows were not seen) and its role, `input` for a tabular model, `past` or `future` for
- * a forecaster's covariates
+ * what a catalog model saw in training: its upstream's stated context rows, inputs and
+ * classes, each null where none is stated. A note shown beside results, never a limit;
+ * null for a forecaster
  */
-export interface LockInput {
-  name: string;
-  type: Kind | null;
-  role: "input" | "past" | "future";
-}
-
-/**
- * a seeded random draw of the labeled rows are queries: `fraction` of them or `rows` of
- * them, exactly one of the two. `stratify`, `group` and `repeats` are present only when
- * the manifest sets them, so a holdout of a fraction and a seed is `{fraction, seed}`
- */
-export interface LockHoldout {
-  fraction?: number;
-  rows?: number;
-  seed: number;
-  stratify?: boolean;
-  group?: string;
-  repeats?: number;
-}
-
-/**
- * the context as gf.lock pins it: a snapshot's file, its context rows' digest and count
- * and the split that made its queries; a live context's name; a request context's most
- * rows per call
- */
-export interface ContextLock {
-  kind: ContextKind;
-  rows?: number;
-  query_rows?: number;
-  digest?: Digest;
-  path?: string;
-  name?: Name;
-  max_rows?: number;
-  until?: string;
-  holdout?: LockHoldout;
-}
-
-/**
- * the selection as gf.lock pins it, in rows: `exact` reads the whole context,
- * `retrieved` a core and each query's nearest rows, and `adaptive` resolves per call
- * for a context only calls carry
- */
-export interface ResolvedSelection {
-  strategy: "exact" | "adaptive" | "retrieved";
-  core: number | null;
-  neighbors: number;
-  kind: "stratified" | "random" | "balanced" | "diverse";
-  recent: number | null;
-  seed: number;
-}
-
-/**
- * what a derived model runs on: the catalog base and its digest, which its weights are
- * only valid with, how many bags of weights it averages (each counts as one estimator),
- * and what kind of change its weights make
- */
-export interface DerivedBase {
-  base: ModelId;
-  base_digest: Digest;
-  bags: number;
-  kind: "lora" | "input_adapter" | "full";
-}
-
-/** the resolved predictor gf.lock pins */
-export interface Resolution {
-  name: Name;
-  model: ModelId;
-  model_digest: Digest;
-  derived?: DerivedBase;
-  task: Task;
-  target: string;
-  target_type: Kind | null;
-  classes?: Array<string | number | boolean>;
-  id?: string;
-  id_type?: Kind | null;
-  time?: string;
-  time_type?: Kind | null;
-  series?: string[];
-  series_types?: Array<Kind | null>;
-  related?: string[];
-  frequency?: string | number;
-  horizon?: number;
-  quantiles?: number[];
-  outputs: string[];
-  inputs: LockInput[];
-  context: ContextLock;
-  selection: ResolvedSelection;
-}
-
-/** whether this server has the predictor's model loaded and compiled */
-export interface Serving {
-  loaded: boolean;
-  compiled: boolean;
-  warm_shapes: Shape[];
-}
-
-export type State = "pending" | "building" | "ready" | "failed" | "stopped";
-
-/** a pointer to a revision; `generation` guards promote and rollback */
-export interface Environment {
-  predictor: Name;
-  name: Name;
-  revision: number | null;
-  generation: number;
-  status: State;
-}
-
-/**
- * a predictor by name, with its environments. Its resolution (the fields `Resolution`
- * names, `limits` and `serving`) is there once it resolves: once the predictor has a
- * revision, from its latest. `created_at` and `latest_revision` come from the hosted
- * journal; a declared predictor has neither.
- */
-export interface Predictor {
-  name: Name;
-  created_at?: number;
-  latest_revision?: number | null;
-  environments: Environment[];
-  lock_digest?: Digest;
-  model?: ModelId;
-  model_digest?: Digest;
-  task?: Task;
-  target?: string;
-  target_type?: Kind | null;
-  classes?: Array<string | number | boolean>;
-  id?: string;
-  time?: string;
-  series?: string[];
-  inputs?: LockInput[];
-  context?: ContextLock;
-  selection?: ResolvedSelection;
-  limits?: Limits;
-  serving?: Serving;
-}
-
-export interface PredictorReply extends Envelope {
-  result: Predictor;
-}
-
-export interface PredictorList {
-  predictors: Predictor[];
-}
-
-export interface PredictorListReply extends Envelope {
-  result: PredictorList;
+export interface TrainedOn {
+  rows: number | null;
+  inputs: number | null;
+  classes: number | null;
 }
 
 /**
@@ -609,9 +526,16 @@ export interface ModelArchitecture {
 
 /**
  * the catalog's description of a served model: `model` is the resolved id with its
- * content digest, `limits` its bounds, `warm_shapes` the shapes compiled at startup
+ * content digest, `limits` what one call may send here, `warm_shapes` the shapes
+ * compiled at startup
  */
 export interface Model {
+  short: string | null;
+  kind: "catalog" | "fine-tune";
+  family?: string;
+  base: string | null;
+  trained_on: TrainedOn | null;
+  hostable?: boolean;
   model: string;
   name: ModelId;
   derived?: DerivedModel;
@@ -708,6 +632,16 @@ export interface ProjectCreateRequest extends Envelope {
  */
 export type Permission = "predictors:read" | "predictors:write" | "predictors:predict" | "contexts:read" | "contexts:write" | "contexts:history" | "sources:read" | "sources:write" | "sources:manage" | "models:read" | "snapshots:read" | "snapshots:write" | "runs:read" | "runs:write" | "keys:read" | "keys:write" | "secrets:read" | "secrets:write" | "members:read" | "members:write" | "sso:read" | "sso:write" | "audit:read" | "operators:read" | "operators:write" | "projects:read" | string;
 
+/**
+ * the signed-in account behind a key: `issuer` and `subject` name it, and stay the same
+ * when its email changes
+ */
+export interface KeyOwner {
+  issuer: string;
+  subject: string;
+  email: string | null;
+}
+
 /** `token` is present only in the create and rotate replies */
 export interface Key {
   id: string;
@@ -717,6 +651,14 @@ export interface Key {
   created_at: number;
   expires_at: number | null;
   revoked_at: number | null;
+  state?: "active" | "expired" | "revoked";
+  prefix?: string | null;
+  last_used_at?: number | null;
+  ephemeral?: boolean;
+  owner?: KeyOwner | null;
+  service?: boolean;
+  legacy?: boolean;
+  machine?: string | null;
   token?: string;
   replaces?: string;
 }
@@ -827,6 +769,8 @@ export interface RunData {
   name: Name;
   digest: Digest;
   phase?: Name;
+  context?: Name;
+  version?: number;
 }
 
 /** a component full fine-tuning may train */
@@ -904,10 +848,33 @@ export interface RunDataTag {
 }
 
 /**
- * a snapshot a run or phase trains on, by its name, or every ready snapshot carrying a
- * tag
+ * a context version a run trains on: `version`, or the latest when it is left out,
+ * pinned to that version's snapshot digest when the run is created. Its rows train to
+ * predict the run's `target`
  */
-export type RunDataItem = Name | RunDataTag;
+export interface RunDataContext {
+  context: Name;
+  version?: number;
+}
+
+/**
+ * what a run or phase trains on: a snapshot by its name, every ready snapshot carrying
+ * a tag, or a context version. A bare name resolves as a snapshot, a synthetic batch or
+ * a context, whichever has it; a name two of them have is refused with 422
+ * `AmbiguousReference`, and `{"context": ...}` names a context alone
+ */
+export type RunDataItem = Name | RunDataTag | RunDataContext;
+
+/**
+ * where a resource was made: the surface from the request's `X-GF-Origin` header (`api`
+ * when it sends none) and who made it
+ */
+export interface Origin {
+  surface: "console" | "cli" | "notebook" | "script" | "api";
+  notebook: string | null;
+  client: string | null;
+  by: string | null;
+}
 
 /** how the trainer draws an episode from the table's training rows */
 export interface EpisodeSampling {
@@ -1089,6 +1056,8 @@ export interface RunPublished {
 }
 
 export interface Run {
+  origin: Origin;
+  url: string;
   model: RunModel;
   name: Name;
   version: number;
@@ -1097,6 +1066,7 @@ export interface Run {
   attempt: number;
   base: ModelId;
   data: RunData[];
+  target?: string;
   data_digest: Digest | null;
   waiting?: RunWaiting;
   phases?: RunPinnedPhase[];
@@ -1161,8 +1131,9 @@ export interface RunListReply extends Envelope {
  */
 export interface RunCreate {
   name: Name;
-  base: ModelId;
+  base: ModelField;
   data?: RunDataItem[];
+  target?: string;
   method: RunMethod;
   plan?: RunPlan | RunCurriculumPlan;
   phases?: RunPhase[];
@@ -1257,11 +1228,12 @@ export interface SnapshotMetadata {
 }
 
 /**
- * A named, immutable table. `digest`, `rows` and `columns` are set once it is `ready`.
- * A create that opens an upload also carries where its bytes go: `url`, `method` and
- * `chunk_bytes`.
+ * A named, immutable table. `digest`, `rows` and `columns` are set once it is `ready`;
+ * `origin` says where it was uploaded from. A create that opens an upload also carries
+ * where its bytes go: `url`, `method` and `chunk_bytes`.
  */
 export interface Snapshot {
+  origin?: Origin;
   name: Name;
   state: SnapshotState;
   digest: Digest | null;
@@ -1494,8 +1466,17 @@ export interface SyntheticCounts {
   rejected: number;
 }
 
-/** a batch as `snapshots.synthetic` reads it */
-export interface SyntheticBatch extends SyntheticBatchCreated {
+/**
+ * a batch as `snapshots.synthetic` reads it: its create's answer, and the seed,
+ * options, tables and counts. Its fields are listed whole, as `SyntheticBatchCreated`
+ * allows no other fields.
+ */
+export interface SyntheticBatch {
+  name: SyntheticBatchName;
+  tag: RunTag;
+  count: number;
+  snapshots: Name[];
+  state: SyntheticBatchState;
   seed: number;
   options: SyntheticBatchCreate;
   tables: SyntheticTable[];
@@ -1510,14 +1491,57 @@ export interface SyntheticBatchReply extends Envelope {
   result: SyntheticBatch;
 }
 
-/** an immutable pushed predictor */
+export type State = "pending" | "building" | "ready" | "failed" | "stopped";
+
+/** a predictor's spec: `gf.Predictor`'s fields but its name, as JSON */
+export interface Spec {
+  context: string;
+  model: ModelField;
+  target: string;
+  task?: Task;
+  id?: string;
+  time?: string;
+  inputs?: string[];
+  exclude?: string[];
+  types?: Record<string, ColumnType>;
+  series?: string[];
+  frequency?: string | number;
+  horizon?: number;
+  quantiles?: number[];
+  past?: string[];
+  future?: string[];
+  selection?: Selection;
+}
+
+/**
+ * what a spec resolved to against its context version's rows, by the engine's
+ * `resolve`: the full model id and digest, the task, inputs and their types. A deploy
+ * compares these, so a short name and its full id are one predictor
+ */
+export interface Resolved {
+  model: ModelField;
+  short: string | null;
+  model_digest: Digest;
+  base_digest: Digest | null;
+  task: Task;
+  context: Name;
+  context_version: number | null;
+  context_digest: Digest | null;
+  context_rows?: number | null;
+  inputs: string[];
+  types: Record<string, ColumnType>;
+}
+
+/** an immutable spec with what it resolved to; the plane keeps its lock beside it */
 export interface Revision {
   predictor: Name;
   number: number;
-  predictor_digest: Digest;
-  model: ModelId;
-  created_at: number;
-  status: State;
+  status: "pending" | "building" | "ready" | "failed" | "stopped";
+  lock_digest: Digest;
+  spec: Spec;
+  resolved: Resolved;
+  origin: Origin;
+  created: string;
 }
 
 export interface RevisionReply extends Envelope {
@@ -1532,179 +1556,28 @@ export interface RevisionListReply extends Envelope {
   result: RevisionList;
 }
 
-export interface LockedModel {
-  files: Record<string, string>;
-}
-
-/** the hosted serving resources gf.yaml declares */
-export interface LockResources {
-  accelerator?: "L4" | "A10G" | "L40S" | "cpu";
-  replicas_min?: number;
-  replicas_max?: number;
-  idle_seconds?: number;
-}
-
 /**
- * the gf that wrote a lock: its package version, and the revision of what its gf check
- * writes for the same gf.yaml, rows and catalog. A lock without it was written under
- * rules 1
+ * why an environment's revision failed to start: the failure in words, the request
+ * whose deploy or promote started it, and the revision the environment still serves
+ * (null when it served none)
  */
-export interface LockWriter {
-  gf: string;
-  rules: number;
+export interface EnvironmentFailure {
+  message: string;
+  request_id: string | null;
+  serving_revision: number | null;
 }
 
-/**
- * gf.lock: what gf check resolved gf.yaml into. `digest` is the canonical JSON digest
- * of the document without `digest` and `checked_with`, the one identity of a predictor
- * revision; `manifest` the digest of the normalized gf.yaml it resolves
- */
-export interface Lock {
-  lock_version: 1 | 2;
-  digest: Digest;
-  checked_with?: LockWriter;
-  manifest: Digest;
-  predictor: Resolution;
-  resources?: LockResources;
-  model: LockedModel;
-}
-
-/**
- * a checked predictor's lock, its uploaded snapshot's digest, and the normalized
- * gf.yaml the lock was written for, which the plane holds the lock to field by field
- */
-export interface RevisionRegister {
-  lock: Lock;
-  snapshot: Digest | null;
-  manifest: Record<string, unknown>;
-}
-
-export interface RevisionRegisterRequest extends Envelope {
-  payload: RevisionRegister;
-}
-
-/** a gf.yaml as written, its uploaded snapshot, and the lock it replaces */
-export interface PredictorCheck {
-  manifest: string;
-  snapshot?: string | null;
-  previous?: Record<string, unknown> | null;
-  upgrade?: boolean;
-  deploy?: boolean;
-}
-
-export interface PredictorCheckRequest extends Envelope {
-  payload: PredictorCheck;
-}
-
-/** the context the lock resolved */
-export interface CheckedContext {
-  kind: "snapshot" | "request" | "live";
-  rows: number | null;
-  query_rows: number | null;
-  digest: string | null;
-}
-
-/** a snapshot context's resolved rows, stored for `gf push` */
-export interface KeptSnapshot {
-  name: string;
-  digest: string;
-  rows: number;
-}
-
-/**
- * a snapshot context's every labeled row, those the holdout or `until` holds out
- * included, stored for `gf push`, with the lock and manifest for them
- */
-export interface DeployedContext {
-  lock: Lock;
-  manifest: Record<string, unknown>;
-  context: CheckedContext;
-  snapshot: KeptSnapshot;
-  held_out: number;
-}
-
-export interface PredictorCheckResult {
-  lock: Lock;
-  model: string;
-  inferred: Record<string, unknown>;
-  changes: unknown[][];
-  manifest: Record<string, unknown>;
-  context: CheckedContext;
-  deployed?: DeployedContext | null;
-}
-
-export interface PredictorCheckReply extends Envelope {
-  result: PredictorCheckResult;
-}
-
-export interface EvaluationCreate {
-  manifest: string;
-  snapshot: string;
-  models?: string[] | null;
-}
-
-export interface EvaluationCreateRequest extends Envelope {
-  payload: EvaluationCreate;
-}
-
-/** `queued` and `running` go on; `finished`, `failed` and `cancelled` are final */
-export type EvaluationState = "queued" | "running" | "finished" | "failed" | "cancelled";
-
-export interface EvaluationInterval {
-  metric: string;
-  low: number;
-  high: number;
-  level: number;
-  resamples: number;
-}
-
-/** one model's scoring of the held-out rows */
-export interface EvaluationModel {
-  model: string;
-  state: EvaluationState;
-  metrics: Record<string, number | null>;
-  interval: EvaluationInterval | null;
-  scored: number;
-  total: number;
-  seconds: number | null;
-  error: ApiError | null;
-}
-
-/**
- * what the evaluation was billed so far, on the prediction meters, by its calls and
- * rows
- */
-export interface EvaluationBilled {
-  predictions: number;
-  rows: number;
-}
-
-export interface Evaluation {
-  evaluation: number;
-  state: EvaluationState;
-  held: number | null;
-  repeats: number;
-  context: number | null;
-  task: string | null;
-  metric: string | null;
-  models: EvaluationModel[];
-  billed: EvaluationBilled;
-  created: number;
-  started: number | null;
-  finished: number | null;
-}
-
-export interface EvaluationReply extends Envelope {
-  result: Evaluation;
-}
-
-export interface RevisionDetails {
-  revision: Revision;
-  lock: Lock;
-}
-
-export interface RevisionDetailsReply extends Envelope {
-  result: RevisionDetails;
+/** a pointer to a revision; `generation` guards promote and rollback */
+export interface Environment {
+  name: Name;
+  revision: number | null;
+  state: "starting" | "ready" | "failed" | "stopped";
+  generation: number;
+  calls_today?: number;
+  p50_seconds?: number | null;
+  updated?: string;
+  url: string;
+  error?: EnvironmentFailure | null;
 }
 
 export interface EnvironmentReply extends Envelope {
@@ -1719,17 +1592,14 @@ export interface EnvironmentListReply extends Envelope {
   result: EnvironmentList;
 }
 
-export interface EnvironmentCreate {
-  name: Name;
-}
-
-export interface EnvironmentCreateRequest extends Envelope {
-  payload: EnvironmentCreate;
-}
-
+/**
+ * the revision to point at, or `from_env`, the environment whose revision to take;
+ * `expected_generation` refuses a change past a stale read
+ */
 export interface Promote {
-  revision: number;
-  expected_generation: number;
+  revision?: number;
+  from_env?: Name;
+  expected_generation?: number;
 }
 
 export interface PromoteRequest extends Envelope {
@@ -1835,47 +1705,6 @@ export interface PredictorDeletedReply extends Envelope {
   result: PredictorDeleted;
 }
 
-/** a hosted, appendable context */
-export interface LiveContext {
-  name: Name;
-  inputs: string[];
-  targets: Record<string, ColumnType>;
-  max_rows: number;
-  rows: number;
-  labeled_rows: number;
-  sequence: number;
-  accepted_at: number | null;
-  id?: string;
-}
-
-export interface LiveContextReply extends Envelope {
-  result: LiveContext;
-}
-
-export interface LiveContextList {
-  contexts: LiveContext[];
-}
-
-export interface LiveContextListReply extends Envelope {
-  result: LiveContextList;
-}
-
-export interface LiveContextCreate {
-  name: Name;
-  inputs: string[];
-  targets: Record<string, ColumnType>;
-  max_rows?: number;
-  id?: string;
-  types?: Record<string, ColumnType>;
-  max_writes?: number;
-  max_pending_labels?: number;
-  pending_ttl_seconds?: number;
-}
-
-export interface LiveContextCreateRequest extends Envelope {
-  payload: LiveContextCreate;
-}
-
 export interface LiveContextAppend {
   write_id: string;
   rows: Row[];
@@ -1917,162 +1746,13 @@ export interface ReceiptReply extends Envelope {
 
 export interface PredictorCreate {
   name: Name;
+  spec: Spec;
+  env: Name;
+  dry_run?: boolean;
 }
 
 export interface PredictorCreateRequest extends Envelope {
   payload: PredictorCreate;
-}
-
-export interface PredictorCreatedReply extends Envelope {
-  result: PredictorCreate;
-}
-
-/** where a live context's rows come from, and how its columns map */
-export interface ContextImport {
-  context: Name;
-  source: string;
-  format: "csv" | "tsv" | "parquet" | "arrow" | "json" | "jsonl" | "table";
-  credential_ref?: string | null;
-  digest?: Digest | null;
-  mapping?: string[][];
-}
-
-export interface ContextImportRequest extends Envelope {
-  payload: ContextImport;
-}
-
-export type WriteOperation = "create_features" | "attach_labels" | "correct_features" | "correct_labels" | "resupply_labels" | "import_record" | "checkpoint";
-
-/** one observation's components; corrections name the versions they replace */
-export interface Observation {
-  key: string;
-  features?: Record<string, string | number | boolean | null>;
-  labels?: Record<string, string | number | boolean>;
-  event_at?: number;
-  expected_feature_version?: number;
-  expected_label_versions?: Record<string, number>;
-}
-
-/** the writes a client makes; imports and checkpoints are the server's */
-export type MutationOperation = "create_features" | "attach_labels" | "correct_features" | "correct_labels" | "resupply_labels";
-
-export interface Mutation {
-  write_id: string;
-  operation: MutationOperation;
-  records: Observation[];
-}
-
-export interface MutationRequest extends Envelope {
-  payload: Mutation;
-}
-
-export interface ComponentVersions {
-  key: string;
-  feature_version: number | null;
-  label_versions: Record<string, number>;
-}
-
-/** a write's durable receipt, the same for every retry of its write id */
-export interface AcceptedWrite {
-  project: Name;
-  context: Name;
-  write_id: string;
-  operation: WriteOperation;
-  sequence: number;
-  accepted_at: number;
-  durably_accepted: boolean;
-  changes: ComponentVersions[];
-  retry_valid_until: number | null;
-}
-
-export interface AcceptedWriteReply extends Envelope {
-  result: AcceptedWrite;
-}
-
-export interface ImportReceipt {
-  context: Name;
-  digest: Digest;
-  rows: number;
-  sequence: number;
-  accepted_at: number;
-  receipt: AcceptedWrite;
-  mode: "explicit-refresh";
-  continuous: false;
-}
-
-export interface ImportReceiptReply extends Envelope {
-  result: ImportReceipt;
-}
-
-export interface ContextSnapshotQuery {
-  target: string;
-  knowledge_at?: number | null;
-  event_before?: number | null;
-}
-
-export interface ContextSnapshotQueryRequest extends Envelope {
-  payload: ContextSnapshotQuery;
-}
-
-export interface SnapshotRow {
-  key: string;
-  features: Record<string, string | number | boolean | null>;
-  label: string | number | boolean;
-  feature_version: number;
-  label_version: number;
-  feature_accepted_at: number;
-  label_accepted_at: number;
-  event_at: number | null;
-}
-
-export interface ContextSnapshot {
-  project: Name;
-  context: Name;
-  target: string;
-  features: string[];
-  through_sequence: number;
-  knowledge_at: number;
-  event_before: number | null;
-  rows: SnapshotRow[];
-  source_wait_count: number;
-}
-
-export interface ContextSnapshotReply extends Envelope {
-  result: ContextSnapshot;
-}
-
-/**
- * which columns of a pinned file are an observation's key, features and labels; empty
- * for JSONL already in that shape
- */
-export interface SourceMapping {
-  key?: string;
-  features?: Record<string, string>;
-  labels?: Record<string, string>;
-  event_at?: string;
-  label_types?: Record<string, "boolean" | "numeric">;
-}
-
-export interface SourcePinSpec {
-  path: string;
-  format: "jsonl" | "csv";
-  mapping: SourceMapping;
-}
-
-export interface SourcePinRequest extends Envelope {
-  payload: SourcePinSpec;
-}
-
-export interface SourcePin {
-  source_id: Name;
-  digest: Digest;
-  size_bytes: number;
-  format: "jsonl" | "csv";
-  mapping: SourceMapping;
-}
-
-export interface SourcePinReply extends Envelope {
-  result: SourcePin;
 }
 
 export interface SourcePrepare {
@@ -2114,8 +1794,29 @@ export interface SourcePreparedReply extends Envelope {
   result: SourcePrepared;
 }
 
+export type SourceKind = "bigquery" | "gcs" | "snowflake" | "databricks" | "s3" | "postgres";
+
+/**
+ * a workspace connection to a warehouse or bucket. Config keys by kind: bigquery
+ * `project, dataset`; gcs `bucket, prefix`; snowflake `account, warehouse, database,
+ * role`; databricks `host, warehouse, client_id`; s3 `role_arn, region, bucket,
+ * prefix`; postgres `host, port, database, user, tls`
+ */
+export interface Source {
+  name: Name;
+  kind: SourceKind;
+  state: "ready" | "failing" | "expired";
+  config: Record<string, string>;
+  secret_expires: string | null;
+  tested_at: string | null;
+  error: string | null;
+  origin: Origin;
+  created: string;
+  url: string;
+}
+
 export interface SourceList {
-  sources: SourcePin[];
+  sources: Source[];
 }
 
 export interface SourceListReply extends Envelope {
@@ -2135,6 +1836,7 @@ export interface KeyIdentity {
   name: Name;
   project: Name;
   expires_at: number | null;
+  ephemeral?: boolean;
 }
 
 export interface WorkspaceIdentity {
@@ -2162,6 +1864,7 @@ export interface AuthStatus {
   email?: string | null;
   machine?: string | null;
   workspace?: WorkspaceIdentity | null;
+  url?: string;
 }
 
 export interface AuthStatusReply extends Envelope {
@@ -2236,11 +1939,12 @@ export interface AuditLogReply extends Envelope {
   result: AuditLog;
 }
 
-export interface CliLoginStart {
+export interface DeviceLoginStart {
   machine: string;
+  client: "cli" | "notebook";
 }
 
-export interface CliLoginGrant {
+export interface DeviceLoginGrant {
   device_code: string;
   user_code: string;
   verification_uri: string;
@@ -2249,21 +1953,23 @@ export interface CliLoginGrant {
   interval: number;
 }
 
-export interface CliLoginPoll {
+export interface DeviceLoginPoll {
   device_code: string;
 }
 
-export interface CliLoginToken {
+export interface DeviceLoginToken {
   access_token: string;
   token_type: "bearer";
+  expires_at: number | null;
   key: KeyIdentity;
   email: string;
   workspace: WorkspaceIdentity;
   project: Name;
+  url: string;
 }
 
 /**
- * why a CLI login cannot go on, outside the envelope as the login is. `reason` says
+ * why a device login cannot go on, outside the envelope as the login is. `reason` says
  * which: `authorization_pending` (`Unauthorized`, poll again), `slow_down`
  * (`ValidationError`, poll less often), `expired_token` and `access_denied`
  * (`Unauthorized`, start again) or `rate_limited` (`CapacityExceeded`).
@@ -2300,7 +2006,17 @@ export interface WorkspaceSummary {
   projects: Name[];
 }
 
-export interface WorkspaceDetails extends WorkspaceSummary {
+/**
+ * a workspace as `workspaces.get` reads it: its summary, its organization and when it
+ * was made. Its fields are listed whole, as `WorkspaceSummary` allows no other fields.
+ */
+export interface WorkspaceDetails {
+  workspace: Name;
+  display_name: string;
+  role: WorkspaceRole | null;
+  admin: boolean;
+  default_project: Name | null;
+  projects: Name[];
   organization: Name;
   created_at: number;
 }
@@ -2613,54 +2329,56 @@ export interface WaitlistEntryView {
   entry: WaitlistEntry;
 }
 
-export interface CliLoginCode {
+export interface DeviceLoginCode {
   user_code: UserCode;
 }
 
-export interface CliLoginWorkspace {
+export interface DeviceLoginWorkspace {
   workspace: Name;
   display_name: string;
 }
 
 /**
- * what the sign-in page confirms: the machine asking and the workspaces with a project
- * the key may serve
+ * what the sign-in page confirms: the machine and client asking ("Approve the CLI on
+ * maya-mbp", "Approve a notebook on maya-mbp") and the workspaces with a project the
+ * key may serve
  */
-export interface CliLoginPreview {
+export interface DeviceLoginPreview {
   user_code: string;
   machine: string;
+  client: "cli" | "notebook";
   expires_at: number;
   email: string;
-  workspaces: CliLoginWorkspace[];
+  workspaces: DeviceLoginWorkspace[];
 }
 
-export interface CliLoginApprove {
+export interface DeviceLoginApprove {
   user_code: UserCode;
   workspace: Name;
 }
 
-export interface CliLoginGranted {
+export interface DeviceLoginGranted {
   id: Name;
   display_name: string;
 }
 
-export interface CliLoginApproved {
+export interface DeviceLoginApproved {
   user_code: string;
   state: "approved";
-  workspace: CliLoginGranted;
+  workspace: DeviceLoginGranted;
 }
 
-export interface CliLoginDenied {
+export interface DeviceLoginDenied {
   user_code: string;
   state: "denied";
 }
 
-export interface CliLoginApproveRequest extends Envelope {
-  payload: CliLoginApprove;
+export interface DeviceLoginApproveRequest extends Envelope {
+  payload: DeviceLoginApprove;
 }
 
-export interface CliLoginCodeRequest extends Envelope {
-  payload: CliLoginCode;
+export interface DeviceLoginCodeRequest extends Envelope {
+  payload: DeviceLoginCode;
 }
 
 export interface InvitationCreateRequest extends Envelope {
@@ -2719,16 +2437,16 @@ export interface WorkspaceRenameRequest extends Envelope {
   payload: WorkspaceRename;
 }
 
-export interface CliLoginApprovedReply extends Envelope {
-  result: CliLoginApproved;
+export interface DeviceLoginApprovedReply extends Envelope {
+  result: DeviceLoginApproved;
 }
 
-export interface CliLoginDeniedReply extends Envelope {
-  result: CliLoginDenied;
+export interface DeviceLoginDeniedReply extends Envelope {
+  result: DeviceLoginDenied;
 }
 
-export interface CliLoginPreviewReply extends Envelope {
-  result: CliLoginPreview;
+export interface DeviceLoginPreviewReply extends Envelope {
+  result: DeviceLoginPreview;
 }
 
 export interface InvitationAcceptedReply extends Envelope {
@@ -2819,13 +2537,644 @@ export interface WorkspaceSummaryReply extends Envelope {
   result: WorkspaceSummary;
 }
 
+/**
+ * the same resource made in code: the SDK call, the `gf` command and a curl request
+ */
+export interface Code {
+  python: string;
+  cli: string;
+  curl: string;
+}
+
+export interface Deleted {
+  name: Name;
+  deleted: true;
+}
+
+/**
+ * the large-context line: GPU seconds past `large_context_cells` in the price book, and
+ * their cost
+ */
+export interface LargeContext {
+  gpu_seconds: number;
+  credits: number;
+  usd: number;
+}
+
+/**
+ * what a call or a run would cost from the live price book: model calls, scored rows,
+ * credits (1 credit is $0.001) and dollars
+ */
+export interface Estimate {
+  calls: number;
+  rows: number;
+  credits: number;
+  usd: number;
+  large_context?: LargeContext;
+  warnings?: string[];
+}
+
+export interface Column {
+  name: string;
+  type: ColumnType;
+  missing: number;
+  distinct: number | null;
+}
+
+/**
+ * an upload's announcement; the bytes follow in chunks unless the rows are unchanged
+ */
+export interface ContextData {
+  format: "parquet" | "arrow" | "csv";
+  bytes: number;
+  digest: Digest;
+  rows?: number;
+  file?: string | null;
+}
+
+/** what a context reads from a source: one `table` or a `sql` query */
+export interface ContextSourceRead {
+  source: Name;
+  table?: string;
+  sql?: string;
+}
+
+export interface ContextSource {
+  source: Name;
+  kind: SourceKind;
+  table: string | null;
+  sql: string | null;
+}
+
+/**
+ * one origin: `data` (an upload, version 1), `source` (an import, or with `kind: live`
+ * a read at call time cached for `freshness_seconds`), or `kind: live` with `columns`
+ * for rows that arrive through `append`
+ */
+export interface ContextCreate {
+  name: Name;
+  kind: "snapshot" | "live";
+  data?: ContextData;
+  source?: ContextSourceRead;
+  columns?: Record<string, ColumnType>;
+  targets?: string[];
+  id?: string | null;
+  time?: string | null;
+  freshness_seconds?: number;
+}
+
+export interface ContextUploadTarget {
+  version: number;
+  url: string | null;
+  chunk_bytes: number;
+}
+
+/**
+ * the data a model learns from; `version` is the latest (or the one read), `upload`
+ * where an upload's chunks go
+ */
+export interface Context {
+  name: Name;
+  kind: "snapshot" | "live";
+  state: "uploading" | "importing" | "ready" | "failed";
+  version: number | null;
+  versions: number;
+  digest: Digest | null;
+  rows: number | null;
+  columns: Column[];
+  id: string | null;
+  time: string | null;
+  targets?: string[];
+  source: ContextSource | null;
+  freshness_seconds: number | null;
+  read_at: string | null;
+  error: string | null;
+  predictors: Name[];
+  experiments: Name[];
+  origin: Origin;
+  created: string;
+  updated: string;
+  url: string;
+  file?: string | null;
+  upload?: ContextUploadTarget;
+  unchanged?: boolean;
+}
+
+export interface ContextUpload {
+  data: ContextData;
+}
+
+export interface ContextList {
+  contexts: Context[];
+}
+
+export interface ContextVersionInfo {
+  version: number;
+  digest: Digest;
+  rows: number;
+  created: string;
+  origin: Origin;
+}
+
+export interface ContextVersions {
+  versions: ContextVersionInfo[];
+}
+
+/** a page of rows; `next` is the cursor for the page after, or null at the end */
+export interface Rows {
+  columns: Column[];
+  rows: Row[];
+  next: string | null;
+}
+
+/** the bytes of the version the service holds so far */
+export interface Received {
+  received: number;
+}
+
+/**
+ * the rows held out to score: a random share or count (optionally stratified), whole
+ * groups of a column, the latest by time, or none
+ */
+export interface Holdout {
+  kind: "random" | "group" | "time" | "none";
+  fraction?: number;
+  rows?: number;
+  column?: string;
+  until?: string;
+  stratify?: boolean;
+  seed?: number;
+  repeats?: number;
+}
+
+/**
+ * an experiment's setup; `name` defaults to `<context>-<target>`, the task is inferred
+ * from the target, the holdout is the latest 20% by `time` when one is declared, else
+ * 20% at random
+ */
+export interface ExperimentSetup {
+  name?: Name;
+  title?: string;
+  context: Name;
+  version?: number;
+  target: string;
+  task?: Task;
+  id?: string;
+  time?: string;
+  inputs?: string[];
+  exclude?: string[];
+  types?: Record<string, ColumnType>;
+  holdout?: Holdout;
+  sql?: string;
+}
+
+/** the setup, and the models of run 1: the recommended set when left out */
+export interface ExperimentCreate {
+  name?: Name;
+  title?: string;
+  context: Name;
+  version?: number;
+  target: string;
+  task?: Task;
+  id?: string;
+  time?: string;
+  inputs?: string[];
+  exclude?: string[];
+  types?: Record<string, ColumnType>;
+  holdout?: Holdout;
+  sql?: string;
+  models?: ModelField[];
+  dry_run?: boolean;
+}
+
+/** the setup fields that change; earlier runs become `stale` */
+export interface ExperimentUpdate {
+  title?: string;
+  context?: Name;
+  version?: number;
+  target?: string;
+  task?: Task;
+  id?: string;
+  time?: string;
+  inputs?: string[];
+  exclude?: string[];
+  types?: Record<string, ColumnType>;
+  holdout?: Holdout;
+  sql?: string;
+}
+
+export interface Entry {
+  model: ModelField;
+  short: string | null;
+  state: "queued" | "running" | "finished" | "failed" | "cancelled";
+  score: number | null;
+  interval: number[] | null;
+  metrics: Record<string, number>;
+  seconds: number;
+  rows: number;
+  credits: number;
+  usd: number;
+  error: string | null;
+}
+
+/**
+ * a run: its models scored on the held-out rows, best first; it pins the context
+ * digest, setup digest and model digests, and is `stale` once the setup moved
+ */
+export interface ExperimentRun {
+  experiment: Name;
+  number: number;
+  state: "queued" | "running" | "finished" | "failed" | "cancelled";
+  stale: boolean;
+  models: ModelId[];
+  metric: string;
+  lower_is_better: boolean;
+  held_rows: number;
+  context_rows: number;
+  repeats: number;
+  leaderboard: Entry[];
+  rows: number;
+  credits: number;
+  usd: number;
+  created: string;
+  started: string | null;
+  finished: string | null;
+  origin: Origin;
+  error: string | null;
+  url: string;
+}
+
+export interface ExperimentRunSummary {
+  number: number;
+  state: "queued" | "running" | "finished" | "failed" | "cancelled";
+  models: ModelId[];
+  best: string | null;
+  score: number | null;
+  origin: Origin;
+  created: string;
+}
+
+/**
+ * models evaluated on one context for one target; `run` is the latest, or the one asked
+ * for
+ */
+export interface Experiment {
+  name: Name;
+  title: string;
+  context: Name;
+  context_version: number;
+  target: string;
+  task: Task;
+  id: string | null;
+  time: string | null;
+  inputs: string[];
+  types: Record<string, ColumnType>;
+  holdout: Holdout;
+  sql: string | null;
+  metric: string;
+  runs: ExperimentRunSummary[];
+  run: ExperimentRun | null;
+  origin: Origin;
+  created: string;
+  updated: string;
+  url: string;
+}
+
+/** a dry run: the setup as it resolves, and what run 1 would cost */
+export interface ExperimentPlan {
+  setup: ExperimentSetup;
+  estimate: Estimate;
+  warnings: string[];
+}
+
+/** the experiment with run 1 queued, or under `dry_run` its plan */
+export type ExperimentCreated = Experiment | ExperimentPlan;
+
+/** the experiments, each without its run's leaderboard */
+export interface ExperimentList {
+  experiments: Experiment[];
+  next: string | null;
+}
+
+export interface ExperimentRunCreate {
+  models?: ModelField[];
+  dry_run?: boolean;
+}
+
+export interface ExperimentRunEstimate {
+  estimate: Estimate;
+}
+
+export type ExperimentRunCreated = ExperimentRun | ExperimentRunEstimate;
+
+export interface ExperimentRunList {
+  runs: ExperimentRun[];
+}
+
+export interface Slice {
+  column: string;
+  value: string;
+  rows: number;
+  score: number;
+  delta: number;
+}
+
+export interface SliceList {
+  slices: Slice[];
+}
+
+/** the held-out rows with one model's predictions beside them */
+export interface HeldRows {
+  model: ModelField;
+  rows: Row[];
+  next: string | null;
+}
+
+/** the spec fields that change; `null` clears one */
+export interface SpecPatch {
+  context?: string | null;
+  model?: ModelField | null;
+  target?: string | null;
+  task?: Task | null;
+  id?: string | null;
+  time?: string | null;
+  inputs?: string[] | null;
+  exclude?: string[] | null;
+  types?: Record<string, ColumnType> | null;
+  series?: string[] | null;
+  frequency?: string | number | null;
+  horizon?: number | null;
+  quantiles?: number[] | null;
+  past?: string[] | null;
+  future?: string[] | null;
+  selection?: Selection | null;
+}
+
+export interface PredictorUpdate {
+  spec: SpecPatch;
+  env: Name;
+  dry_run?: boolean;
+}
+
+export interface PredictorDeploy {
+  spec: Spec;
+  env: Name;
+  dry_run?: boolean;
+}
+
+export interface Change {
+  field: string;
+  before: string | null;
+  after: string | null;
+}
+
+/**
+ * what a create, update or deploy did; `unchanged` wrote nothing. The environment is
+ * `starting` until its replica is ready, which `environments.get` reports
+ */
+export interface Deploy {
+  predictor: Name;
+  env: Name;
+  action: "created" | "updated" | "unchanged";
+  changes: Change[];
+  revision: Revision;
+  environment: Environment | null;
+}
+
+/** a named, versioned endpoint: its latest revision's spec and each environment */
+export interface PredictorInfo {
+  name: Name;
+  spec: Spec;
+  resolved: Resolved;
+  revision: number;
+  environments: Record<string, Environment>;
+  origin: Origin;
+  created: string;
+  url: string;
+}
+
+export interface PredictorInfoList {
+  predictors: PredictorInfo[];
+}
+
+export interface EstimateQuery {
+  model: ModelField;
+  task?: Task;
+  context_rows: number;
+  queries: number;
+  inputs?: number;
+}
+
+export interface SourceCreate {
+  name: Name;
+  kind: SourceKind;
+  config: Record<string, string>;
+  secret?: string;
+}
+
+export interface SourceTable {
+  name: string;
+  rows: number | null;
+  bytes: number | null;
+  updated: string | null;
+}
+
+export interface SourceTables {
+  tables: SourceTable[];
+}
+
+/** one `table` or a `sql` query; the answer is its first 20 rows */
+export interface SourcePreview {
+  table?: string;
+  sql?: string;
+}
+
+export interface KeyDeleted {
+  id: string;
+  deleted: true;
+}
+
+export interface ContextReply extends Envelope {
+  result: Context;
+}
+
+export interface ContextListReply extends Envelope {
+  result: ContextList;
+}
+
+export interface ContextVersionsReply extends Envelope {
+  result: ContextVersions;
+}
+
+export interface RowsReply extends Envelope {
+  result: Rows;
+}
+
+export interface ReceivedReply extends Envelope {
+  result: Received;
+}
+
+export interface DeletedReply extends Envelope {
+  result: Deleted;
+}
+
+export interface CodeReply extends Envelope {
+  result: Code;
+}
+
+export interface ExperimentReply extends Envelope {
+  result: Experiment;
+}
+
+export interface ExperimentCreatedReply extends Envelope {
+  result: ExperimentCreated;
+}
+
+export interface ExperimentListReply extends Envelope {
+  result: ExperimentList;
+}
+
+export interface ExperimentRunReply extends Envelope {
+  result: ExperimentRun;
+}
+
+export interface ExperimentRunCreatedReply extends Envelope {
+  result: ExperimentRunCreated;
+}
+
+export interface ExperimentRunListReply extends Envelope {
+  result: ExperimentRunList;
+}
+
+export interface SliceListReply extends Envelope {
+  result: SliceList;
+}
+
+export interface HeldRowsReply extends Envelope {
+  result: HeldRows;
+}
+
+export interface DeployReply extends Envelope {
+  result: Deploy;
+}
+
+export interface PredictorInfoReply extends Envelope {
+  result: PredictorInfo;
+}
+
+export interface PredictorInfoListReply extends Envelope {
+  result: PredictorInfoList;
+}
+
+export interface EstimateReply extends Envelope {
+  result: Estimate;
+}
+
+export interface SourceReply extends Envelope {
+  result: Source;
+}
+
+export interface SourceTablesReply extends Envelope {
+  result: SourceTables;
+}
+
+export interface KeyDeletedReply extends Envelope {
+  result: KeyDeleted;
+}
+
+export interface ContextCreateRequest extends Envelope {
+  payload: ContextCreate;
+}
+
+export interface ContextUploadRequest extends Envelope {
+  payload: ContextUpload;
+}
+
+export interface ExperimentCreateRequest extends Envelope {
+  payload: ExperimentCreate;
+}
+
+export interface ExperimentUpdateRequest extends Envelope {
+  payload: ExperimentUpdate;
+}
+
+export interface ExperimentRunCreateRequest extends Envelope {
+  payload: ExperimentRunCreate;
+}
+
+export interface PredictorUpdateRequest extends Envelope {
+  payload: PredictorUpdate;
+}
+
+export interface PredictorDeployRequest extends Envelope {
+  payload: PredictorDeploy;
+}
+
+export interface EstimateQueryRequest extends Envelope {
+  payload: EstimateQuery;
+}
+
+export interface SourceCreateRequest extends Envelope {
+  payload: SourceCreate;
+}
+
+export interface SourcePreviewRequest extends Envelope {
+  payload: SourcePreview;
+}
+
 export const ROUTES = {
   "predictors.predict": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/predict", request: "QueriesRequest", reply: "ResultReply", body: "application/json" },
   "predict": { method: "POST", path: "/v1/projects/{project}/predict", request: "ManifestRequest", reply: "ResultReply", body: "application/json" },
   "predictions.get": { method: "GET", path: "/v1/projects/{project}/predictions/{id}", request: "null", reply: "ResultReply", body: null },
-  "predictors.list": { method: "GET", path: "/v1/projects/{project}/predictors", request: "null", reply: "PredictorListReply", body: null },
-  "predictors.create": { method: "POST", path: "/v1/projects/{project}/predictors", request: "PredictorCreateRequest", reply: "PredictorCreatedReply", body: "application/json" },
-  "predictors.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}", request: "null", reply: "PredictorReply", body: null },
+  "environments.list": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments", request: "null", reply: "EnvironmentListReply", body: null },
+  "environments.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}", request: "null", reply: "EnvironmentReply", body: null },
+  "environments.promote": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/promote", request: "PromoteRequest", reply: "EnvironmentReply", body: "application/json" },
+  "environments.rollback": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/rollback", request: "PromoteRequest", reply: "EnvironmentReply", body: "application/json" },
+  "environments.metrics": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/metrics", request: "null", reply: "MetricsReply", body: null },
+  "environments.logs": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs", request: "null", reply: "LogsReply", body: null },
+  "environments.logs.histogram": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs/histogram", request: "null", reply: "LogHistogramReply", body: null },
+  "predictors.delete": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/delete", request: "EmptyRequest", reply: "PredictorDeletedReply", body: "application/json" },
+  "contexts.list": { method: "GET", path: "/v1/projects/{project}/contexts", request: "null", reply: "ContextListReply", body: null },
+  "contexts.create": { method: "POST", path: "/v1/projects/{project}/contexts", request: "ContextCreateRequest", reply: "ContextReply", body: "application/json" },
+  "contexts.get": { method: "GET", path: "/v1/projects/{project}/contexts/{name}", request: "null", reply: "ContextReply", body: null },
+  "contexts.versions": { method: "GET", path: "/v1/projects/{project}/contexts/{name}/versions", request: "null", reply: "ContextVersionsReply", body: null },
+  "contexts.upload": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/versions", request: "ContextUploadRequest", reply: "ContextReply", body: "application/json" },
+  "contexts.bytes": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/versions/{version}/bytes", request: "null", reply: "ReceivedReply", body: "application/octet-stream" },
+  "contexts.refresh": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/refresh", request: "EmptyRequest", reply: "ContextReply", body: "application/json" },
+  "contexts.append": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/append", request: "LiveContextAppendRequest", reply: "ReceiptReply", body: "application/json" },
+  "contexts.label": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/label", request: "LiveContextLabelRequest", reply: "ReceiptReply", body: "application/json" },
+  "contexts.rows": { method: "GET", path: "/v1/projects/{project}/contexts/{name}/rows", request: "null", reply: "RowsReply", body: null },
+  "contexts.delete": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/delete", request: "EmptyRequest", reply: "DeletedReply", body: "application/json" },
+  "contexts.code": { method: "GET", path: "/v1/projects/{project}/contexts/{name}/code", request: "null", reply: "CodeReply", body: null },
+  "experiments.list": { method: "GET", path: "/v1/projects/{project}/experiments", request: "null", reply: "ExperimentListReply", body: null },
+  "experiments.create": { method: "POST", path: "/v1/projects/{project}/experiments", request: "ExperimentCreateRequest", reply: "ExperimentCreatedReply", body: "application/json" },
+  "experiments.get": { method: "GET", path: "/v1/projects/{project}/experiments/{name}", request: "null", reply: "ExperimentReply", body: null },
+  "experiments.update": { method: "POST", path: "/v1/projects/{project}/experiments/{name}/update", request: "ExperimentUpdateRequest", reply: "ExperimentReply", body: "application/json" },
+  "experiments.runs": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs", request: "null", reply: "ExperimentRunListReply", body: null },
+  "experiments.run": { method: "POST", path: "/v1/projects/{project}/experiments/{name}/runs", request: "ExperimentRunCreateRequest", reply: "ExperimentRunCreatedReply", body: "application/json" },
+  "experiments.runs.get": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs/{number}", request: "null", reply: "ExperimentRunReply", body: null },
+  "experiments.cancel": { method: "POST", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/cancel", request: "EmptyRequest", reply: "ExperimentRunReply", body: "application/json" },
+  "experiments.rows": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/rows", request: "null", reply: "HeldRowsReply", body: null },
+  "experiments.slices": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/slices", request: "null", reply: "SliceListReply", body: null },
+  "experiments.delete": { method: "POST", path: "/v1/projects/{project}/experiments/{name}/delete", request: "EmptyRequest", reply: "DeletedReply", body: "application/json" },
+  "experiments.code": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/code", request: "null", reply: "CodeReply", body: null },
+  "predictors.list": { method: "GET", path: "/v1/projects/{project}/predictors", request: "null", reply: "PredictorInfoListReply", body: null },
+  "predictors.create": { method: "POST", path: "/v1/projects/{project}/predictors", request: "PredictorCreateRequest", reply: "DeployReply", body: "application/json" },
+  "predictors.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}", request: "null", reply: "PredictorInfoReply", body: null },
+  "predictors.update": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/update", request: "PredictorUpdateRequest", reply: "DeployReply", body: "application/json" },
+  "predictors.deploy": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/deploy", request: "PredictorDeployRequest", reply: "DeployReply", body: "application/json" },
+  "revisions.list": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/revisions", request: "null", reply: "RevisionListReply", body: null },
+  "revisions.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/revisions/{number}", request: "null", reply: "RevisionReply", body: null },
+  "predictors.code": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/code", request: "null", reply: "CodeReply", body: null },
+  "estimate": { method: "POST", path: "/v1/projects/{project}/estimate", request: "EstimateQueryRequest", reply: "EstimateReply", body: "application/json" },
+  "sources.list": { method: "GET", path: "/v1/projects/{project}/sources", request: "null", reply: "SourceListReply", body: null },
+  "sources.create": { method: "POST", path: "/v1/projects/{project}/sources", request: "SourceCreateRequest", reply: "SourceReply", body: "application/json" },
+  "sources.get": { method: "GET", path: "/v1/projects/{project}/sources/{source}", request: "null", reply: "SourceReply", body: null },
+  "sources.tables": { method: "GET", path: "/v1/projects/{project}/sources/{source}/tables", request: "null", reply: "SourceTablesReply", body: null },
+  "sources.preview": { method: "POST", path: "/v1/projects/{project}/sources/{source}/preview", request: "SourcePreviewRequest", reply: "RowsReply", body: "application/json" },
+  "sources.test": { method: "POST", path: "/v1/projects/{project}/sources/{source}/test", request: "EmptyRequest", reply: "SourceReply", body: "application/json" },
+  "sources.delete": { method: "POST", path: "/v1/projects/{project}/sources/{source}/delete", request: "EmptyRequest", reply: "DeletedReply", body: "application/json" },
+  "keys.delete": { method: "POST", path: "/v1/projects/{project}/keys/{key}/delete", request: "KeyRefRequest", reply: "KeyDeletedReply", body: "application/json" },
   "models.list": { method: "GET", path: "/v1/projects/{project}/models", request: "null", reply: "ModelListReply", body: null },
   "models.get": { method: "GET", path: "/v1/projects/{project}/models/{model}", request: "null", reply: "ModelReply", body: null },
   "ready": { method: "GET", path: "/readyz", request: "null", reply: "Health", body: null },
@@ -2841,36 +3190,10 @@ export const ROUTES = {
   "secrets.get": { method: "GET", path: "/v1/projects/{project}/secrets/{secret}", request: "null", reply: "SecretReply", body: null },
   "secrets.rotate": { method: "POST", path: "/v1/projects/{project}/secrets/{secret}/rotate", request: "SecretRotateRequest", reply: "SecretReply", body: "application/json" },
   "secrets.delete": { method: "POST", path: "/v1/projects/{project}/secrets/{secret}/delete", request: "SecretRefRequest", reply: "SecretDeletedReply", body: "application/json" },
-  "predictors.check": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/check", request: "PredictorCheckRequest", reply: "PredictorCheckReply", body: "application/json" },
-  "evaluations.create": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/evaluations", request: "EvaluationCreateRequest", reply: "EvaluationReply", body: "application/json" },
-  "evaluations.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/evaluations/{evaluation}", request: "null", reply: "EvaluationReply", body: null },
-  "revisions.list": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/revisions", request: "null", reply: "RevisionListReply", body: null },
-  "revisions.register": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/revisions", request: "RevisionRegisterRequest", reply: "RevisionReply", body: "application/json" },
-  "revisions.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/revisions/{number}", request: "null", reply: "RevisionDetailsReply", body: null },
-  "environments.list": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments", request: "null", reply: "EnvironmentListReply", body: null },
-  "environments.create": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/environments", request: "EnvironmentCreateRequest", reply: "EnvironmentReply", body: "application/json" },
-  "environments.get": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}", request: "null", reply: "EnvironmentReply", body: null },
-  "environments.promote": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/promote", request: "PromoteRequest", reply: "EnvironmentReply", body: "application/json" },
-  "environments.rollback": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/rollback", request: "PromoteRequest", reply: "EnvironmentReply", body: "application/json" },
-  "environments.metrics": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/metrics", request: "null", reply: "MetricsReply", body: null },
-  "environments.logs": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs", request: "null", reply: "LogsReply", body: null },
-  "environments.logs.histogram": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs/histogram", request: "null", reply: "LogHistogramReply", body: null },
-  "predictors.delete": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/delete", request: "EmptyRequest", reply: "PredictorDeletedReply", body: "application/json" },
-  "contexts.list": { method: "GET", path: "/v1/projects/{project}/contexts", request: "null", reply: "LiveContextListReply", body: null },
-  "contexts.create": { method: "POST", path: "/v1/projects/{project}/contexts", request: "LiveContextCreateRequest", reply: "LiveContextReply", body: "application/json" },
-  "contexts.show": { method: "GET", path: "/v1/projects/{project}/contexts/{name}", request: "null", reply: "LiveContextReply", body: null },
-  "contexts.append": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/append", request: "LiveContextAppendRequest", reply: "ReceiptReply", body: "application/json" },
-  "contexts.label": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/label", request: "LiveContextLabelRequest", reply: "ReceiptReply", body: "application/json" },
-  "contexts.imports": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/imports", request: "ContextImportRequest", reply: "ImportReceiptReply", body: "application/json" },
-  "contexts.refresh": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/refresh", request: "EmptyRequest", reply: "ImportReceiptReply", body: "application/json" },
-  "contexts.mutate": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/mutations", request: "MutationRequest", reply: "AcceptedWriteReply", body: "application/json" },
-  "contexts.snapshot": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/snapshot", request: "ContextSnapshotQueryRequest", reply: "ContextSnapshotReply", body: "application/json" },
-  "sources.list": { method: "GET", path: "/v1/projects/{project}/sources/pins", request: "null", reply: "SourceListReply", body: null },
-  "sources.pin": { method: "POST", path: "/v1/projects/{project}/sources/pins", request: "SourcePinRequest", reply: "SourcePinReply", body: "application/json" },
-  "sources.get": { method: "GET", path: "/v1/projects/{project}/sources/pins/{source}", request: "null", reply: "SourcePinReply", body: null },
   "sources.prepare": { method: "POST", path: "/v1/projects/{project}/sources:prepare", request: "SourcePrepareRequest", reply: "SourcePreparedReply", body: "application/json" },
   "snapshots.list": { method: "GET", path: "/v1/projects/{project}/snapshots", request: "null", reply: "SnapshotListReply", body: null },
   "snapshots.create": { method: "POST", path: "/v1/projects/{project}/snapshots", request: "SnapshotCreateRequest", reply: "SnapshotReply", body: "application/json" },
+  "snapshots.put": { method: "PUT", path: "/v1/projects/{project}/snapshots", request: "null", reply: "HeldSnapshotReply", body: "application/vnd.apache.arrow.stream" },
   "snapshots.create_synthetic": { method: "POST", path: "/v1/projects/{project}/snapshots/synthetic", request: "SyntheticBatchCreateRequest", reply: "SyntheticBatchCreatedReply", body: "application/json" },
   "snapshots.synthetic": { method: "GET", path: "/v1/projects/{project}/snapshots/synthetic/{name}", request: "null", reply: "SyntheticBatchReply", body: null },
   "snapshots.get": { method: "GET", path: "/v1/projects/{project}/snapshots/{snapshot}", request: "null", reply: "SnapshotReply", body: null },
@@ -2889,8 +3212,8 @@ export const ROUTES = {
   "sso.get": { method: "GET", path: "/v1/projects/{project}/sso", request: "null", reply: "SsoReply", body: null },
   "sso.configure": { method: "POST", path: "/v1/projects/{project}/sso", request: "SsoConfigureRequest", reply: "SsoReply", body: "application/json" },
   "audit.list": { method: "GET", path: "/v1/projects/{project}/audit", request: "null", reply: "AuditLogReply", body: null },
-  "logins.start": { method: "POST", path: "/v1/cli-logins", request: "CliLoginStart", reply: "CliLoginGrant", body: "application/json" },
-  "logins.token": { method: "POST", path: "/v1/cli-logins/token", request: "CliLoginPoll", reply: "CliLoginToken", body: "application/json" },
+  "device.start": { method: "POST", path: "/v1/device-logins", request: "DeviceLoginStart", reply: "DeviceLoginGrant", body: "application/json" },
+  "device.token": { method: "POST", path: "/v1/device-logins/token", request: "DeviceLoginPoll", reply: "DeviceLoginToken", body: "application/json" },
   "onboarding.get": { method: "GET", path: "/v1/onboarding", request: "null", reply: "OnboardingReply", body: null },
   "workspaces.list": { method: "GET", path: "/v1/workspaces", request: "null", reply: "WorkspaceListReply", body: null },
   "workspaces.create": { method: "POST", path: "/v1/workspaces", request: "WorkspaceCreateRequest", reply: "WorkspaceCreatedReply", body: "application/json" },
@@ -2914,9 +3237,9 @@ export const ROUTES = {
   "waitlist.join": { method: "POST", path: "/v1/waitlist", request: "WaitlistJoinRequest", reply: "WaitlistStatusReply", body: "application/json" },
   "waitlist.get": { method: "GET", path: "/v1/waitlist/{id}", request: "null", reply: "WaitlistEntryViewReply", body: null },
   "waitlist.approve": { method: "POST", path: "/v1/waitlist/{id}/approve", request: "WaitlistRefRequest", reply: "WaitlistEntryViewReply", body: "application/json" },
-  "device.preview": { method: "POST", path: "/v1/cli-logins/preview", request: "CliLoginCodeRequest", reply: "CliLoginPreviewReply", body: "application/json" },
-  "device.approve": { method: "POST", path: "/v1/cli-logins/approve", request: "CliLoginApproveRequest", reply: "CliLoginApprovedReply", body: "application/json" },
-  "device.deny": { method: "POST", path: "/v1/cli-logins/deny", request: "CliLoginCodeRequest", reply: "CliLoginDeniedReply", body: "application/json" },
+  "device.preview": { method: "POST", path: "/v1/device-logins/preview", request: "DeviceLoginCodeRequest", reply: "DeviceLoginPreviewReply", body: "application/json" },
+  "device.approve": { method: "POST", path: "/v1/device-logins/approve", request: "DeviceLoginApproveRequest", reply: "DeviceLoginApprovedReply", body: "application/json" },
+  "device.deny": { method: "POST", path: "/v1/device-logins/deny", request: "DeviceLoginCodeRequest", reply: "DeviceLoginDeniedReply", body: "application/json" },
 } as const;
 
 export type RouteName = keyof typeof ROUTES;
