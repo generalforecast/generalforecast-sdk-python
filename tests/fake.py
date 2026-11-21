@@ -1252,7 +1252,9 @@ def _contract_problems(
             **sent,
             "payload": {
                 **sent["payload"],
-                "queries": call.table.slice(0, 1).to_pylist(),
+                "queries": json.loads(
+                    json.dumps(call.table.slice(0, 1).to_pylist(), default=str)
+                ),
             },
         }
     problems = []
