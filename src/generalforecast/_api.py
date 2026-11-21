@@ -1746,59 +1746,67 @@ class ProjectCreateRequest(Payload):
     )
 
 
-Permission = Literal[
-    "predictors:read",
-    "predictors:write",
-    "predictors:predict",
-    "contexts:read",
-    "contexts:write",
-    "contexts:history",
-    "sources:read",
-    "sources:write",
-    "models:read",
-    "snapshots:read",
-    "snapshots:write",
-    "runs:read",
-    "runs:write",
-    "keys:read",
-    "keys:write",
-    "secrets:read",
-    "secrets:write",
-    "members:read",
-    "members:write",
-    "sso:read",
-    "sso:write",
-    "audit:read",
-    "operators:read",
-    "operators:write",
-    "projects:read",
-]
-_decode_Permission: Decoder = _literal(
-    "predictors:read",
-    "predictors:write",
-    "predictors:predict",
-    "contexts:read",
-    "contexts:write",
-    "contexts:history",
-    "sources:read",
-    "sources:write",
-    "models:read",
-    "snapshots:read",
-    "snapshots:write",
-    "runs:read",
-    "runs:write",
-    "keys:read",
-    "keys:write",
-    "secrets:read",
-    "secrets:write",
-    "members:read",
-    "members:write",
-    "sso:read",
-    "sso:write",
-    "audit:read",
-    "operators:read",
-    "operators:write",
-    "projects:read",
+Permission = (
+    Literal[
+        "predictors:read",
+        "predictors:write",
+        "predictors:predict",
+        "contexts:read",
+        "contexts:write",
+        "contexts:history",
+        "sources:read",
+        "sources:write",
+        "sources:manage",
+        "models:read",
+        "snapshots:read",
+        "snapshots:write",
+        "runs:read",
+        "runs:write",
+        "keys:read",
+        "keys:write",
+        "secrets:read",
+        "secrets:write",
+        "members:read",
+        "members:write",
+        "sso:read",
+        "sso:write",
+        "audit:read",
+        "operators:read",
+        "operators:write",
+        "projects:read",
+    ]
+    | str
+)
+_decode_Permission: Decoder = _union(
+    _literal(
+        "predictors:read",
+        "predictors:write",
+        "predictors:predict",
+        "contexts:read",
+        "contexts:write",
+        "contexts:history",
+        "sources:read",
+        "sources:write",
+        "sources:manage",
+        "models:read",
+        "snapshots:read",
+        "snapshots:write",
+        "runs:read",
+        "runs:write",
+        "keys:read",
+        "keys:write",
+        "secrets:read",
+        "secrets:write",
+        "members:read",
+        "members:write",
+        "sso:read",
+        "sso:write",
+        "audit:read",
+        "operators:read",
+        "operators:write",
+        "projects:read",
+    ),
+    _pattern("^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$"),
 )
 
 
@@ -1811,7 +1819,7 @@ class Key(Payload):
     name: Name
     permissions: tuple[Permission, ...]
     created_at: float
-    expires_at: float
+    expires_at: float | None
     revoked_at: float | None
     token: str | None = None
     replaces: str | None = None
@@ -1822,7 +1830,7 @@ class Key(Payload):
         Field("name", "name", True, _decode_Name),
         Field("permissions", "permissions", True, _items(_decode_Permission)),
         Field("created_at", "created_at", True, _number),
-        Field("expires_at", "expires_at", True, _number),
+        Field("expires_at", "expires_at", True, _union(_number, _null)),
         Field("revoked_at", "revoked_at", True, _union(_number, _null)),
         Field("token", "token", False, _pattern("^gf_[A-Za-z0-9_-]{32,}$")),
         Field("replaces", "replaces", False, _pattern("^key-[0-9a-f]{20,24}$")),
@@ -1889,7 +1897,7 @@ class KeyCreate(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Name),
         Field("permissions", "permissions", True, _items(_decode_Permission)),
-        Field("expires_in", "expires_in", False, _number),
+        Field("expires_in", "expires_in", False, _union(_number, _null)),
     )
     DEFAULTS: ClassVar[dict[str, Any]] = {"expires_in": 2592000}
 
@@ -4044,7 +4052,6 @@ class PredictorCheck(Payload):
     snapshot: str | None = None
     previous: dict[str, Any] | None = None
     upgrade: bool | None = None
-    keep: bool | None = None
     deploy: bool | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
@@ -4052,14 +4059,9 @@ class PredictorCheck(Payload):
         Field("snapshot", "snapshot", False, _union(_text, _null)),
         Field("previous", "previous", False, _union(_mapping(_any), _null)),
         Field("upgrade", "upgrade", False, _boolean),
-        Field("keep", "keep", False, _boolean),
         Field("deploy", "deploy", False, _boolean),
     )
-    DEFAULTS: ClassVar[dict[str, Any]] = {
-        "upgrade": False,
-        "keep": False,
-        "deploy": False,
-    }
+    DEFAULTS: ClassVar[dict[str, Any]] = {"upgrade": False, "deploy": False}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -4146,7 +4148,6 @@ class PredictorCheckResult(Payload):
     changes: tuple[tuple[Any, ...], ...]
     manifest: dict[str, Any]
     context: CheckedContext
-    snapshot: KeptSnapshot | None
     deployed: DeployedContext | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
@@ -4156,7 +4157,6 @@ class PredictorCheckResult(Payload):
         Field("changes", "changes", True, _items(_items(_any))),
         Field("manifest", "manifest", True, _mapping(_any)),
         Field("context", "context", True, _record(CheckedContext)),
-        Field("snapshot", "snapshot", True, _union(_record(KeptSnapshot), _null)),
         Field("deployed", "deployed", False, _union(_record(DeployedContext), _null)),
     )
 
@@ -4270,16 +4270,18 @@ class EvaluationModel(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class EvaluationBilled(Payload):
-    """What the evaluation was billed so far, on the prediction meters."""
+    """The EvaluationBilled schema.
+
+    what the evaluation was billed so far, on the prediction meters, by its calls and
+    rows
+    """
 
     predictions: int
     rows: int
-    seconds: float
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("predictions", "predictions", True, _integer),
         Field("rows", "rows", True, _integer),
-        Field("seconds", "seconds", True, _number),
     )
 
 
@@ -5512,6 +5514,116 @@ class SourcePinReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SourcePrepare(Payload):
+    """The SourcePrepare schema."""
+
+    kind: Literal["bigquery", "gcs", "snowflake"]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("kind", "kind", True, _literal("bigquery", "gcs", "snowflake")),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePrepareRequest(Payload):
+    """The SourcePrepareRequest schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    payload: SourcePrepare
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("payload", "payload", True, _record(SourcePrepare)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceIdentity(Payload):
+    """The workspace's Google service account."""
+
+    email: str
+    unique_id: str
+    principal: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("email", "email", True, _text),
+        Field("unique_id", "unique_id", True, _pattern("^[0-9]+$")),
+        Field("principal", "principal", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceGrant(Payload):
+    """The SourceGrant schema."""
+
+    role: str
+    on: Literal["dataset", "bucket"]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("role", "role", True, _text),
+        Field("on", "on", True, _literal("dataset", "bucket")),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceTrust(Payload):
+    """The SourceTrust schema.
+
+    what a Snowflake source trusts, the issuer and subject of the account's ID tokens
+    """
+
+    issuer: str
+    subject: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("issuer", "issuer", True, _text),
+        Field("subject", "subject", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePrepared(Payload):
+    """The SourcePrepared schema."""
+
+    kind: Literal["bigquery", "gcs", "snowflake"]
+    identity: SourceIdentity
+    grants: tuple[SourceGrant, ...]
+    oidc: SourceTrust | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("kind", "kind", True, _literal("bigquery", "gcs", "snowflake")),
+        Field("identity", "identity", True, _record(SourceIdentity)),
+        Field("grants", "grants", True, _items(_record(SourceGrant))),
+        Field("oidc", "oidc", False, _record(SourceTrust)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreparedReply(Payload):
+    """The SourcePreparedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SourcePrepared
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SourcePrepared)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class SourceList(Payload):
     """The SourceList schema."""
 
@@ -5570,13 +5682,13 @@ class KeyIdentity(Payload):
     id: str
     name: Name
     project: Name
-    expires_at: float
+    expires_at: float | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("id", "id", True, _pattern("^key-[0-9a-f]{20,24}$")),
         Field("name", "name", True, _decode_Name),
         Field("project", "project", True, _decode_Name),
-        Field("expires_at", "expires_at", True, _number),
+        Field("expires_at", "expires_at", True, _union(_number, _null)),
     )
 
 
@@ -8042,7 +8154,7 @@ ROUTES: tuple[Route, ...] = (
     Route(
         "sources.list",
         "GET",
-        "/v1/projects/{project}/sources",
+        "/v1/projects/{project}/sources/pins",
         None,
         SourceListReply,
         None,
@@ -8050,7 +8162,7 @@ ROUTES: tuple[Route, ...] = (
     Route(
         "sources.pin",
         "POST",
-        "/v1/projects/{project}/sources",
+        "/v1/projects/{project}/sources/pins",
         SourcePinRequest,
         SourcePinReply,
         "application/json",
@@ -8058,10 +8170,18 @@ ROUTES: tuple[Route, ...] = (
     Route(
         "sources.get",
         "GET",
-        "/v1/projects/{project}/sources/{source}",
+        "/v1/projects/{project}/sources/pins/{source}",
         None,
         SourcePinReply,
         None,
+    ),
+    Route(
+        "sources.prepare",
+        "POST",
+        "/v1/projects/{project}/sources:prepare",
+        SourcePrepareRequest,
+        SourcePreparedReply,
+        "application/json",
     ),
     Route(
         "snapshots.list",

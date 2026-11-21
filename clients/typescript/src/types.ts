@@ -699,10 +699,14 @@ export interface ProjectCreateRequest extends Envelope {
  * snapshots, `snapshots:write` uploads and deletes them, `runs:read` reads runs and
  * their lineage, and `runs:write` creates and cancels runs; `models:read` reads the
  * fine-tunes runs publish. The admin and editor roles hold all four; the viewer role
- * holds `snapshots:read` and `runs:read`. `GET /auth/status` lists every permission
- * with the roles that hold it.
+ * holds `snapshots:read` and `runs:read`. `sources:manage` adds, tests, rotates and
+ * deletes data sources and prepares the workspace's identity for them
+ * (`sources.prepare`); only the admin role holds it, so only an admin can create a key
+ * that carries it. `GET /auth/status` lists every permission with the roles that hold
+ * it. The service may grant permissions this list does not name yet, so a client keeps
+ * any `<group>:<action>` name it does not know as it is.
  */
-export type Permission = "predictors:read" | "predictors:write" | "predictors:predict" | "contexts:read" | "contexts:write" | "contexts:history" | "sources:read" | "sources:write" | "models:read" | "snapshots:read" | "snapshots:write" | "runs:read" | "runs:write" | "keys:read" | "keys:write" | "secrets:read" | "secrets:write" | "members:read" | "members:write" | "sso:read" | "sso:write" | "audit:read" | "operators:read" | "operators:write" | "projects:read";
+export type Permission = "predictors:read" | "predictors:write" | "predictors:predict" | "contexts:read" | "contexts:write" | "contexts:history" | "sources:read" | "sources:write" | "sources:manage" | "models:read" | "snapshots:read" | "snapshots:write" | "runs:read" | "runs:write" | "keys:read" | "keys:write" | "secrets:read" | "secrets:write" | "members:read" | "members:write" | "sso:read" | "sso:write" | "audit:read" | "operators:read" | "operators:write" | "projects:read" | string;
 
 /** `token` is present only in the create and rotate replies */
 export interface Key {
@@ -711,7 +715,7 @@ export interface Key {
   name: Name;
   permissions: Permission[];
   created_at: number;
-  expires_at: number;
+  expires_at: number | null;
   revoked_at: number | null;
   token?: string;
   replaces?: string;
@@ -732,7 +736,7 @@ export interface KeyListReply extends Envelope {
 export interface KeyCreate {
   name: Name;
   permissions: Permission[];
-  expires_in?: number;
+  expires_in?: number | null;
 }
 
 export interface KeyCreateRequest extends Envelope {
@@ -1585,7 +1589,6 @@ export interface PredictorCheck {
   snapshot?: string | null;
   previous?: Record<string, unknown> | null;
   upgrade?: boolean;
-  keep?: boolean;
   deploy?: boolean;
 }
 
@@ -1627,7 +1630,6 @@ export interface PredictorCheckResult {
   changes: unknown[][];
   manifest: Record<string, unknown>;
   context: CheckedContext;
-  snapshot: KeptSnapshot | null;
   deployed?: DeployedContext | null;
 }
 
@@ -1668,11 +1670,13 @@ export interface EvaluationModel {
   error: ApiError | null;
 }
 
-/** what the evaluation was billed so far, on the prediction meters */
+/**
+ * what the evaluation was billed so far, on the prediction meters, by its calls and
+ * rows
+ */
 export interface EvaluationBilled {
   predictions: number;
   rows: number;
-  seconds: number;
 }
 
 export interface Evaluation {
@@ -2071,6 +2075,45 @@ export interface SourcePinReply extends Envelope {
   result: SourcePin;
 }
 
+export interface SourcePrepare {
+  kind: "bigquery" | "gcs" | "snowflake";
+}
+
+export interface SourcePrepareRequest extends Envelope {
+  payload: SourcePrepare;
+}
+
+/** the workspace's Google service account */
+export interface SourceIdentity {
+  email: string;
+  unique_id: string;
+  principal: string;
+}
+
+export interface SourceGrant {
+  role: string;
+  on: "dataset" | "bucket";
+}
+
+/**
+ * what a Snowflake source trusts, the issuer and subject of the account's ID tokens
+ */
+export interface SourceTrust {
+  issuer: string;
+  subject: string;
+}
+
+export interface SourcePrepared {
+  kind: "bigquery" | "gcs" | "snowflake";
+  identity: SourceIdentity;
+  grants: SourceGrant[];
+  oidc?: SourceTrust;
+}
+
+export interface SourcePreparedReply extends Envelope {
+  result: SourcePrepared;
+}
+
 export interface SourceList {
   sources: SourcePin[];
 }
@@ -2091,7 +2134,7 @@ export interface KeyIdentity {
   id: string;
   name: Name;
   project: Name;
-  expires_at: number;
+  expires_at: number | null;
 }
 
 export interface WorkspaceIdentity {
@@ -2822,9 +2865,10 @@ export const ROUTES = {
   "contexts.refresh": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/refresh", request: "EmptyRequest", reply: "ImportReceiptReply", body: "application/json" },
   "contexts.mutate": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/mutations", request: "MutationRequest", reply: "AcceptedWriteReply", body: "application/json" },
   "contexts.snapshot": { method: "POST", path: "/v1/projects/{project}/contexts/{name}/snapshot", request: "ContextSnapshotQueryRequest", reply: "ContextSnapshotReply", body: "application/json" },
-  "sources.list": { method: "GET", path: "/v1/projects/{project}/sources", request: "null", reply: "SourceListReply", body: null },
-  "sources.pin": { method: "POST", path: "/v1/projects/{project}/sources", request: "SourcePinRequest", reply: "SourcePinReply", body: "application/json" },
-  "sources.get": { method: "GET", path: "/v1/projects/{project}/sources/{source}", request: "null", reply: "SourcePinReply", body: null },
+  "sources.list": { method: "GET", path: "/v1/projects/{project}/sources/pins", request: "null", reply: "SourceListReply", body: null },
+  "sources.pin": { method: "POST", path: "/v1/projects/{project}/sources/pins", request: "SourcePinRequest", reply: "SourcePinReply", body: "application/json" },
+  "sources.get": { method: "GET", path: "/v1/projects/{project}/sources/pins/{source}", request: "null", reply: "SourcePinReply", body: null },
+  "sources.prepare": { method: "POST", path: "/v1/projects/{project}/sources:prepare", request: "SourcePrepareRequest", reply: "SourcePreparedReply", body: "application/json" },
   "snapshots.list": { method: "GET", path: "/v1/projects/{project}/snapshots", request: "null", reply: "SnapshotListReply", body: null },
   "snapshots.create": { method: "POST", path: "/v1/projects/{project}/snapshots", request: "SnapshotCreateRequest", reply: "SnapshotReply", body: "application/json" },
   "snapshots.create_synthetic": { method: "POST", path: "/v1/projects/{project}/snapshots/synthetic", request: "SyntheticBatchCreateRequest", reply: "SyntheticBatchCreatedReply", body: "application/json" },

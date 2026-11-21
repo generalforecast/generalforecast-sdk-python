@@ -123,7 +123,7 @@ events.label(ids, outcomes)
 ## The client
 
 `gf.Client` and `gf.AsyncClient` cover the whole API: predictors, revisions and
-environments, contexts, snapshots, models, keys and secrets.
+environments, contexts, snapshots, models, data sources, keys and secrets.
 
 ```python
 with gf.Client() as client:
@@ -131,6 +131,18 @@ with gf.Client() as client:
     scores = client.predictors.evaluate("churn")
     client.predictors.push("churn", env="staging", wait=True)
 ```
+
+## Data sources
+
+A workspace admin prepares a data source: the service answers the workspace's
+Google service account and the roles to grant it.
+
+```sh
+gf admin source prepare --kind bigquery
+```
+
+`client.sources.prepare("bigquery")` answers the same. A key carries
+`sources:manage`, which this needs, only if a workspace admin created it.
 
 ## License
 

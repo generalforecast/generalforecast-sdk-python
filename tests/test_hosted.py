@@ -84,8 +84,8 @@ HELD = "  holdout: {fraction: 0.34, seed: 0}\n"
 OUTSIDE = "local serving is not part of gf"
 
 
-def checked(lock=LOCK, *, changes=(), snapshot=None, inferred=None, deployed=False):
-    """A check's answer: the lock, what was inferred and, when kept, the stored rows.
+def checked(lock=LOCK, *, changes=(), inferred=None, deployed=False):
+    """A check's answer: the lock, what was inferred and what changed.
 
     With `deployed`, a check with `deploy` answers it too: `DEPLOYED`, or the
     value given.
@@ -105,7 +105,6 @@ def checked(lock=LOCK, *, changes=(), snapshot=None, inferred=None, deployed=Fal
         "changes": [list(change) for change in changes],
         "manifest": NORMALIZED,
         "context": CONTEXT,
-        "snapshot": snapshot,
     }
 
 
@@ -114,7 +113,6 @@ def asked(
     previous=None,
     *,
     upgrade=False,
-    keep=False,
     deploy=False,
     manifest=MANIFEST,
 ):
@@ -124,7 +122,6 @@ def asked(
         "snapshot": snapshot,
         "previous": previous,
         "upgrade": upgrade,
-        "keep": keep,
     }
     if deploy:
         payload["deploy"] = True
@@ -291,7 +288,7 @@ def evaluation(state, scored, metrics=None, *, number=1):
                 "error": None,
             }
         ],
-        "billed": {"predictions": 1 if scored else 0, "rows": 6, "seconds": 0.4},
+        "billed": {"predictions": 1 if scored else 0, "rows": 6},
         "created": 1795035000.0,
         "started": 1795035001.0,
         "finished": None,

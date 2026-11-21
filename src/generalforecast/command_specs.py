@@ -127,8 +127,12 @@ ADMIN_ACTIONS: dict[str, tuple[AdminAction, ...]] = {
     "source": (
         AdminAction("list", "List pinned sources"),
         AdminAction("pin", "Pin a source from --file", body=True),
+        AdminAction("prepare", "Show the identity to grant a data source of --kind"),
     ),
 }
+
+# The kinds of data source `gf admin source prepare --kind` answers for.
+SOURCE_KINDS = ("bigquery", "gcs", "snowflake")
 
 # The request field an action's NAME fills, per noun.
 NAME_FIELDS = {"key": "id", "secret": "name"}
@@ -144,7 +148,7 @@ ADMIN_HELP = {
     "organization": "Organizations",
     "sso": "Single sign-on settings",
     "audit": "Audit log",
-    "source": "Pinned data sources",
+    "source": "Data sources and pinned files",
     "logs": "Show an environment's logs",
     "diff": "Compare a predictor with a revision",
     "delete": "Delete a hosted predictor",
@@ -178,7 +182,7 @@ COLLECTIONS: "dict[str, tuple[ResourceKind, str]]" = {
 OPERATIONS: dict[str, set[str]] = {
     "context": {"list", "get", "create", "mutate", "snapshot"},
     "predictor": {"list", "get"},
-    "source": {"list", "pin"},
+    "source": {"list", "pin", "prepare"},
     "model": {"list", "get"},
     "key": {"list", "create", "revoke", "rotate"},
     "secret": {"list", "get", "create", "rotate", "delete"},

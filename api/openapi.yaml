@@ -863,6 +863,7 @@ paths:
                     result:
                       keys:
                         - {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null}
+                        - {id: key-2b3c4d5e6f708192a3b4, project: acme, name: sources-admin, permissions: [sources:manage, sources:read], created_at: 1761300000.0, expires_at: null, revoked_at: null}
     post:
       operationId: keys.create
       tags: [hosted]
@@ -1153,14 +1154,13 @@ paths:
         The manifest's `name` defaults to the route's; a manifest naming
         another predictor is refused (`ValidationError`, param `name`). A
         model digest other than the one `previous` pins is refused unless
-        `upgrade` is true. With `keep`, a snapshot context's resolved rows
-        are stored as the snapshot `<name>-<12 hex of their digest>` and
-        `snapshot` answers it. With `deploy`, a snapshot context's every
+        `upgrade` is true. With `deploy`, a snapshot context's every
         labeled row, those the holdout or `until` holds out included, is
-        stored that way, and `deployed` answers the lock and manifest for
-        them; `gf push` registers the revision with `deployed.lock`,
-        `deployed.snapshot.digest` and `deployed.manifest`. Without `keep`
-        or `deploy` nothing is written, and the predictor need not exist.
+        stored as the snapshot `<name>-<12 hex of their digest>`, and
+        `deployed` answers the lock and manifest for them; `gf push`
+        registers the revision with `deployed.lock`,
+        `deployed.snapshot.digest` and `deployed.manifest`. Without
+        `deploy` nothing is written, and the predictor need not exist.
       parameters:
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/predictor"
@@ -1182,7 +1182,6 @@ paths:
                     snapshot: churn-5fb6a4c6f24b
                     previous: null
                     upgrade: false
-                    keep: false
       responses:
         "200":
           description: the lock to write, the model it pins, what was inferred and what changed
@@ -1216,7 +1215,6 @@ paths:
                       changes: []
                       manifest: {name: churn, model: general-forecast/tabicl-v2-classifier, target: churned, context: {snapshot: context.csv}}
                       context: {kind: snapshot, rows: 1840, query_rows: 212, digest: sha256:5fb6a4c6f24bd5fb3623f97e3c62186e12e28e5b5fb6a4c6f24bd5fb3623f97e}
-                      snapshot: null
 
   /v1/projects/{project}/predictors/{name}/evaluations:
     post:
@@ -1289,7 +1287,7 @@ paths:
                       models:
                         - {model: general-forecast/tabicl-v2-classifier, state: queued, metrics: {}, interval: null, scored: 0, total: 368, seconds: null, error: null}
                         - {model: general-forecast/kumo-tabular-medium-classifier, state: queued, metrics: {}, interval: null, scored: 0, total: 368, seconds: null, error: null}
-                      billed: {predictions: 0, rows: 0, seconds: 0.0}
+                      billed: {predictions: 0, rows: 0}
                       created: 1761400000.0
                       started: null
                       finished: null
@@ -1329,7 +1327,7 @@ paths:
                       models:
                         - {model: general-forecast/tabicl-v2-classifier, state: finished, metrics: {auroc: 0.912, log loss: 0.322, accuracy: 0.861}, interval: {metric: auroc, low: 0.884, high: 0.937, level: 0.95, resamples: 1000}, scored: 368, total: 368, seconds: 4.2, error: null}
                         - {model: general-forecast/kumo-tabular-medium-classifier, state: finished, metrics: {auroc: 0.903, log loss: 0.341, accuracy: 0.853}, interval: {metric: auroc, low: 0.874, high: 0.929, level: 0.95, resamples: 1000}, scored: 368, total: 368, seconds: 6.8, error: null}
-                      billed: {predictions: 8, rows: 3680, seconds: 11.0}
+                      billed: {predictions: 8, rows: 3680}
                       created: 1761400000.0
                       started: 1761400001.5
                       finished: 1761400012.9
@@ -2271,7 +2269,7 @@ paths:
                         - {key: '1041', features: {spend: 82.5}, label: 0, feature_version: 3, label_version: 1, feature_accepted_at: 1761990000.0, label_accepted_at: 1762000000.0, event_at: null}
                       source_wait_count: 0
 
-  /v1/projects/{project}/sources:
+  /v1/projects/{project}/sources/pins:
     get:
       operationId: sources.list
       tags: [hosted]
@@ -2337,7 +2335,7 @@ paths:
                     resource: {kind: source, name: new}
                     result: {source_id: source-8f1b2c3d4e5f60718293a4b5c6d7e8f9, digest: sha256:9a7f6b4c2d1e0f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a, size_bytes: 482113, format: csv, mapping: {key: customer_id, features: {spend: spend, plan: plan}, labels: {churned: churned}, label_types: {churned: boolean}}}
 
-  /v1/projects/{project}/sources/{source}:
+  /v1/projects/{project}/sources/pins/{source}:
     get:
       operationId: sources.get
       tags: [hosted]
@@ -2360,6 +2358,59 @@ paths:
                     request_id: r-476221ed16eb59cbcca3d5380fa0a0ab
                     resource: {kind: source, name: source-8f1b2c3d4e5f60718293a4b5c6d7e8f9}
                     result: {source_id: source-8f1b2c3d4e5f60718293a4b5c6d7e8f9, digest: sha256:9a7f6b4c2d1e0f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a, size_bytes: 482113, format: csv, mapping: {key: customer_id, features: {spend: spend, plan: plan}, labels: {churned: churned}, label_types: {churned: boolean}}}
+
+  /v1/projects/{project}/sources:prepare:
+    post:
+      operationId: sources.prepare
+      tags: [hosted]
+      summary: make or show the identity a data source of a kind is granted to
+      description: |
+        Makes the workspace's Google service account if it has none and
+        answers its address, its unique id and the roles to grant it for a
+        source of `kind`: BigQuery's on the dataset, Cloud Storage's on the
+        bucket. A Snowflake source grants no Google role; Snowflake trusts
+        the account's ID tokens, whose issuer and subject `oidc` names. The
+        same account answers every kind and every later call. Needs
+        `sources:manage`, which only the admin role holds; each answer and
+        each refusal is in the project's audit log.
+      parameters:
+        - $ref: "#/components/parameters/project"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourcePrepareRequest"
+            examples:
+              bigquery:
+                value:
+                  api_version: gf/v1
+                  project: acme
+                  request_id: r-7c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f
+                  resource: {kind: source, name: identity}
+                  payload: {kind: bigquery}
+      responses:
+        "200":
+          description: the workspace's identity and the roles to grant it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcePreparedReply"
+              examples:
+                bigquery:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-7c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f
+                    resource: {kind: source, name: identity}
+                    result:
+                      kind: bigquery
+                      identity:
+                        email: gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com
+                        unique_id: "104857600000000000001"
+                        principal: serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com
+                      grants:
+                        - {role: roles/bigquery.dataViewer, "on": dataset}
 
   /v1/projects/{project}/snapshots:
     get:
@@ -6721,41 +6772,51 @@ components:
             payload: {$ref: "#/components/schemas/ProjectCreate"}
 
     Permission:
-      type: string
       description: |
         A project permission a key or role holds. Fine-tuning's:
         `snapshots:read` reads snapshots, `snapshots:write` uploads and
         deletes them, `runs:read` reads runs and their lineage, and
         `runs:write` creates and cancels runs; `models:read` reads the
         fine-tunes runs publish. The admin and editor roles hold all four;
-        the viewer role holds `snapshots:read` and `runs:read`. `GET /auth/status` lists every permission with the
-        roles that hold it.
-      enum:
-        - predictors:read
-        - predictors:write
-        - predictors:predict
-        - contexts:read
-        - contexts:write
-        - contexts:history
-        - sources:read
-        - sources:write
-        - models:read
-        - snapshots:read
-        - snapshots:write
-        - runs:read
-        - runs:write
-        - keys:read
-        - keys:write
-        - secrets:read
-        - secrets:write
-        - members:read
-        - members:write
-        - sso:read
-        - sso:write
-        - audit:read
-        - operators:read
-        - operators:write
-        - projects:read
+        the viewer role holds `snapshots:read` and `runs:read`.
+        `sources:manage` adds, tests, rotates and deletes data sources and
+        prepares the workspace's identity for them (`sources.prepare`); only
+        the admin role holds it, so only an admin can create a key that
+        carries it. `GET /auth/status` lists every permission with the
+        roles that hold it. The service may grant permissions this list
+        does not name yet, so a client keeps any `<group>:<action>` name it
+        does not know as it is.
+      anyOf:
+        - type: string
+          enum:
+            - predictors:read
+            - predictors:write
+            - predictors:predict
+            - contexts:read
+            - contexts:write
+            - contexts:history
+            - sources:read
+            - sources:write
+            - sources:manage
+            - models:read
+            - snapshots:read
+            - snapshots:write
+            - runs:read
+            - runs:write
+            - keys:read
+            - keys:write
+            - secrets:read
+            - secrets:write
+            - members:read
+            - members:write
+            - sso:read
+            - sso:write
+            - audit:read
+            - operators:read
+            - operators:write
+            - projects:read
+        - type: string
+          pattern: "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$"
 
     Key:
       type: object
@@ -6770,7 +6831,7 @@ components:
           type: array
           items: {$ref: "#/components/schemas/Permission"}
         created_at: {type: number}
-        expires_at: {type: number}
+        expires_at: {type: [number, "null"], description: Unix seconds; null for a key that never expires}
         revoked_at: {type: [number, "null"]}
         token: {type: string, pattern: "^gf_[A-Za-z0-9_-]{32,}$"}
         replaces: {type: string, pattern: "^key-[0-9a-f]{20,24}$"}
@@ -6811,11 +6872,11 @@ components:
           items: {$ref: "#/components/schemas/Permission"}
           minItems: 1
         expires_in:
-          type: number
+          type: [number, "null"]
           minimum: 60
           maximum: 7776000
           default: 2592000
-          description: seconds; 30 days by default, 90 at most
+          description: seconds; 30 days by default, 90 at most, and null for a key that never expires
 
     KeyCreateRequest:
       allOf:
@@ -8992,19 +9053,14 @@ components:
           type: boolean
           default: false
           description: "`gf check --upgrade`: accept a model digest other than `previous` pins"
-        keep:
-          type: boolean
-          default: false
-          description: |
-            store a snapshot context's resolved rows as a content-addressed
-            snapshot; without it, or `deploy`, nothing is written
         deploy:
           type: boolean
           default: false
           description: |
             store a snapshot context's every labeled row, those the holdout
             or `until` holds out included, as a content-addressed snapshot,
-            and answer `deployed`, what `gf push` registers; not with `keep`
+            and answer `deployed`, what `gf push` registers; without it
+            nothing is written
 
     PredictorCheckRequest:
       allOf:
@@ -9016,7 +9072,7 @@ components:
 
     PredictorCheckResult:
       type: object
-      required: [lock, model, inferred, changes, manifest, context, snapshot]
+      required: [lock, model, inferred, changes, manifest, context]
       additionalProperties: false
       properties:
         lock: {$ref: "#/components/schemas/Lock"}
@@ -9035,11 +9091,6 @@ components:
           type: object
           description: the normalized gf.yaml document `gf push` registers
         context: {$ref: "#/components/schemas/CheckedContext"}
-        snapshot:
-          oneOf:
-            - $ref: "#/components/schemas/KeptSnapshot"
-            - type: "null"
-          description: with `keep` and a snapshot context, the stored rows; null otherwise
         deployed:
           oneOf:
             - $ref: "#/components/schemas/DeployedContext"
@@ -9161,12 +9212,11 @@ components:
 
     EvaluationBilled:
       type: object
-      description: what the evaluation was billed so far, on the prediction meters
-      required: [predictions, rows, seconds]
+      description: what the evaluation was billed so far, on the prediction meters, by its calls and rows
+      required: [predictions, rows]
       properties:
         predictions: {type: integer, minimum: 0}
         rows: {type: integer, minimum: 0}
-        seconds: {type: number, minimum: 0}
 
     Evaluation:
       type: object
@@ -9861,6 +9911,68 @@ components:
           properties:
             result: {$ref: "#/components/schemas/SourcePin"}
 
+    SourcePrepare:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind: {type: string, enum: [bigquery, gcs, snowflake]}
+
+    SourcePrepareRequest:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [payload]
+          properties:
+            payload: {$ref: "#/components/schemas/SourcePrepare"}
+
+    SourceIdentity:
+      type: object
+      description: the workspace's Google service account
+      required: [email, unique_id, principal]
+      additionalProperties: false
+      properties:
+        email: {type: string}
+        unique_id: {type: string, pattern: "^[0-9]+$"}
+        principal: {type: string, description: "the IAM member to grant, `serviceAccount:<email>`"}
+
+    SourceGrant:
+      type: object
+      required: [role, "on"]
+      additionalProperties: false
+      properties:
+        role: {type: string, description: "the IAM role, `roles/...`"}
+        "on": {type: string, enum: [dataset, bucket], description: what to grant the role on}
+
+    SourcePrepared:
+      type: object
+      required: [kind, identity, grants]
+      additionalProperties: false
+      properties:
+        kind: {type: string, enum: [bigquery, gcs, snowflake]}
+        identity: {$ref: "#/components/schemas/SourceIdentity"}
+        grants:
+          type: array
+          items: {$ref: "#/components/schemas/SourceGrant"}
+        oidc: {$ref: "#/components/schemas/SourceTrust"}
+
+    SourceTrust:
+      type: object
+      description: what a Snowflake source trusts, the issuer and subject of the account's ID tokens
+      required: [issuer, subject]
+      additionalProperties: false
+      properties:
+        issuer: {type: string}
+        subject: {type: string}
+
+    SourcePreparedReply:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [result]
+          properties:
+            result: {$ref: "#/components/schemas/SourcePrepared"}
+
     SourceList:
       type: object
       required: [sources]
@@ -9899,7 +10011,7 @@ components:
         id: {type: string, pattern: "^key-[0-9a-f]{20,24}$"}
         name: {$ref: "#/components/schemas/Name"}
         project: {$ref: "#/components/schemas/Name"}
-        expires_at: {type: number}
+        expires_at: {type: [number, "null"], description: Unix seconds; null for a key that never expires}
 
     WorkspaceIdentity:
       type: object
