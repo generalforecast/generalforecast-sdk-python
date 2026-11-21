@@ -13,6 +13,7 @@ and not, against `tests/golden/<name>.txt`.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -152,8 +153,10 @@ def predictor(
     """A predictor with these revisions' specs, each environment serving `(revision, calls today, p50)`."""
     made = []
     for number, spec in enumerate(revisions, 1):
-        made.append({"predictor": name, "number": number, "spec": spec,
-                     "resolved": service._resolved(fake, spec),
+        resolved = service._resolved(fake, spec)
+        lock = json.dumps({"spec": spec, "resolved": resolved}, sort_keys=True)
+        made.append({"predictor": name, "number": number, "status": "ready",
+                     "lock_digest": service.digest(lock), "spec": spec, "resolved": resolved,
                      "origin": service.origin("console" if number < len(revisions) else "cli"),
                      "created": "2026-11-18T14:40:00Z" if number < len(revisions) else "2026-11-21T10:02:00Z"})  # fmt: skip
     environments = {}

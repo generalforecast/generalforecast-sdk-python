@@ -59,6 +59,12 @@ def test_deploy_is_idempotent_and_reports_changes(adult):
     assert first[0].environment.state == "ready"
     resolved = first[0].revision.resolved
     assert resolved.context_version == 1 and resolved.context_rows == 4
+    assert resolved.model_digest.startswith("sha256:") and resolved.base_digest is None
+    assert first[0].revision.status == "building"
+    assert first[0].revision.lock_digest.startswith("sha256:")
+    (revision,) = gf.predictors.revisions("adult-income")
+    assert revision.status == "ready"
+    assert revision.lock_digest == first[0].revision.lock_digest
     again = gf.predictors.deploy(spec)
     assert again[0].action == "unchanged" and again[0].revision.number == 1
     plan = gf.predictors.deploy(
