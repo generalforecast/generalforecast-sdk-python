@@ -67,7 +67,7 @@ def test_the_leaderboard_drops_columns_to_fit(adult):
 
 def test_estimate_is_a_dry_run(adult):
     estimate = gf.experiments.estimate(context="adult", target="income", models=MODELS)
-    assert repr(estimate) == "Estimate(calls=198, rows=19539, credits=39.1, usd=0.0391)"
+    assert repr(estimate) == "Estimate(calls=6, rows=19539, credits=39.1, usd=0.0391)"
     assert adult.calls_to("POST", r".*/experiments")[0].payload == {
         "context": "adult",
         "target": "income",

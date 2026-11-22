@@ -313,13 +313,13 @@ test("predict sends the manifest fragment and gets a result", async () => {
   }
 });
 
-test("a capacity error carries limit and actual", async () => {
+test("a refusal carries limit and actual", async () => {
   const gf = new GeneralForecast({
     project: "acme",
     baseUrl: "http://mock.local",
     fetch: async (_url, init) => {
       const sent = JSON.parse(init.body);
-      const example = EXAMPLES.find((e) => e.path === ROUTES.predict.path && e.name === "capacity");
+      const example = EXAMPLES.find((e) => e.path === ROUTES.predict.path && e.name === "selection");
       return new Response(
         JSON.stringify({
           api_version: sent.api_version,
@@ -332,10 +332,20 @@ test("a capacity error carries limit and actual", async () => {
       );
     },
   });
-  const rows = Array.from({ length: 12000 }, (_, i) => ({ spend: i }));
   await assert.rejects(
-    gf.predict({ model: "general-forecast/tabicl-v2-classifier", target: "churned", context: [{ spend: 1, churned: 0 }], queries: rows }),
-    (error) => error instanceof GFError && error.code === "CapacityExceeded" && error.limit === 10000 && error.actual === 12000,
+    gf.predict({
+      model: "general-forecast/tabicl-v2-classifier",
+      target: "churned",
+      selection: { core: 120000 },
+      context: [{ spend: 1, churned: 0 }],
+      queries: [{ spend: 2 }],
+    }),
+    (error) =>
+      error instanceof GFError &&
+      error.code === "ValidationError" &&
+      error.param === "selection" &&
+      error.limit === 100000 &&
+      error.actual === 120000,
   );
 });
 

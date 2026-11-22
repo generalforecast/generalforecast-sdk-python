@@ -35,7 +35,7 @@ ctx        # Context adult  snapshot v1  32,561 rows  15 columns
 
 gf.experiments.estimate(context="adult", target="income",
                         models=["kumo-medium", "tabicl-v2", "mitra-2"])
-# Estimate(calls=198, rows=19539, credits=39.1, usd=0.0391)
+# Estimate(calls=6, rows=19539, credits=39.1, usd=0.0391)
 
 exp = gf.experiments.create(context="adult", target="income", holdout="20%",
                             models=["kumo-medium", "tabicl-v2", "mitra-2"])
@@ -61,7 +61,7 @@ out.credits                # 0.01
 
 clf = gf.Classifier("tabicl-v2").fit(adult.drop(columns="income")[:26048],
                                      adult.income[:26048])
-clf.estimate(adult.drop(columns="income")[26048:])       # Estimate(calls=66, rows=6513, ...)
+clf.estimate(adult.drop(columns="income")[26048:])       # Estimate(calls=2, rows=6513, ...)
 ```
 
 The experiment appears in the console under Experiments with origin
@@ -155,9 +155,9 @@ with `CapacityExceeded`.
 ```python
 clf = gf.Classifier("tabicl-v2").fit(X_train, y_train)
 clf        # Classifier(model='tabicl-v2')  # 26,048 context rows uploaded; nothing trained
-clf.estimate(X_test)      # Estimate(calls=66, rows=6513, credits=13, usd=0.013)
+clf.estimate(X_test)      # Estimate(calls=2, rows=6513, credits=13, usd=0.013)
 clf.predict(X_test)
-# Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 66 calls, 13.0 credits ($0.013) in 9.4s
+# Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 2 calls, 13.0 credits ($0.013) in 9.4s
 clf.usage_                # every call since fit; clf.last_usage_ is the last one's
 ```
 

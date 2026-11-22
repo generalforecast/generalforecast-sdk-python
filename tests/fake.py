@@ -69,23 +69,24 @@ def model(
     *,
     family: str | None = None,
     context_rows: int = 100000,
-    queries: int = 100,
     inputs: int = 10000,
 ) -> dict[str, Any]:
     """A catalog entry as the plane serves one, shaped as the contract's `models.list` example.
 
-    `limits` are the model's own, the engine catalog's `limits` of it, and
-    the plane names no warm shapes.
+    `limits` are the model's own, the engine catalog's `limits` of it, with
+    no count of queries, and the plane names no warm shapes.
     """
     entry = contract.example("models.list")["models"][0]
     pinned = digest(full)
     entry.update(
         model=f"{full}@{pinned}", name=full, short=short, task=task, family=family or short,
-        repository=full, limits={"context_rows": context_rows, "queries": queries, "inputs": inputs},
-        warm_shapes=[],
+        repository=full, limits={"context_rows": context_rows, "inputs": inputs}, warm_shapes=[],
     )  # fmt: skip
-    entry["bounds"] = {**entry["bounds"], "context_rows": context_rows, "query_rows": queries,
-                       "features": inputs}  # fmt: skip
+    entry["bounds"] = {
+        **entry["bounds"],
+        "context_rows": context_rows,
+        "features": inputs,
+    }
     entry["artifact"] = {**entry["artifact"], "repository": full, "digest": pinned}
     if task != "classification":
         entry["trained_on"] = None
@@ -107,9 +108,28 @@ CATALOG = [
           family="kumo", context_rows=60000),
     model("general-forecast/mitra-2-classifier", "mitra-2", "classification", context_rows=5120),
     model("general-forecast/mitra-2-regressor", "mitra-2", "regression", context_rows=5120),
-    model("general-forecast/chronos-2", "chronos-2", "forecast", queries=8, inputs=8),
-    model("general-forecast/timestral-209m", "timestral-209m", "forecast", queries=8, inputs=8),
+    model("general-forecast/chronos-2", "chronos-2", "forecast", inputs=8),
+    model("general-forecast/timestral-209m", "timestral-209m", "forecast", inputs=8),
 ]  # fmt: skip
+
+
+# The most queries one model call decodes here, about where the engine's
+# worker splits a large batch (`gf_engine.pieces`).
+CALL_QUERIES = 4096
+
+
+def model_calls(queries: int) -> int:
+    """The model calls `queries` queries decode in, one at the least, as `timing.calls` counts them."""
+    return max(1, -(-queries // CALL_QUERIES))
+
+
+# The permissions an API key may not hold, as `auth.status` marks them, and
+# `operators:read`, which only a signed-in browser session uses.
+NOT_KEY_GRANTABLE = {
+    p["name"]
+    for p in contract.example("auth.status")["permission_inventory"]
+    if not p["key_grantable"]
+} | {"operators:read"}
 
 
 def entry(full: str) -> dict[str, Any]:
@@ -156,6 +176,9 @@ class Fake:
     keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     writes: list[dict[str, Any]] = field(default_factory=list)
     chunk_bytes: int = 4096
+    # False opens a snapshot upload naming no chunk size, so the client sends
+    # chunks of the service's `limits.chunk_bytes`.
+    snapshot_chunks: bool = True
     # Contexts and snapshots upload to a signed object-store URL, query string
     # and all, as the hosted service's do; False answers `url: null`, as a
     # plane without object storage does, and takes the chunks at the bytes routes.
@@ -167,6 +190,14 @@ class Fake:
     accept_predictions: int = 0
     # False answers `available: false` to `sources.list`, as a plane that connects no sources.
     sources_available: bool = True
+    # The sizes `auth.status` says the service takes data in, which it refuses past.
+    limits: dict[str, int] = field(
+        default_factory=lambda: contract.example("auth.status")["limits"]
+    )
+    # Whether the service fine-tunes, as `auth.status` says.
+    trains: bool = True
+    # The workspace's plan: on `free`, resumable uploads and synthetic batches are refused with 402.
+    plan: str = "pro"
     fail: dict[str, int] = field(default_factory=dict)
     # The reasons of the 429s a handler answers, one a call, before it answers.
     throttle: dict[str, list[str]] = field(default_factory=dict)
@@ -268,6 +299,7 @@ def auth_status(fake: Fake, call: Call) -> Any:
         principal={"kind": "api-key", "id": fake.key["id"], "project": fake.project},
         key={**fake.key, "project": fake.project}, email="maya@acme.com", machine="maya-mbp",
         workspace={"id": "acme", "display_name": "Acme Analytics"}, url=fake.link(),
+        trains=fake.trains, limits=fake.limits,
     )  # fmt: skip
     return ok(status)
 
@@ -317,7 +349,8 @@ def _new_context(fake: Fake, payload: dict[str, Any], state: str) -> dict[str, A
         "time": payload.get("time"),
         "source": {"kind": "bigquery", "table": None, "sql": None, **source} if source else None,
         "freshness_seconds": payload.get("freshness_seconds"), "read_at": None, "error": None,
-        "predictors": [], "experiments": [], "origin": origin(), "created": NOW, "updated": NOW,
+        "predictors": [], "experiments": [], "fine_tunes": [], "origin": origin(),
+        "created": NOW, "updated": NOW,
         "url": fake.link(f"data/contexts/{name}"), "_versions": [], "_rows": [],
     }  # fmt: skip
     if payload.get("columns"):
@@ -521,13 +554,33 @@ def contexts_delete(fake: Fake, call: Call, name: str) -> Any:
     return ok({"name": name, "deleted": True})
 
 
+def _streamed(fake: Fake, call: Call) -> pa.Table:
+    """A streamed snapshot's table, refused past `snapshot_rows` or `snapshot_bytes` as the plane's storage does."""
+    table = _data.read_stream(call.body)
+    if (
+        len(call.body) > fake.limits["snapshot_bytes"]
+        or table.num_rows > fake.limits["snapshot_rows"]
+    ):
+        raise Refusal(
+            422, "CapacityExceeded", "snapshot exceeds the decoded row or byte limit"
+        )
+    return table
+
+
+def _plan_required(fake: Fake) -> None:
+    """Refuses a resumable upload or a synthetic batch on the Free plan, as the plane does."""
+    if fake.plan == "free":
+        refused = contract.example("snapshots.create", status="402")["error"]
+        raise Refusal(402, refused.pop("code"), refused.pop("message"), **refused)
+
+
 def snapshots_put(fake: Fake, call: Call) -> Any:
     digest = call.query["digest"]
     if not call.body:
         if digest not in fake.snapshots:
             raise Refusal(404, "NotFound", f"no snapshot {digest}")
         return ok({"digest": digest, "rows": fake.snapshots[digest].num_rows})
-    table = _data.read_stream(call.body)
+    table = _streamed(fake, call)
     found = _data.table_digest(table)
     if found != digest:
         fake.errors.append(
@@ -601,7 +654,7 @@ def experiments_create(fake: Fake, call: Call) -> Any:
     task = payload.get("task") or "classification"
     models = payload.pop("models", None) or RECOMMENDED[task]
     if payload.pop("dry_run", False):
-        return ok({"setup": payload, "estimate": {"calls": 198, "rows": 19539, "credits": 39.1, "usd": 0.0391},
+        return ok({"setup": payload, "estimate": {"calls": 6, "rows": 19539, "credits": 39.1, "usd": 0.0391},
                    "warnings": []})  # fmt: skip
     name = payload.get("name") or f"{context}-{payload['target']}"
     fake.experiments[name] = {
@@ -733,7 +786,7 @@ def _deploy(
                 "lock_digest": digest(json.dumps({"spec": spec, "resolved": resolved}, sort_keys=True)),
                 "spec": spec, "resolved": resolved, "origin": origin(), "created": NOW}  # fmt: skip
     environment = {"name": env, "revision": number, "state": "starting", "generation": number,
-                   "calls_today": 0, "p50_seconds": None, "updated": NOW,
+                   "resolved": resolved, "calls_today": 0, "p50_seconds": None, "updated": NOW,
                    "url": fake.link(f"predictors/{name}"), "_polls": fake.polls_until_done,
                    "_final": fake.deploy_ends}  # fmt: skip
     if not dry_run:
@@ -869,7 +922,8 @@ def predictors_move(fake: Fake, call: Call, name: str, env: str, verb: str) -> A
         number = target["_previous"]
     p["environments"][env] = {
         "name": env, "revision": number, "state": "starting",
-        "generation": (target or {}).get("generation", 0) + 1, "calls_today": 0,
+        "generation": (target or {}).get("generation", 0) + 1,
+        "resolved": p["_revisions"][number - 1]["resolved"], "calls_today": 0,
         "p50_seconds": None, "updated": NOW, "url": p["url"], "_polls": 1,
         "_previous": (target or {}).get("revision"),
     }  # fmt: skip
@@ -931,10 +985,10 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
         "environment": payload.get("env") if predictor else None,
         "context": {"source": "snapshot", "name": None, "version": None,
                     "digest": held or digest(str(predictor)), "rows": 26048, "as_of": None},
-        "usage": {"calls": -(-rows // 100), "rows": rows, "credits": 0.002 * rows,
+        "usage": {"calls": model_calls(rows), "rows": rows, "credits": 0.002 * rows,
                   "usd": 0.000002 * rows, "gpu_seconds": None},
-        "timing": {"queued_seconds": 0.1, "cold_start_seconds": 0.0, "compile_seconds": 0.0,
-                   "compute_seconds": 0.4},
+        "timing": {"calls": model_calls(rows), "queued_seconds": 0.1, "cold_start_seconds": 0.0,
+                   "compile_seconds": 0.0, "compute_seconds": 0.4},
         "notes": [], "predictions": predictions,
     })  # fmt: skip
 
@@ -971,7 +1025,7 @@ LARGE_CONTEXT_ROWS = 31250  # a million cells at 32 inputs
 
 def estimate(fake: Fake, call: Call) -> Any:
     queries = call.payload["queries"]
-    calls = -(-queries // 100)
+    calls = model_calls(queries)
     out = {
         "calls": calls,
         "rows": queries,
@@ -1059,6 +1113,12 @@ def keys_list(fake: Fake, call: Call) -> Any:
 
 def keys_create(fake: Fake, call: Call) -> Any:
     p = call.payload
+    refused = sorted(NOT_KEY_GRANTABLE & set(p["permissions"]))
+    if refused:
+        raise Refusal(422, "ValidationError", f"an API key may not hold {refused[0]}",
+                      param="permissions",
+                      hint=f"{refused[0]} is a browser session's; give a key only the permissions "
+                           "permission_inventory marks key_grantable")  # fmt: skip
     key_id = f"key-{len(fake.keys) + 1:020x}"
     fake.keys[key_id] = {"id": key_id, "project": fake.project, "name": p["name"],
                          "permissions": p["permissions"], "created_at": EPOCH,
@@ -1112,8 +1172,9 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
     if call.table is not None:
         query = dict(call.query)
         name = query.pop("name")
-        _store_snapshot(fake, name, call.table, query, [])
+        _store_snapshot(fake, name, _streamed(fake, call), query, [])
         return ok(_snapshot_json(fake, name))
+    _plan_required(fake)
     p = call.payload
     url = (
         f"{fake.url}{_signed(f'/uploads/snapshots/{p["name"]}', p['name'], 1)}"
@@ -1124,8 +1185,8 @@ def snapshots_post(fake: Fake, call: Call) -> Any:
         "name": p["name"], "state": "open", "digest": None, "bytes": p["bytes"], "rows": None,
         "columns": None, "metadata": p["metadata"], "tags": sorted({*p.get("tags", []), "uploaded"}),
         "error": None, "expires": 1761286400.0, "created": 1761200000.0, "origin": origin(),
-        "url": url, "method": "PUT", "chunk_bytes": fake.chunk_bytes, "_data": b"",
-        "_tags": p.get("tags", []),
+        "url": url, "method": "PUT", "_data": b"", "_tags": p.get("tags", []),
+        **({"chunk_bytes": fake.chunk_bytes} if fake.snapshot_chunks else {}),
     }  # fmt: skip
     return ok(_snapshot_json(fake, p["name"]))
 
@@ -1151,6 +1212,7 @@ def snapshots_upload(fake: Fake, call: Call, name: str) -> Any:
 
 def snapshots_bytes(fake: Fake, call: Call, name: str) -> Any:
     """A chunk of a snapshot's upload sent to the plane, which gave it no signed URL."""
+    _plan_required(fake)
     snap = fake.training[name]
     assert snap["url"] is None, "a snapshot with a signed URL takes its chunks there"
     start, total = _content_range(call)
@@ -1196,6 +1258,7 @@ def snapshots_delete(fake: Fake, call: Call, name: str) -> Any:
 
 
 def synthetic_post(fake: Fake, call: Call) -> Any:
+    _plan_required(fake)
     p = dict(call.payload)
     name, count = p["name"], p.get("count", 1)
     fake.batches[name] = {
@@ -1260,8 +1323,11 @@ def runs_post(fake: Fake, call: Call) -> Any:
             data.append(
                 {"name": item, "digest": fake.training[item]["digest"], **pinned}
             )
+    model = f"{fake.project}/{p['name']}@ft{version}"
+    for name in dict.fromkeys(d["context"] for d in data if "context" in d):
+        fake.contexts[name]["fine_tunes"].append(model)
     run = {
-        "model": f"{fake.project}/{p['name']}@ft{version}", "name": p["name"], "version": version,
+        "model": model, "name": p["name"], "version": version,
         "state": "queued", "reason": None, "attempt": 0, "base": entry(p["base"])["name"],
         "data": data, "data_digest": digest(str(data)),
         "phases": [{**phase, "data": [d for d in data if d.get("phase") == phase["name"]]}

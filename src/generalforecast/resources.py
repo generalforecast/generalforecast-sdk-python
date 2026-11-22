@@ -145,6 +145,7 @@ class Contexts(_Sync):
         """
         return self._run(
             _ops.context_create(
+                self._client._state,
                 name,
                 data=data,
                 source=source,
@@ -191,7 +192,9 @@ class Contexts(_Sync):
     ) -> WriteReceipt:
         """Appends rows to a live context fed through the API."""
         return self._run(
-            _ops.context_append(context, data, idempotency_key=idempotency_key)
+            _ops.context_append(
+                self._client._state, context, data, idempotency_key=idempotency_key
+            )
         )
 
     def label(
@@ -205,7 +208,11 @@ class Contexts(_Sync):
         """Fills `target` for rows already in a live context, matched by its `id` column."""
         return self._run(
             _ops.context_label(
-                context, data, target=target, idempotency_key=idempotency_key
+                self._client._state,
+                context,
+                data,
+                target=target,
+                idempotency_key=idempotency_key,
             )
         )
 
@@ -666,7 +673,9 @@ class Snapshots(_Sync):
         the same rows again return the snapshot, other rows raise `Conflict`.
         """
         metadata = {"target": target, "task": task, "time": time, "group": group}
-        return self._run(_ops.snapshot_create(name, data, tags, metadata))
+        return self._run(
+            _ops.snapshot_create(self._client._state, name, data, tags, metadata)
+        )
 
     def synthesize(
         self,
@@ -840,7 +849,7 @@ class AsyncContexts(_Async):
         """See `Contexts.create`."""
         return await self._run(
             _ops.context_create(
-                name, data=data, source=source, table=table, sql=sql, live=live,
+                self._client._state, name, data=data, source=source, table=table, sql=sql, live=live,
                 columns=columns, targets=targets, id=id, time=time, freshness=freshness,
                 wait=wait, poll=poll,
             )
@@ -872,7 +881,9 @@ class AsyncContexts(_Async):
     ) -> WriteReceipt:
         """See `Contexts.append`."""
         return await self._run(
-            _ops.context_append(context, data, idempotency_key=idempotency_key)
+            _ops.context_append(
+                self._client._state, context, data, idempotency_key=idempotency_key
+            )
         )
 
     async def label(
@@ -886,7 +897,11 @@ class AsyncContexts(_Async):
         """See `Contexts.label`."""
         return await self._run(
             _ops.context_label(
-                context, data, target=target, idempotency_key=idempotency_key
+                self._client._state,
+                context,
+                data,
+                target=target,
+                idempotency_key=idempotency_key,
             )
         )
 
@@ -1318,7 +1333,9 @@ class AsyncSnapshots(_Async):
     ) -> Snapshot:
         """See `Snapshots.create`."""
         metadata = {"target": target, "task": task, "time": time, "group": group}
-        return await self._run(_ops.snapshot_create(name, data, tags, metadata))
+        return await self._run(
+            _ops.snapshot_create(self._client._state, name, data, tags, metadata)
+        )
 
     async def synthesize(
         self,

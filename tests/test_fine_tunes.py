@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 
 import generalforecast as gf
-from generalforecast import _ops
 
 
 def credit(rows=40):
@@ -50,8 +49,9 @@ def test_a_small_snapshot_goes_as_one_arrow_stream(fake):
 
 
 @pytest.mark.parametrize("signed", [True, False], ids=["signed-url", "bytes-route"])
-def test_a_large_snapshot_uploads_in_chunks(fake, monkeypatch, signed):
-    monkeypatch.setattr(_ops, "STREAM_ROWS", 10)
+def test_a_large_snapshot_uploads_in_chunks(fake, signed):
+    # Past the service's `snapshot_rows` a snapshot is a resumable upload.
+    fake.limits["snapshot_rows"] = 10
     fake.chunk_bytes, fake.signed_uploads = 256, signed
     snap = gf.fine_tunes.snapshots.create(
         "big", data=credit(), target="defaulted", task="classification", tags=["x"]
@@ -74,6 +74,34 @@ def test_a_large_snapshot_uploads_in_chunks(fake, monkeypatch, signed):
     assert [s.name for s in gf.fine_tunes.snapshots.list(tag="x")] == ["big"]
     assert gf.fine_tunes.snapshots.tag("big", ["a", "b"]).tags == ("a", "b")
     gf.fine_tunes.snapshots.delete("big")
+
+
+def test_a_snapshot_upload_keeps_to_the_services_limits_and_plan(fake):
+    fake.limits.update(snapshot_rows=10, chunk_bytes=300)
+    fake.snapshot_chunks = False
+    gf.fine_tunes.snapshots.create(
+        "big", data=credit(), target="defaulted", task="classification"
+    )
+    chunks = fake.calls_to("PUT", r"/uploads/snapshots/big")
+    assert [len(c.body) for c in chunks[:-1]] == [300] * (len(chunks) - 1)
+    assert len(fake.calls_to("GET", r"/v1/auth/status")) == 1
+    fake.limits["upload_rows"] = 39
+    with gf.Client() as other, pytest.raises(gf.CapacityExceeded) as error:
+        other.fine_tunes.snapshots.create(
+            "bigger", data=credit(), target="defaulted", task="classification"
+        )
+    assert (error.value.limit, error.value.actual) == (39, 40)
+    assert "bigger" not in fake.training
+    fake.plan = "free"
+    with pytest.raises(gf.PaymentRequired) as error:
+        gf.fine_tunes.snapshots.create(
+            "biggest", data=credit(), target="defaulted", task="classification"
+        )
+    assert error.value.reason == "plan_required"
+    with pytest.raises(gf.PaymentRequired):
+        gf.fine_tunes.snapshots.synthesize("warmup", rows=100)
+    # A small table still streams on the Free plan.
+    assert gf.fine_tunes.snapshots.create("small", data=credit(10)).rows == 10
 
 
 def test_synthesize_checks_settings_before_sending(fake):
@@ -146,6 +174,8 @@ def test_a_run_takes_snapshots_batches_contexts_and_tags(fake):
     assert run.data[2].kind == "context" and run.data[2].name == "adult"
     assert run.data[2].version == 1 and run.data[0].kind == "snapshot"
     assert sent["target"] == "defaulted" and run.target == "defaulted"
+    # The context lists the fine-tuned model made from it.
+    assert gf.contexts.get("adult").fine_tunes == ("acme/credit-default@ft1",)
 
 
 def test_a_run_on_a_context_names_its_target(fake):

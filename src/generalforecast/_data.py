@@ -25,14 +25,8 @@ from generalforecast.errors import CapacityExceeded, InvalidInput
 if TYPE_CHECKING:
     import pandas
 
-SNAPSHOT_MAX_BYTES = 32 * 1024 * 1024
-"""The largest snapshot one PUT carries; the plane stores the same ceiling."""
-
 QUERY_PART_BYTES = 8 * 1024 * 1024
 """The most Arrow bytes of queries one prediction request carries."""
-
-UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
-"""The chunk size a context upload uses when the service names none."""
 
 FILE_FORMATS = {
     ".csv": "csv",
@@ -346,22 +340,32 @@ def column_types(data: pa.Table) -> dict[str, str]:
     return types
 
 
-def check_snapshot(body: bytes, rows: int, *, what: str = "context") -> None:
-    """Refuses, before anything is sent, a snapshot past the one ceiling.
+def check_table(
+    what: str,
+    rows: int,
+    nbytes: int,
+    most: tuple[int, int],
+    *,
+    holds: str,
+    hint: str,
+    param: str,
+) -> None:
+    """Refuses, before anything is sent, a table past `most` rows and bytes, all one `holds` holds.
 
     Raises:
         CapacityExceeded: Naming the size, the limit and the fix.
     """
-    if len(body) <= SNAPSHOT_MAX_BYTES:
+    most_rows, most_bytes = most
+    if rows <= most_rows and nbytes <= most_bytes:
         return
+    limit, actual = (most_rows, rows) if rows > most_rows else (most_bytes, nbytes)
     raise CapacityExceeded(
-        f"the {what} is {size(len(body))} as Arrow ({rows:,} rows), past the "
-        f"{size(SNAPSHOT_MAX_BYTES)} one snapshot holds",
-        hint='store it as a context, `gf.contexts.create("name", data=rows)`, which '
-        "uploads in chunks, and pass that context instead",
-        param=what,
-        limit=SNAPSHOT_MAX_BYTES,
-        actual=len(body),
+        f"the {what} is {rows:,} rows and {size(nbytes)}, past the {most_rows:,} "
+        f"rows and {size(most_bytes)} one {holds} holds",
+        hint=hint,
+        param=param,
+        limit=limit,
+        actual=actual,
     )
 
 

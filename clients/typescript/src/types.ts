@@ -76,15 +76,16 @@ export interface Envelope {
  * it folds into, with the code itself, in snake case, as `reason`:
  * `CredentialUnavailable` 503 is `Unavailable` with reason `credential_unavailable`.
  * Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
- * `plan_required` (fine-tuning needs a Pro or Enterprise plan) and `credits_exhausted`
- * (an enforced workspace has used its credits, which also refuses predictions);
- * `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not turned on for the
- * project); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs
- * queued or running as it may), `quota_exceeded` (the project's training data would
- * pass its quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and
- * `actual`, and lift only when the caller ends a run or deletes data, so clients do not
- * retry them; a 429 `rate_limited` passes on its own and may be retried. A run's create
- * is refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
+ * `plan_required` (fine-tuning, and the resumable uploads and synthetic batches that
+ * feed it, need a Pro or Enterprise plan) and `credits_exhausted` (an enforced
+ * workspace has used its credits, which also refuses predictions); `Unauthorized` 403
+ * `fine_tuning_unavailable` (fine-tuning is not turned on for the project);
+ * `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs queued or
+ * running as it may), `quota_exceeded` (the project's training data would pass its
+ * quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`,
+ * and lift only when the caller ends a run or deletes data, so clients do not retry
+ * them; a 429 `rate_limited` passes on its own and may be retried. A run's create is
+ * refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
  * queued or running) or `base_mismatch` (the fine-tune's versions train from another
  * base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
  * base).
@@ -190,8 +191,7 @@ export interface Manifest {
 /**
  * what a call is billed: its scored rows, and past the large-context line
  * (`large_context_cells` in the price book) the GPU seconds of its own execution.
- * `calls` is how many model calls the engine made, each as many queries as the model
- * takes at once, as `/estimate` counts them
+ * `calls` is the model calls the engine made to answer it, its result's `timing.calls`
  */
 export interface Usage {
   calls?: number;
@@ -207,6 +207,7 @@ export interface Usage {
  * waited on, which `compute_seconds`, its own execution, leaves out
  */
 export interface Timing {
+  calls: number;
   queued_seconds: number;
   cold_start_seconds: number;
   compile_seconds?: number;
@@ -325,12 +326,13 @@ export interface PredictionAccepted extends Envelope {
 }
 
 /**
- * the sizes a model was trained and measured to; a call past them is admitted by the
- * device's memory and carries a note
+ * the context sizes a model was trained and measured to, its own as its catalog entry
+ * gives them: a call past them is admitted by the device's memory and carries a note.
+ * No count of queries is a limit: a call's queries are decoded in as many model calls
+ * as the device needs, which `timing.calls` counts
  */
 export interface Limits {
   context_rows: number;
-  queries: number;
   inputs: number;
 }
 
@@ -616,6 +618,15 @@ export interface ProjectReply extends Envelope {
 export interface ProjectList {
   projects: Project[];
   organizations: Name[];
+}
+
+/** the projects the credential reaches; `workspace.get` adds their organizations */
+export interface Projects {
+  projects: Project[];
+}
+
+export interface ProjectsReply extends Envelope {
+  result: Projects;
 }
 
 export interface ProjectListReply extends Envelope {
@@ -1592,6 +1603,7 @@ export interface Environment {
   revision: number | null;
   state: "starting" | "ready" | "failed" | "stopped";
   generation: number;
+  resolved: Resolved | null;
   calls_today?: number;
   p50_seconds?: number | null;
   updated?: string;
@@ -1849,11 +1861,18 @@ export interface SourceListReply extends Envelope {
   result: SourceList;
 }
 
-/** a permission keys may hold; one that is not enforced authorizes nothing yet */
+/**
+ * a permission a role holds; one that is not enforced authorizes nothing yet.
+ * `key_grantable` says whether an API key may hold it: false for those only a signed-in
+ * browser session uses (`operators:read`, `sso:read`) and for every reserved one, true
+ * for every other enforced permission. `keys.create` and `keys.rotate` refuse a key a
+ * permission it may not hold
+ */
 export interface PermissionGrant {
   name: Permission;
   description: string;
   enforced: boolean;
+  key_grantable: boolean;
   roles: Array<"admin" | "editor" | "viewer" | "scorer">;
 }
 
@@ -1877,15 +1896,34 @@ export interface Principal {
   [key: string]: unknown;
 }
 
+/**
+ * the sizes this service takes data in, for a client to size its requests by instead of
+ * copying them: one streamed snapshot (`snapshots.create` with an Arrow body, `?name=`)
+ * holds at most `snapshot_rows` rows and `snapshot_bytes` bytes; a resumable upload at
+ * most `upload_rows` rows and `upload_bytes` bytes, or `csv_bytes` for a CSV, sent in
+ * chunks of `chunk_bytes` unless the upload names its own; a JSON request body holds at
+ * most `request_bytes`
+ */
+export interface UploadLimits {
+  snapshot_bytes: number;
+  snapshot_rows: number;
+  upload_bytes: number;
+  upload_rows: number;
+  csv_bytes: number;
+  chunk_bytes: number;
+  request_bytes: number;
+}
+
 export interface AuthStatus {
   authenticated: true;
   principal: Principal;
-  google: "configured" | "unconfigured";
   sign_in: Array<"google" | "microsoft" | "github">;
   secrets: "configured" | "unconfigured";
   capabilities: Capability[];
   permission_inventory: PermissionGrant[];
   bootstrap: "unconfigured" | "available" | "consumed";
+  trains: boolean;
+  limits: UploadLimits;
   key?: KeyIdentity;
   email?: string | null;
   machine?: string | null;
@@ -1928,7 +1966,6 @@ export interface OrganizationListReply extends Envelope {
 
 export interface Sso {
   organization: Name;
-  provider: "google";
   providers: Array<"google" | "microsoft" | "github">;
   enabled: boolean;
   configured: boolean;
@@ -2589,7 +2626,10 @@ export interface LargeContext {
 
 /**
  * what a call or a run would cost from the live price book: model calls, scored rows,
- * credits (1 credit is $0.001) and dollars
+ * credits (1 credit is $0.001) and dollars. `calls` is the model calls the queries of
+ * each call decode in, as the engine's worker splits them by its shape buckets (the
+ * engine's `gf_engine.hosting.estimate_calls`); no model bounds the queries of a call,
+ * and an answered call's `timing.calls` says what it took
  */
 export interface Estimate {
   calls: number;
@@ -2677,6 +2717,7 @@ export interface Context {
   error: string | null;
   predictors: Name[];
   experiments: Name[];
+  fine_tunes: string[];
   origin: Origin;
   created: string;
   updated: string;
@@ -3225,7 +3266,7 @@ export const ROUTES = {
   "models.get": { method: "GET", path: "/v1/projects/{project}/models/{model}", request: "null", reply: "ModelReply", body: null },
   "ready": { method: "GET", path: "/readyz", request: "null", reply: "Health", body: null },
   "live": { method: "GET", path: "/livez", request: "null", reply: "Health", body: null },
-  "projects.list": { method: "GET", path: "/v1/projects", request: "null", reply: "ProjectListReply", body: null },
+  "projects.list": { method: "GET", path: "/v1/projects", request: "null", reply: "ProjectsReply", body: null },
   "projects.create": { method: "POST", path: "/v1/projects", request: "ProjectCreateRequest", reply: "ProjectReply", body: "application/json" },
   "keys.list": { method: "GET", path: "/v1/projects/{project}/keys", request: "null", reply: "KeyListReply", body: null },
   "keys.create": { method: "POST", path: "/v1/projects/{project}/keys", request: "KeyCreateRequest", reply: "KeyReply", body: "application/json" },

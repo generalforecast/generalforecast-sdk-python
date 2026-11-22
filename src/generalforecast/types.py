@@ -92,6 +92,7 @@ __all__ = [
     "Task",
     "Timing",
     "TrainedOn",
+    "UploadLimits",
     "WriteReceipt",
 ]
 
@@ -280,9 +281,12 @@ class ContextSource:
 class Context:
     """A context: data a model learns from, uploaded, imported or live.
 
-    `file` names the file an uploaded version came from, when it came from
-    one. `unchanged` is true on an upload whose rows matched the latest
-    version, which then stays the latest.
+    `predictors` and `experiments` name what reads it, and `fine_tunes`
+    the fine-tuned models made from it, as `acme/credit-default@ft3`.
+    `file` names the
+    file an uploaded version came from, when it came from one. `unchanged`
+    is true on an upload whose rows matched the latest version, which then
+    stays the latest.
     """
 
     name: str
@@ -303,6 +307,7 @@ class Context:
     error: str | None = None
     predictors: tuple[str, ...] = ()
     experiments: tuple[str, ...] = ()
+    fine_tunes: tuple[str, ...] = ()
     origin: Origin | None = None
     created: datetime | None = None
     updated: datetime | None = None
@@ -622,7 +627,7 @@ class Estimate:
         )
 
     def __repr__(self) -> str:
-        """`Estimate(calls=198, rows=19539, credits=39.1, usd=0.0391)`."""
+        """`Estimate(calls=6, rows=19539, credits=39.1, usd=0.0391)`."""
         text = (
             f"Estimate(calls={self.calls}, rows={self.rows}, "
             f"credits={self.credits:g}, usd={self.usd:g}"
@@ -856,12 +861,17 @@ class EnvironmentFailure:
 
 @dataclass(frozen=True)
 class Environment:
-    """Where a predictor serves a revision: `production`, `staging` and others."""
+    """Where a predictor serves a revision: `production`, `staging` and others.
+
+    `resolved` is what the revision it serves resolved to, None while it
+    serves none.
+    """
 
     name: str
     revision: int = 0
     state: Literal["starting", "ready", "failed", "stopped"] = "starting"
     generation: int = 0
+    resolved: Resolved | None = None
     calls_today: int = 0
     p50_seconds: float | None = None
     updated: datetime | None = None
@@ -981,10 +991,13 @@ class Deploy:
 class Timing:
     """Where a call's time went: waiting in the queue, a cold start, and compute.
 
-    `compile_seconds` is the time the call's steps spent compiling or
-    loading programs they waited on, which `compute_seconds` leaves out.
+    `calls` is the model calls the engine made to answer it, as many as
+    the device decoded its queries in. `compile_seconds` is the time the
+    call's steps spent compiling or loading programs they waited on, which
+    `compute_seconds` leaves out.
     """
 
+    calls: int = 0
     queued_seconds: float = 0.0
     cold_start_seconds: float = 0.0
     compute_seconds: float = 0.0
@@ -1014,8 +1027,8 @@ class Predictions:
     `p_<class>` column per class, or `value` and a `q_<level>` per quantile.
     `gpu_seconds` is the large-context meter, set only past its line;
     `timing` keeps queueing and cold start apart from compute. `calls` is
-    how many calls the engine made, each as many queries as the model
-    takes at once.
+    the model calls the engine made, its `timing.calls`, which the usage
+    copies.
     """
 
     predictor: str | None
@@ -1240,10 +1253,13 @@ class TrainedOn:
 
 @dataclass(frozen=True)
 class Limits:
-    """Per call: the context rows, queries and inputs a model takes in one step."""
+    """The context rows and inputs a model was trained and measured to; a call past them carries a note.
+
+    No count of queries is a limit: a call's queries decode in as many
+    model calls as the device needs, which `Timing.calls` counts.
+    """
 
     context_rows: int | None = None
-    queries: int | None = None
     inputs: int | None = None
 
 
@@ -1265,8 +1281,33 @@ class Model:
 
 
 @dataclass(frozen=True)
+class UploadLimits:
+    """The sizes the service takes data in, which the SDK sizes its requests by.
+
+    One streamed snapshot holds at most `snapshot_rows` rows and
+    `snapshot_bytes` bytes; a resumable upload at most `upload_rows` rows
+    and `upload_bytes` bytes, or `csv_bytes` for a CSV, in chunks of
+    `chunk_bytes` unless the upload names its own; a JSON request body at
+    most `request_bytes`.
+    """
+
+    snapshot_bytes: int
+    snapshot_rows: int
+    upload_bytes: int
+    upload_rows: int
+    csv_bytes: int
+    chunk_bytes: int
+    request_bytes: int
+
+
+@dataclass(frozen=True)
 class Me:
-    """Who the credential acts for."""
+    """Who the credential acts for.
+
+    `trains` says whether the service fine-tunes models at all, and
+    `limits` the sizes it takes data in; a device login's reply says
+    neither, so they are None there.
+    """
 
     email: str | None
     workspace: str | None
@@ -1274,6 +1315,8 @@ class Me:
     key: Key | None
     token_expires: datetime | None
     url: str
+    trains: bool | None = None
+    limits: UploadLimits | None = None
 
 
 @dataclass(frozen=True)

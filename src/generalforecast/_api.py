@@ -333,18 +333,19 @@ class ErrorCode(StrEnum):
     the enum code it folds into, with the code itself, in snake case, as `reason`:
     `CredentialUnavailable` 503 is `Unavailable` with reason `credential_unavailable`.
     Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
-    `plan_required` (fine-tuning needs a Pro or Enterprise plan) and
-    `credits_exhausted` (an enforced workspace has used its credits, which also refuses
-    predictions); `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not
-    turned on for the project); `CapacityExceeded` 429 `run_limit_reached` (the project
-    has as many runs queued or running as it may), `quota_exceeded` (the project's
-    training data would pass its quota) and `snapshot_quota_exceeded`. Those three 429s
-    carry `limit` and `actual`, and lift only when the caller ends a run or deletes
-    data, so clients do not retry them; a 429 `rate_limited` passes on its own and may
-    be retried. A run's create is refused with `Conflict` 409 `run_active` (another run
-    of the fine-tune is still queued or running) or `base_mismatch` (the fine-tune's
-    versions train from another base), and with `ValidationError` 422
-    `base_is_fine_tune` (a fine-tune sent as the base).
+    `plan_required` (fine-tuning, and the resumable uploads and synthetic batches that
+    feed it, need a Pro or Enterprise plan) and `credits_exhausted` (an enforced
+    workspace has used its credits, which also refuses predictions); `Unauthorized` 403
+    `fine_tuning_unavailable` (fine-tuning is not turned on for the project);
+    `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs queued or
+    running as it may), `quota_exceeded` (the project's training data would pass its
+    quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`,
+    and lift only when the caller ends a run or deletes data, so clients do not retry
+    them; a 429 `rate_limited` passes on its own and may be retried. A run's create is
+    refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
+    queued or running) or `base_mismatch` (the fine-tune's versions train from another
+    base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
+    base).
     """
 
     ValidationError = "ValidationError"
@@ -574,8 +575,8 @@ class Usage(Payload):
 
     what a call is billed: its scored rows, and past the large-context line
     (`large_context_cells` in the price book) the GPU seconds of its own execution.
-    `calls` is how many model calls the engine made, each as many queries as the model
-    takes at once, as `/estimate` counts them
+    `calls` is the model calls the engine made to answer it, its result's
+    `timing.calls`
     """
 
     rows: int
@@ -602,12 +603,14 @@ class Timing(Payload):
     waited on, which `compute_seconds`, its own execution, leaves out
     """
 
+    calls: int
     queued_seconds: float
     cold_start_seconds: float
     compute_seconds: float
     compile_seconds: float | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("calls", "calls", True, _integer),
         Field("queued_seconds", "queued_seconds", True, _number),
         Field("cold_start_seconds", "cold_start_seconds", True, _number),
         Field("compile_seconds", "compile_seconds", False, _number),
@@ -871,17 +874,17 @@ class PredictionAccepted(Payload):
 class Limits(Payload):
     """The Limits schema.
 
-    the sizes a model was trained and measured to; a call past them is admitted by the
-    device's memory and carries a note
+    the context sizes a model was trained and measured to, its own as its catalog entry
+    gives them: a call past them is admitted by the device's memory and carries a note.
+    No count of queries is a limit: a call's queries are decoded in as many model calls
+    as the device needs, which `timing.calls` counts
     """
 
     context_rows: int
-    queries: int
     inputs: int
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("context_rows", "context_rows", True, _integer),
-        Field("queries", "queries", True, _integer),
         Field("inputs", "inputs", True, _integer),
     )
 
@@ -1533,6 +1536,36 @@ class ProjectList(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("projects", "projects", True, _items(_record(Project))),
         Field("organizations", "organizations", True, _items(_decode_Name)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Projects(Payload):
+    """The projects the credential reaches; `workspace.get` adds their organizations."""
+
+    projects: tuple[Project, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("projects", "projects", True, _items(_record(Project))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProjectsReply(Payload):
+    """The ProjectsReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: Projects
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(Projects)),
     )
 
 
@@ -4009,6 +4042,7 @@ class Environment(Payload):
     revision: int | None
     state: Literal["starting", "ready", "failed", "stopped"]
     generation: int
+    resolved: Resolved | None
     url: str
     calls_today: int | None = None
     p50_seconds: float | None = None
@@ -4025,6 +4059,7 @@ class Environment(Payload):
             _literal("starting", "ready", "failed", "stopped"),
         ),
         Field("generation", "generation", True, _integer),
+        Field("resolved", "resolved", True, _union(_record(Resolved), _null)),
         Field("calls_today", "calls_today", False, _integer),
         Field("p50_seconds", "p50_seconds", False, _union(_number, _null)),
         Field("updated", "updated", False, _text),
@@ -4761,17 +4796,25 @@ class SourceListReply(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class PermissionGrant(Payload):
-    """A permission keys may hold; one that is not enforced authorizes nothing yet."""
+    """A permission a role holds; one that is not enforced authorizes nothing yet.
+
+    `key_grantable` says whether an API key may hold it: false for those only a
+    signed-in browser session uses (`operators:read`, `sso:read`) and for every
+    reserved one, true for every other enforced permission. `keys.create` and
+    `keys.rotate` refuse a key a permission it may not hold
+    """
 
     name: Permission
     description: str
     enforced: bool
+    key_grantable: bool
     roles: tuple[Literal["admin", "editor", "viewer", "scorer"], ...]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("name", "name", True, _decode_Permission),
         Field("description", "description", True, _text),
         Field("enforced", "enforced", True, _boolean),
+        Field("key_grantable", "key_grantable", True, _boolean),
         Field(
             "roles",
             "roles",
@@ -4829,17 +4872,49 @@ class Principal(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class UploadLimits(Payload):
+    """The UploadLimits schema.
+
+    the sizes this service takes data in, for a client to size its requests by instead
+    of copying them: one streamed snapshot (`snapshots.create` with an Arrow body,
+    `?name=`) holds at most `snapshot_rows` rows and `snapshot_bytes` bytes; a
+    resumable upload at most `upload_rows` rows and `upload_bytes` bytes, or
+    `csv_bytes` for a CSV, sent in chunks of `chunk_bytes` unless the upload names its
+    own; a JSON request body holds at most `request_bytes`
+    """
+
+    snapshot_bytes: int
+    snapshot_rows: int
+    upload_bytes: int
+    upload_rows: int
+    csv_bytes: int
+    chunk_bytes: int
+    request_bytes: int
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("snapshot_bytes", "snapshot_bytes", True, _integer),
+        Field("snapshot_rows", "snapshot_rows", True, _integer),
+        Field("upload_bytes", "upload_bytes", True, _integer),
+        Field("upload_rows", "upload_rows", True, _integer),
+        Field("csv_bytes", "csv_bytes", True, _integer),
+        Field("chunk_bytes", "chunk_bytes", True, _integer),
+        Field("request_bytes", "request_bytes", True, _integer),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class AuthStatus(Payload):
     """The AuthStatus schema."""
 
     authenticated: Literal[True] = True
     principal: Principal
-    google: Literal["configured", "unconfigured"]
     sign_in: tuple[Literal["google", "microsoft", "github"], ...]
     secrets: Literal["configured", "unconfigured"]
     capabilities: tuple[Capability, ...]
     permission_inventory: tuple[PermissionGrant, ...]
     bootstrap: Literal["unconfigured", "available", "consumed"]
+    trains: bool
+    limits: UploadLimits
     key: KeyIdentity | None = None
     email: str | None = None
     machine: str | None = None
@@ -4849,7 +4924,6 @@ class AuthStatus(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("authenticated", "authenticated", True, _literal(True)),
         Field("principal", "principal", True, _record(Principal)),
-        Field("google", "google", True, _literal("configured", "unconfigured")),
         Field(
             "sign_in",
             "sign_in",
@@ -4870,6 +4944,8 @@ class AuthStatus(Payload):
             True,
             _literal("unconfigured", "available", "consumed"),
         ),
+        Field("trains", "trains", True, _boolean),
+        Field("limits", "limits", True, _record(UploadLimits)),
         Field("key", "key", False, _record(KeyIdentity)),
         Field("email", "email", False, _union(_text, _null)),
         Field("machine", "machine", False, _union(_text, _null)),
@@ -5018,7 +5094,6 @@ class Sso(Payload):
     """The Sso schema."""
 
     organization: Name
-    provider: Literal["google"] = "google"
     providers: tuple[Literal["google", "microsoft", "github"], ...]
     enabled: bool
     configured: bool
@@ -5026,7 +5101,6 @@ class Sso(Payload):
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("organization", "organization", True, _decode_Name),
-        Field("provider", "provider", True, _literal("google")),
         Field(
             "providers",
             "providers",
@@ -6999,7 +7073,10 @@ class Estimate(Payload):
     """The Estimate schema.
 
     what a call or a run would cost from the live price book: model calls, scored rows,
-    credits (1 credit is $0.001) and dollars
+    credits (1 credit is $0.001) and dollars. `calls` is the model calls the queries of
+    each call decode in, as the engine's worker splits them by its shape buckets (the
+    engine's `gf_engine.hosting.estimate_calls`); no model bounds the queries of a
+    call, and an answered call's `timing.calls` says what it took
     """
 
     calls: int
@@ -7161,6 +7238,7 @@ class Context(Payload):
     error: str | None
     predictors: tuple[Name, ...]
     experiments: tuple[Name, ...]
+    fine_tunes: tuple[str, ...]
     origin: Origin
     created: str
     updated: str
@@ -7193,6 +7271,7 @@ class Context(Payload):
         Field("error", "error", True, _union(_text, _null)),
         Field("predictors", "predictors", True, _items(_decode_Name)),
         Field("experiments", "experiments", True, _items(_decode_Name)),
+        Field("fine_tunes", "fine_tunes", True, _items(_text)),
         Field("origin", "origin", True, _record(Origin)),
         Field("created", "created", True, _text),
         Field("updated", "updated", True, _text),
@@ -9047,7 +9126,7 @@ ROUTES: tuple[Route, ...] = (
     ),
     Route("ready", "GET", "/readyz", None, Health, None),
     Route("live", "GET", "/livez", None, Health, None),
-    Route("projects.list", "GET", "/v1/projects", None, ProjectListReply, None),
+    Route("projects.list", "GET", "/v1/projects", None, ProjectsReply, None),
     Route(
         "projects.create",
         "POST",

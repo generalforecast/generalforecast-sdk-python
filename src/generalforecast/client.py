@@ -160,12 +160,18 @@ class _Base:
         return request.scoped and not self._connection.project
 
     def _learned(self, reply: _http.Reply) -> None:
+        """Keeps what an auth status says: the sizes the service takes data in, and a key's project when none was given."""
         me = _ops.me_of(reply.result or {}, self._connection.url)
-        if not me.project:
+        self._state.limits = me.limits
+        self._connection.project = self._connection.project or me.project
+
+    def _scoped(self, reply: _http.Reply) -> None:
+        """Learns the project from the key's auth status, before a request under it."""
+        self._learned(reply)
+        if not self._connection.project:
             raise InvalidInput(
                 "this key names no project", hint="pass project= or set GF_PROJECT"
             )
-        self._connection.project = me.project
 
 
 class Client(_Base):
@@ -233,8 +239,11 @@ class Client(_Base):
 
     def _send(self, request: _http.Request) -> _http.Reply:
         if self._check(request):
-            self._learned(self._transport.send(_http.auth_status()))
-        return self._transport.send(request)
+            self._scoped(self._transport.send(_http.auth_status()))
+        reply = self._transport.send(request)
+        if request.path == _http.AUTH_STATUS:
+            self._learned(reply)
+        return reply
 
     def _step(self, step: Any) -> Any:
         if isinstance(step, _http.Request):
@@ -347,8 +356,11 @@ class AsyncClient(_Base):
 
     async def _send(self, request: _http.Request) -> _http.Reply:
         if self._check(request):
-            self._learned(await self._transport.send(_http.auth_status()))
-        return await self._transport.send(request)
+            self._scoped(await self._transport.send(_http.auth_status()))
+        reply = await self._transport.send(request)
+        if request.path == _http.AUTH_STATUS:
+            self._learned(reply)
+        return reply
 
     async def _step(self, step: Any) -> Any:
         if isinstance(step, _http.Request):
