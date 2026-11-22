@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from generalforecast.cli import _login, _views
@@ -18,6 +19,7 @@ from generalforecast.cli._call import Call
 from generalforecast.cli._spec import (
     BUDGET,
     CLEAR,
+    DATA,
     EXPIRES,
     FILE_TEXT,
     FRACTION,
@@ -44,7 +46,7 @@ from generalforecast.cli._spec import (
     switch,
 )
 from generalforecast.term import duration, plural
-from generalforecast.types import TASKS, Evaluation, Plan
+from generalforecast.types import TASKS
 
 # Seconds between pages of `gf predictors logs --follow`.
 FOLLOW_SECONDS = 2.0
@@ -220,34 +222,49 @@ def deploy_view(call: Call, deploys: list[Any]) -> None:
 
 
 def run_create(call: Call) -> Any:
-    """Starts a fine-tuning run from its flags, or from `--from FILE`; `--dry-run` only resolves it."""
+    """Starts a fine-tuning run from its flags, or from `--from FILE`; `--wait` follows it to its end.
+
+    `--dry-run` prints the request that would start it.
+    """
+    import json
+
     from generalforecast import _ops
 
     settings: dict[str, Any] = dict(call.values)
-    wait = settings.pop("wait", False)
     source = call.options.get("from")
     if source is not None:
         if settings:
             given = ", ".join(f"--{k.replace('_', '-')}" for k in settings)
             raise Usage(
                 f"--from takes every setting from its file, not {given}",
-                hint="set them in the file's gf.FineTuneSpec",
+                hint="set them in the file",
             )
-        from generalforecast.cli._load import fine_tune
-
-        settings = fine_tune(source).arguments()
+        try:
+            settings = json.loads(Path(source).expanduser().read_text())
+        except (OSError, ValueError) as error:
+            raise Usage(f"{source} is not a JSON file of settings: {error}") from None
+        if not isinstance(settings, dict):
+            raise Usage(f"{source} holds no JSON object of runs.create's settings")
+    else:
+        call.require("base", "method")
     if call.options.get("dry_run"):
-        return call.client._run(_ops.run_request(call.name, **settings))
-    return call.method()(call.name, wait=wait, **settings)
+        return _ops.run_spec(call.name, **settings)
+    run = call.method()(call.name, **settings)
+    if not call.options.get("wait"):
+        return run
+    _views.run_started(call, run)
+    return call.method("runs.wait")(run)
 
 
 def run_created(call: Call, result: Any) -> None:
-    """The run's end once waited for, or with `--dry-run` the request that would start it."""
+    """The run started, its end once waited for, or with `--dry-run` the request that would start it."""
     if call.options.get("dry_run"):
         import json
 
         call.out.line(json.dumps(result, indent=2))
         return
+    if not result.done:
+        _views.run_started(call, result)
     _views.run_ended_line(call, result)
 
 
@@ -414,58 +431,71 @@ COMMANDS_LIST = [
              NAME, flags=(Flag("context", "The context rows", metavar="F"), Flag("queries", "The rows to score",
                                                                               metavar="F"),
                           *SPEC[2:], OUTPUT)),
-    _command("fine-tunes snapshots create", "Upload a training snapshot", _views.snapshot_created, NAME, flags=(
+    _command("snapshots create", "Upload a training table in chunks", _views.snapshot_created, NAME,
+             needs=("data", "target", "task"), flags=(
         Flag("file", "The table", to="data", metavar="F"),
-        _flag("tag", "A tag (repeatable)", metavar="T", to="tags", repeat=True),
         _flag("target", "The column a run learns to predict"),
-        _flag("task", "classification or regression", TASK))),
-    _command("fine-tunes snapshots synthesize", "Generate synthetic training tables", _views.batch_started, NAME,
-             flags=(
+        _flag("task", "classification or regression", TASK),
+        Flag("column-type", "A column's type, as age=numerical (repeatable)", PAIRS, to="column_types",
+             metavar="C=TYPE", repeat=True),
+        _flag("time", "The time column; a run holds out the latest rows by it"),
+        _flag("group", "The group column; a run holds out whole groups"),
+        _flag("tag", "A tag (repeatable)", metavar="T", to="tags", repeat=True),
+        WAIT[0])),
+    _command("snapshots stream", "Send a small training table as one Arrow stream", _views.snapshot_created, NAME,
+             needs=("data",), flags=(
+                 Flag("file", "The table", to="data", metavar="F"),
+                 _flag("target", "The column a run learns to predict"),
+                 _flag("task", "classification or regression", TASK),
+                 _flag("time", "The time column"), _flag("group", "The group column"))),
+    _command("snapshots create-synthetic", "Generate a batch of synthetic training tables", _views.batch_started,
+             NAME, flags=(
                  _flag("count", "How many tables, 1 to 64 (default: 1)", WHOLE),
                  _flag("seed", "Table i is seeded SEED + i", WHOLE),
-                 _flag("like", "Copy a snapshot's columns, types, task and classes", metavar="S"),
+                 _flag("schema-from", "Copy a snapshot's columns, types, task and classes", metavar="S"),
                  _flag("task", "classification or regression", TASK),
                  Flag("rows", "Rows per table, or a range", SPAN), Flag("columns", "Columns per table", SPAN),
                  Flag("classes", "Classes per table", SPAN), Flag("missing", "The share of cells missing", MISSING),
                  _flag("reject", "Drop tables that are trivial or unlearnable", NAMES, metavar="R,..."),
                  Flag("set", "Another generator setting, as graph_nodes=16 (repeatable)", SETTINGS, repeat=True),
                  _flag("tag", "A tag (repeatable)", metavar="T", to="tags", repeat=True))),
-    _command("fine-tunes snapshots list", "List training snapshots", _views.snapshots_list,
+    _command("snapshots synthetic", "Show a synthetic batch and its tables' states", _views.batch_get, NAME),
+    _command("snapshots list", "List training snapshots", _views.snapshots_list,
              flags=(_flag("tag", "Only those with this tag", metavar="T"),)),
-    _command("fine-tunes snapshots get", "Show a snapshot", _views.snapshots_get, NAME),
-    _command("fine-tunes snapshots batch", "Show a synthetic batch", _views.batch_get, NAME, sdk="fine_tunes.snapshots.batch"),
-    _command("fine-tunes snapshots tag", "Replace a snapshot's tags", _views.snapshot_tagged, NAME,
-             Arg("T,...", "The tags", NAMES)),
-    _command("fine-tunes snapshots delete", "Delete a snapshot; its name stays taken",
+    _command("snapshots get", "Show a snapshot", _views.snapshots_get, NAME),
+    _command("snapshots update", "Replace a snapshot's tags", _views.snapshot_tagged, NAME, needs=("tags",),
+             flags=(Flag("tags", 'The tags; "" clears them', NAMES, metavar="T,..."),)),
+    _command("snapshots delete", "Delete a snapshot; its name stays taken",
              _views.deleted("snapshot"), NAME, flags=(YES_FLAG,), ask=_ask("snapshot")),
-    _command("fine-tunes runs create", "Start a run that publishes NAME's next version, NAME@ftN", run_created,
-             NAME, run=run_create, reached=_views.run_started, settings={"plan": Plan, "evaluation": Evaluation},
-             flags=(
+    _command("runs create", "Start a run that publishes NAME's next version, NAME@ftN", run_created,
+             NAME, run=run_create, flags=(
                  _flag("base", "The model it trains from", metavar="M"),
-                 _flag("data", "Snapshots, batches, contexts and tag:T", NAMES, metavar="S,..."),
-                 _flag("target", "The column a context's rows train to predict", metavar="COLUMN"),
                  Flag("method", "lora:16, lora:16+adapter, adapter or full:COMPONENTS", METHOD),
+                 Flag("data", "Snapshots, tag:T and context:NAME[@VERSION]", DATA),
+                 _flag("target", "The column a context's rows train to predict", metavar="COLUMN"),
                  _flag("steps", "Training steps", WHOLE, to="plan.steps"),
                  _flag("learning-rate", "The learning rate", NUMBER, to="plan.learning_rate"),
-                 _flag("episode-rows", "Rows per episode", WHOLE, to="plan.episode_rows"),
+                 _flag("episode-rows", "Rows per episode", WHOLE, to="plan.episode_sampling.rows"),
                  Flag("holdout", "The share of rows held out to keep a step", FRACTION, to="evaluation.holdout"),
                  Flag("budget", "Stop and publish the best step by then", BUDGET),
                  _flag("seed", "The seed", WHOLE),
                  _flag("tag", "A tag (repeatable)", metavar="T", to="tags", repeat=True),
-                 Flag("wait", "Wait for the run to end", YES),
-                 Flag("from", "Take every setting from a Python file defining `run = gf.FineTuneSpec(...)`",
+                 Flag("wait", "Wait for the run to end", YES, to=None),
+                 Flag("from", "Take every setting from a JSON file of runs.create's keyword arguments",
                       to=None, metavar="FILE"),
-                 Flag("dry-run", "Print the resolved run instead of starting it", YES, to=None))),
-    _command("fine-tunes runs list", "List fine-tuning runs", _views.runs_list, flags=(
-        _flag("state", "Only runs in this state", metavar="S"), _flag("tag", "Only runs with this tag", metavar="T"))),
-    _command("fine-tunes runs get", "Show a run", _views.runs_get, RUN),
-    _command("fine-tunes runs wait", "Wait for a run to end", _views.run_ended_line, RUN,
-             flags=(Flag("wait", "Wait at most this many seconds", SECONDS, to="timeout"),)),
-    _command("fine-tunes runs watch", "Print a run's events as they happen, until it ends", _views.run_events, RUN,
-             key="events"),
-    _command("fine-tunes runs events", "Print every event of a run", _views.run_events, RUN, key="events"),
-    _command("fine-tunes runs cancel", "Cancel a run", _views.run_cancelled, RUN,
+                 Flag("dry-run", "Print the request instead of starting the run", YES, to=None))),
+    _command("runs list", "List fine-tuning runs", _views.runs_list, flags=(
+        _flag("state", "Only runs in this state", metavar="S"),
+        _flag("data-digest", "Only runs over the data with this digest", metavar="D"),
+        _flag("tag", "Only runs with this tag", metavar="T"))),
+    _command("runs get", "Show a run", _views.runs_get, RUN),
+    _command("runs cancel", "Cancel a run", _views.run_cancelled, RUN,
              flags=(Flag("save", "Publish the best step it has kept so far", YES),)),
+    _command("runs lineage", "Print every event of a run, oldest first", _views.run_lineage, RUN),
+    _command("runs wait", "Wait for a run to end", _views.run_ended_line, RUN,
+             flags=(Flag("wait", "Wait at most this many seconds", SECONDS, to="timeout"),)),
+    _command("runs watch", "Print a run's events as they happen, until it ends", _views.run_events, RUN,
+             key="events"),
 ]  # fmt: skip
 
 COMMANDS: dict[tuple[str, ...], Command] = {c.words: c for c in COMMANDS_LIST}
@@ -476,17 +506,10 @@ GROUPS: dict[tuple[str, ...], str] = {
     ): "The data models learn from, uploaded, imported from a source, or live",
     ("experiments",): "Models evaluated on one context for one target, run by run",
     ("predictors",): "Named, versioned endpoints serving a context",
+    ("snapshots",): "Training snapshots and synthetic batches: named, immutable tables",
     (
-        "fine-tunes",
-    ): "Training snapshots, synthetic batches, and runs that publish NAME@ftN",
-    (
-        "fine-tunes",
-        "snapshots",
-    ): "Snapshots and synthetic batches: named, immutable tables",
-    (
-        "fine-tunes",
         "runs",
-    ): "Runs: each run of a name publishes its next version, NAME@ftN",
+    ): "Fine-tuning runs: each run of a name publishes its next version, NAME@ftN",
     ("sources",): "Workspace connections to warehouses and buckets",
     ("keys",): "API keys",
     ("models",): "The catalog, and the project's published fine-tune versions",

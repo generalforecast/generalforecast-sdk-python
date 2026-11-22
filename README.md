@@ -167,35 +167,43 @@ keeps the estimators quiet.
 
 ## Fine-tuning
 
-`gf.fine_tunes` holds training snapshots, synthetic batches and runs. Each run
-of a name publishes its next version, `<name>@ft<n>`, trained afresh from the
-same base; a published version works anywhere a model goes.
+`gf.snapshots` holds training snapshots and synthetic batches, and `gf.runs`
+the runs that train on them. Each run of a name publishes its next version,
+`<name>@ft<n>`, trained afresh from the same base; a published version works
+anywhere a model goes. Settings are dicts, as the service takes them; results
+are typed.
 
 ```python
-snap = gf.fine_tunes.snapshots.create("credit-2026-01", data=rows,
-                                      target="defaulted", task="classification")
-warmup = gf.fine_tunes.snapshots.synthesize("credit-warmup", count=64, seed=0,
-                                            task="classification",
-                                            rows=gf.Range(1024, 8192))
-run = gf.fine_tunes.runs.create("credit-default", base="tabicl-v2",
-                                data=[warmup, snap, "adult@3"],
-                                plan=gf.Plan(steps=1000), wait=True)
+snap = gf.snapshots.create("credit-2026-01", rows, target="defaulted",
+                           task="classification")
+warmup = gf.snapshots.create_synthetic("credit-warmup", count=64, seed=0,
+                                       task="classification",
+                                       rows={"min": 1024, "max": 8192})
+run = gf.runs.create("credit-default", base="tabicl-v2",
+                     method={"type": "lora", "rank": 16},
+                     data=[{"tag": warmup.tag}, snap.name,
+                           {"context": "credit", "version": 3}],
+                     target="defaulted", plan={"steps": 1000})
+run = gf.runs.wait(run)
 run        # credit-default@ft1  finished  step 1,000/1,000  loss 0.410  ...
 ```
 
-`data` takes snapshots, batches, contexts (the run pins that version's
-snapshot) and `gf.Tag("nightly")`. `phases=[gf.Phase(...)]` trains a
-curriculum; `gf.LoRA`, `gf.InputAdapter`, `gf.Full`, `gf.ArchitectureChange`,
-`gf.Evaluation` and `gf.Budget` are the typed settings, so a typo fails
-before anything is sent.
+`snapshots.create` uploads in chunks; `snapshots.stream` sends a small table
+as one Arrow stream. A run's `data` names snapshots, `{"tag": T}` for every
+snapshot carrying a tag, and `{"context": NAME, "version": N}` for a context's
+version, which needs `target=`. `phases=[{"name", "data", "plan"}, ...]`
+trains a curriculum, and `architecture`, `evaluation` and `budget` take the
+service's settings. `runs.watch` yields a run's events as they happen,
+`runs.lineage` lists them all, and `runs.cancel(run, save=True)` publishes
+what a training run has kept.
 
 ## Clients and errors
 
 `gf.Client` and `gf.AsyncClient` carry the same resources: `contexts`,
-`experiments`, `predictors`, `fine_tunes`, `sources`, `keys` and `models`. Every error is a
-`gf.Error` with `message`, `hint`, `code`, `reason`, `request_id` and
-`recoverable`, false only for `Internal`, `Unavailable` and failed runs or
-deploys. Reads, and writes named by their id, are sent again after a lost
+`experiments`, `predictors`, `snapshots`, `runs`, `sources`, `keys` and
+`models`. Every error is a `gf.Error` with `message`, `hint`, `code`,
+`reason`, `request_id` and `recoverable`, false only for `Internal`,
+`Unavailable` and failed runs or deploys. Reads, and writes named by their id, are sent again after a lost
 connection, a 502, 503 or 504, or a 429 that passes, such as `rate_limited`;
 a 429 for a limit that lifts only when you end a run or delete data
 (`run_limit_reached`, `quota_exceeded`, `snapshot_quota_exceeded`) is raised

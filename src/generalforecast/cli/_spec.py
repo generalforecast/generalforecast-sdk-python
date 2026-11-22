@@ -7,8 +7,8 @@ A command mirrors `gf.<resource>.<verb>(NAME, **flags)`: its arguments are
 the method's positional arguments and each flag one keyword argument, `-`
 written for `_`. A `Kind` turns a flag's text into the value the keyword
 takes (`--models a,b` is a list, `--type age=number` a mapping); a dotted
-keyword (`plan.steps`) fills one field of a setting. The parser and the
-help both read these, so a flag is described in one place.
+keyword (`plan.steps`) fills one field of a setting's dict. The parser and
+the help both read these, so a flag is described in one place.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from generalforecast.errors import Error
@@ -115,52 +115,70 @@ def _fraction(text: str) -> float:
 
 
 def _span(text: str) -> Any:
-    """`1024` or `1024..8192`, a gf.Range."""
-    from generalforecast.types import Range
-
+    """`1024`, or `1024..8192` for a range, `{"min": 1024, "max": 8192}`."""
     low, sep, high = text.partition("..")
     if not sep:
         return _scalar(text)
-    return Range(_scalar(low), _scalar(high))
+    return {"min": _scalar(low), "max": _scalar(high)}
 
 
-def _missing(text: str) -> Any:
-    from generalforecast.types import Missing
-
+def _missing(text: str) -> dict[str, Any]:
+    """`5%`, or `1%..10%` for a range of rates."""
     low, sep, high = text.partition("..")
     if sep:
-        from generalforecast.types import Range
-
-        return Missing(Range(_fraction(low), _fraction(high)))
-    return Missing(_fraction(text))
+        return {"rate": {"min": _fraction(low), "max": _fraction(high)}}
+    return {"rate": _fraction(text)}
 
 
-def _method(text: str) -> Any:
-    """`lora:16`, `lora:16+adapter`, `adapter` or `full:COMPONENT,...`."""
-    from generalforecast.types import Full, InputAdapter, LoRA
+FULL_COMPONENTS = (
+    "column_encoder",
+    "row_encoder",
+    "in_context_transformer",
+    "prediction_head",
+)
 
+
+def _method(text: str) -> dict[str, Any]:
+    """`lora:16`, `lora:16+adapter`, `adapter`, or `full` with every component or `full:COMPONENT,...`."""
     name, _, rest = text.partition(":")
     if name == "adapter" and not rest:
-        return InputAdapter()
+        return {"type": "input_adapter"}
     if name == "lora":
         rank, plus, extra = rest.partition("+")
         if plus and extra != "adapter":
             raise ValueError(text)
-        return LoRA(rank=int(rank or 16), input_adapter=bool(plus))
+        method: dict[str, Any] = {"type": "lora", "rank": int(rank or 16)}
+        return {**method, "input_adapter": True} if plus else method
     if name == "full":
-        return Full(_names(rest)) if rest else Full()
+        return {"type": "full", "components": _names(rest) or list(FULL_COMPONENTS)}
     raise ValueError(text)
 
 
-def _budget(text: str) -> Any:
+def _budget(text: str) -> dict[str, float]:
     """`500credits` or `2h`."""
-    from generalforecast.types import Budget
-
     found = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(credits?|h|hours?)\s*", text)
     if found is None:
         raise ValueError(text)
-    amount = float(found[1])
-    return Budget(credits=amount) if found[2].startswith("c") else Budget(hours=amount)
+    return {"credits" if found[2].startswith("c") else "hours": float(found[1])}
+
+
+def _data(text: str) -> list[Any]:
+    """Snapshot names, `tag:T` and `context:NAME[@VERSION]`, as a run's data."""
+    items: list[Any] = []
+    for part in _names(text):
+        kind, sep, rest = part.partition(":")
+        if not sep:
+            items.append(part)
+        elif kind == "tag" and rest:
+            items.append({"tag": rest})
+        elif kind == "context" and rest:
+            name, at, version = rest.partition("@")
+            items.append(
+                {"context": name, **({"version": _whole(version)} if at else {})}
+            )
+        else:
+            raise ValueError(part)
+    return items
 
 
 def _selection(text: str) -> Any:
@@ -204,6 +222,7 @@ CLEAR = Kind("FIELD", lambda text: dict.fromkeys(_names(text)), "a field", sprea
 FILE_TEXT = Kind("F", _file_text, "a file to read")
 FRACTION = Kind("20%", _fraction, "a share such as 20% or 0.2")
 SPAN = Kind("N|MIN..MAX", _span, "a number or a range such as 1024..8192")
+DATA = Kind("S,...", _data, "snapshots, tag:T and context:NAME[@VERSION]")
 MISSING = Kind("5%", _missing, "a share of cells such as 5%")
 METHOD = Kind("METHOD", _method, "lora:16, lora:16+adapter, adapter or full:COMPONENTS")
 BUDGET = Kind("500credits|2h", _budget, "a budget such as 500credits or 2h")
@@ -247,7 +266,7 @@ class Flag:
     """A flag: one keyword argument of the SDK method, or `to=None` for one the CLI keeps.
 
     `to` defaults to the name with `-` as `_`; a dotted `to` (`plan.steps`)
-    is one field of the setting the command builds (`Command.settings`).
+    is one field of the dict the keyword takes, nested at each dot.
     """
 
     name: str
@@ -289,8 +308,8 @@ class Command:
     `run` replaces the plain call of `sdk` with the arguments; `before`
     reads what the command is about first, for `ask`, the question asked on
     a terminal before anything changes, and for `show`. `reached` shows a
-    step the SDK reports before the call returns. `settings` builds the
-    settings dotted flags fill, such as `plan` from `--steps`. A list
+    step the SDK reports before the call returns. `needs` are the keywords
+    the SDK method has no default for, refused when left out. A list
     result is printed under `key` in `--json`.
     """
 
@@ -304,7 +323,7 @@ class Command:
     reached: Callable[[Call, Any], None] | None = None
     before: Callable[[Call], Any] | None = None
     ask: Callable[[Call], str] | None = None
-    settings: dict[str, Callable[..., Any]] = field(default_factory=dict)
+    needs: tuple[str, ...] = ()
     key: str | None = None
     python: str = ""
 

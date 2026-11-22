@@ -99,13 +99,13 @@ def test_transient_failures_of_safe_requests_are_retried(fake):
 
 def test_a_429_is_retried_only_when_it_can_pass(fake):
     fake.throttle["runs_list"] = ["rate_limited"]
-    assert gf.fine_tunes.runs.list() == []
+    assert gf.runs.list() == []
     assert len(fake.calls_to("GET", r".*/runs")) == 2
     # A standing limit lifts only once the caller ends a run or deletes data.
     for reason in ("run_limit_reached", "quota_exceeded", "snapshot_quota_exceeded"):
         fake.throttle["runs_list"] = [reason]
         with pytest.raises(gf.CapacityExceeded) as error:
-            gf.fine_tunes.runs.list()
+            gf.runs.list()
         assert error.value.reason == reason and error.value.limit == 1
     assert len(fake.calls_to("GET", r".*/runs")) == 5
 

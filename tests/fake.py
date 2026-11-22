@@ -1319,10 +1319,12 @@ def runs_post(fake: Fake, call: Call) -> Any:
         elif isinstance(item, dict):
             data += [{"name": n, "digest": v["digest"], **pinned} for n, v in fake.training.items()
                      if item["tag"] in v["tags"]]  # fmt: skip
-        else:
+        elif item in fake.training:
             data.append(
                 {"name": item, "digest": fake.training[item]["digest"], **pinned}
             )
+        else:
+            raise Refusal(404, "NotFound", f"no snapshot named `{item}`", param="data")
     model = f"{fake.project}/{p['name']}@ft{version}"
     for name in dict.fromkeys(d["context"] for d in data if "context" in d):
         fake.contexts[name]["fine_tunes"].append(model)

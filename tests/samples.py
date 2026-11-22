@@ -245,19 +245,18 @@ churn = gf.Predictor(
 )
 """
 
-RUN_PY = """import generalforecast as gf
-
-run = gf.FineTuneSpec(
-    "tabicl-v2",
-    phases=[
-        gf.Phase("warmup", data=[gf.Tag("synthetic-credit-warmup")], steps=200),
-        gf.Phase("credit", data=["credit-2026-01", "adult@1"], steps=800, episode_rows=4096),
-    ],
-    target="income",
-    method=gf.LoRA(rank=16, input_adapter=True),
-    architecture=[gf.ArchitectureChange("row_encoder", to={"layers": 4})],
-    budget=gf.Budget(credits=500),
-)
+RUN_JSON = """{
+  "base": "tabicl-v2",
+  "method": {"type": "lora", "rank": 16, "input_adapter": true},
+  "phases": [
+    {"name": "warmup", "data": [{"tag": "synthetic-credit-warmup"}], "plan": {"steps": 200}},
+    {"name": "credit", "data": ["credit-2026-01", {"context": "adult", "version": 1}],
+     "plan": {"steps": 800, "episode_sampling": {"rows": 4096}}}
+  ],
+  "target": "income",
+  "architecture": [{"component": "row_encoder", "to": {"layers": 4}}],
+  "budget": {"credits": 500}
+}
 """
 
 
@@ -434,14 +433,10 @@ def _ran(fake: Fake) -> None:
     import generalforecast as gf
 
     _snapshot(fake)
-    gf.fine_tunes.runs.create("credit-default", base="tabicl-v2", data=["credit-2026-01"],
-                              plan=gf.Plan(steps=1000), wait=True)  # fmt: skip
-    gf.fine_tunes.runs.create(
-        "credit-default",
-        base="tabicl-v2",
-        data=["credit-2026-01"],
-        plan=gf.Plan(steps=1000),
-    )
+    settings = {"base": "tabicl-v2", "method": {"type": "lora", "rank": 16},
+                "data": ["credit-2026-01"], "plan": {"steps": 1000}}  # fmt: skip
+    gf.runs.wait(gf.runs.create("credit-default", **settings))
+    gf.runs.create("credit-default", **settings)
 
 
 def _queries(rows: int) -> Callable[[], pd.DataFrame]:
@@ -533,17 +528,17 @@ SAMPLES = [
     Sample("models-get", ("models get kumo-medium --task regression",)),
     Sample("models-predict", ("models predict tabicl-v2 --context train.csv --queries new.csv --target income",),
            files={"train.csv": lambda: adult(26048), "new.csv": _queries(3)}),
-    Sample("fine-tunes-snapshots", (
-        "fine-tunes snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification",
-        "fine-tunes snapshots list",
+    Sample("snapshots", (
+        "snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification",
+        "snapshots list",
     ), files={"credit.csv": lambda: pd.DataFrame({"income": [float(i) for i in range(40)],
                                                   "defaulted": [i % 2 for i in range(40)]})}),
-    Sample("fine-tunes-runs-create", (
-        "fine-tunes runs create credit-default --base tabicl-v2 --data credit-2026-01 --steps 1000 --wait",
+    Sample("runs-create", (
+        "runs create credit-default --base tabicl-v2 --method lora:16 --data credit-2026-01 --steps 1000 --wait",
     ), _snapshot),
-    Sample("fine-tunes-runs-from", ("fine-tunes runs create credit-default --from run.py --dry-run",),
-           _fine_tune, files={"run.py": lambda: RUN_PY}),
-    Sample("fine-tunes-runs-list", ("fine-tunes runs list", "fine-tunes runs get credit-default@ft1"), _ran),
+    Sample("runs-from", ("runs create credit-default --from run.json --dry-run",),
+           _fine_tune, files={"run.json": lambda: RUN_JSON}),
+    Sample("runs-list", ("runs list", "runs get credit-default@ft1"), _ran),
 ]  # fmt: skip
 
 

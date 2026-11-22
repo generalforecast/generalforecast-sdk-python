@@ -219,7 +219,8 @@ class Client(_Base):
         self.sources = resources.Sources(self)
         self.keys = resources.Keys(self)
         self.models = resources.Models(self)
-        self.fine_tunes = resources.FineTunes(self)
+        self.snapshots = resources.Snapshots(self)
+        self.runs = resources.Runs(self)
 
     def __enter__(self) -> Self:
         """Returns the client."""
@@ -336,7 +337,8 @@ class AsyncClient(_Base):
         self.sources = resources.AsyncSources(self)
         self.keys = resources.AsyncKeys(self)
         self.models = resources.AsyncModels(self)
-        self.fine_tunes = resources.AsyncFineTunes(self)
+        self.snapshots = resources.AsyncSnapshots(self)
+        self.runs = resources.AsyncRuns(self)
 
     async def __aenter__(self) -> Self:
         """Returns the client."""

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         Experiment,
         FineTuneRun,
         Key,
+        Lineage,
         LogEntry,
         Model,
         NewKey,
@@ -1065,6 +1066,11 @@ def run_events(call: Call, events: Iterable[RunEvent]) -> None:
     """Each event on its own line, as it arrives when watched."""
     for event in events:
         call.out.line(event_line(event))
+
+
+def run_lineage(call: Call, lineage: Lineage) -> None:
+    """Each of a run's events on its own line, oldest first."""
+    run_events(call, lineage.events)
 
 
 def run_cancelled(call: Call, run: FineTuneRun) -> None:

@@ -1,0 +1,33 @@
+--- 100 columns, not a terminal
+$ gf snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification
+   Uploading credit-2026-01  40 rows, 978 B
+   Verifying credit-2026-01
+     Created snapshot credit-2026-01  40 rows, 2 columns in 1.8s
+$ gf snapshots list
+  Name            State  Rows  Columns  Task            Tags               Created
+  credit-2026-01  ready    40        2  classification  nightly, uploaded  Oct 23 2025
+--- 100 columns, a terminal
+$ gf snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification
+[1;32m   Uploading[0m credit-2026-01  40 rows, 978 B
+[1;32m   Verifying[0m credit-2026-01
+[1;32m     Created[0m snapshot credit-2026-01  40 rows, 2 columns in 1.8s
+$ gf snapshots list
+  Name            State  Rows  Columns  Task            Tags               Created
+  credit-2026-01  ready    40        2  classification  nightly, uploaded  Oct 23 2025
+--- 44 columns, not a terminal
+$ gf snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification
+   Uploading credit-2026-01  40 rows, 978 B
+   Verifying credit-2026-01
+     Created snapshot credit-2026-01  40 rows, 2 columns in 1.8s
+$ gf snapshots list
+  Name            State  Rows  Columns
+  credit-2026-01  ready    40        2
+--- 44 columns, a terminal
+$ gf snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification
+[1;32m   Uploading[0m credit-2026-01  40 rows, 978 B
+[1;32m   Verifying[0m credit-2026-01
+[1;32m     Created[0m snapshot credit-2026-01  40
+             rows, 2 columns in 1.8s
+$ gf snapshots list
+  Name            State  Rows  Columns
+  credit-2026-01  ready    40        2
