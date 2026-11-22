@@ -982,7 +982,7 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
     return ok({
         "model": f"{CATALOG[0]['name']}@{CATALOG[0]['artifact']['digest']}", "task": "classification",
         "predictor": predictor, "revision": 1 if predictor else None,
-        "environment": payload.get("env") if predictor else None,
+        "environment": call.query.get("env", "production") if predictor else None,
         "context": {"source": "snapshot", "name": None, "version": None,
                     "digest": held or digest(str(predictor)), "rows": 26048, "as_of": None},
         "usage": {"calls": model_calls(rows), "rows": rows, "credits": 0.002 * rows,
