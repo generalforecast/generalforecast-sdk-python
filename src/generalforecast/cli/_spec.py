@@ -159,7 +159,7 @@ def _budget(text: str) -> dict[str, float]:
     found = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(credits?|h|hours?)\s*", text)
     if found is None:
         raise ValueError(text)
-    return {"credits" if found[2].startswith("c") else "hours": float(found[1])}
+    return {"credits" if found[2].startswith("c") else "gpu_hours": float(found[1])}
 
 
 def _data(text: str) -> list[Any]:

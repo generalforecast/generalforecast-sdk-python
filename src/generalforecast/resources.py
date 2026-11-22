@@ -799,9 +799,9 @@ class Runs(_Sync):
         run-wide settings. `architecture` lists changes to the base, each
         `{"component", "to", "stages", "init"}`; `evaluation` how rows are
         held out and a step kept, `{"holdout": 0.2}`; `budget` where it
-        stops and publishes its best kept step, `{"credits": 500}`. `target` is the
-        column a context's rows train to predict; a snapshot keeps the
-        target its metadata names.
+        stops and publishes its best kept step, `{"credits": 500}` or
+        `{"gpu_hours": 2}`. `target` is the column a context's rows train
+        to predict; a snapshot keeps the target its metadata names.
 
         Raises:
             InvalidInput: Before anything is sent, for `data` and `phases`

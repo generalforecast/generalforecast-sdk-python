@@ -175,7 +175,7 @@ def test_flags_become_the_sdk_keywords(monkeypatch, fake):
         "learning_rate": 0.0001,
         "episode_sampling": {"rows": 1024},
     }
-    assert run["evaluation"] == {"holdout": 0.1} and run["budget"] == {"hours": 2.0}
+    assert run["evaluation"] == {"holdout": 0.1} and run["budget"] == {"gpu_hours": 2.0}
     assert run["method"] == {"type": "lora", "rank": 8, "input_adapter": True}
     assert run["data"] == [
         "credit-2026-01",
