@@ -341,6 +341,9 @@ def test_whoami_shows_a_key_that_never_expires_without_a_date(monkeypatch, fake)
     code, out, _ = gf_cli(monkeypatch, "whoami")
     assert code == 0
     assert re.search(r"Key\s+notebook-maya-mbp$", out, re.MULTILINE), out
+    fake.trains = False
+    out = gf_cli(monkeypatch, "whoami")[1]
+    assert re.search(r"Fine-tuning\s+not offered by this service$", out, re.MULTILINE)
 
 
 def test_sources_list_and_tables_print_what_the_service_says_of_them(monkeypatch, fake):

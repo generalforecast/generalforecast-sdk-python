@@ -25,6 +25,8 @@ def test_the_project_is_learned_from_the_key_and_every_request_says_its_origin(f
     assert listing.headers["user-agent"].startswith("generalforecast-python/")
     gf.contexts.list()
     assert len(fake.calls_to("GET", "/v1/auth/status")) == 1
+    # The status that named the project also said the service's limits.
+    assert client.default()._state.limits.request_bytes == fake.limits["request_bytes"]
 
 
 def test_gf_project_skips_the_lookup(fake, env):
@@ -195,6 +197,7 @@ def test_a_key_that_never_expires_reads_as_one(fake):
     me = gf.whoami()
     assert me.key.name == "notebook-maya-mbp" and me.key.expires is None
     assert me.token_expires is None and me.key.state == "active"
+    assert me.trains and me.limits.snapshot_rows == fake.limits["snapshot_rows"]
 
 
 def test_an_interrupted_login_asks_for_a_key(fake, env, monkeypatch, capsys):

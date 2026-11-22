@@ -31,7 +31,7 @@ def test_list_and_get_return_the_same_model_shape(fake):
     one = gf.models.get("tabicl-v2", task="classification")
     assert one == next(m for m in models if m.id == one.id)
     # `limits` are the model's own, as the engine's catalog gives them.
-    assert one.kind == "catalog" and one.limits == gf.types.Limits(100000, 100, 10000)
+    assert one.kind == "catalog" and one.limits == gf.types.Limits(100000, 10000)
     assert one.digest and one.digest.startswith("sha256:")
     assert one.trained_on.rows == 100000
     with pytest.raises(gf.AmbiguousReference):
@@ -164,19 +164,24 @@ def test_predict_takes_predictor_fields_and_refuses_others(fake):
     assert error.value.hint == "a similar name exists: `horizon`"
 
 
-def test_a_context_past_the_snapshot_ceiling_fails_before_any_request(
-    fake, monkeypatch
-):
-    monkeypatch.setattr(_data, "SNAPSHOT_MAX_BYTES", 1000)
-    before = len(fake.calls)
+def test_a_context_past_the_services_snapshot_limits_fails_before_it_is_sent(fake):
+    # The limits are the service's, as `auth.status` says them, asked once.
+    fake.limits["snapshot_bytes"] = 1000
     with pytest.raises(gf.CapacityExceeded) as error:
         gf.models.predict("tabicl-v2", context=frame(500), queries=frame(1), target="y")
     assert error.value.limit == 1000 and error.value.actual > 1000
     assert "gf.contexts.create" in error.value.hint
-    assert len(fake.calls) == before
+    fake.limits.update(snapshot_bytes=1 << 25, snapshot_rows=100)
+    with gf.Client() as other, pytest.raises(gf.CapacityExceeded) as error:
+        other.models.predict(
+            "tabicl-v2", context=frame(101), queries=frame(1), target="y"
+        )
+    assert (error.value.limit, error.value.actual) == (100, 101)
+    assert not fake.calls_to("PUT", r".*/snapshots")
+    assert len(fake.calls_to("GET", r"/v1/auth/status")) == 2
 
 
-def test_estimators_fit_uploads_and_fail_fast(fake, monkeypatch):
+def test_estimators_fit_uploads_and_fail_fast(fake):
     X, y = frame(40).drop(columns="y"), frame(40)["y"]
     clf = gf.Classifier("tabicl-v2").fit(X, y)
     assert (
@@ -199,11 +204,11 @@ def test_estimators_fit_uploads_and_fail_fast(fake, monkeypatch):
         "inputs": X.shape[1],
         "task": "classification",
     }
-    monkeypatch.setattr(_data, "SNAPSHOT_MAX_BYTES", 100)
-    calls = len(fake.calls)
-    with pytest.raises(gf.CapacityExceeded):
-        gf.Classifier().fit(X, y)
-    assert len(fake.calls) == calls
+    fake.limits["snapshot_bytes"] = 100
+    puts = len(fake.calls_to("PUT", r".*/snapshots"))
+    with gf.Client() as other, pytest.raises(gf.CapacityExceeded):
+        gf.Classifier(client=other).fit(X, y)
+    assert len(fake.calls_to("PUT", r".*/snapshots")) == puts
     with pytest.raises(gf.InvalidInput):
         gf.Classifier().predict(X)
 
@@ -247,7 +252,8 @@ def test_json_parts_count_values_as_well_as_bytes(monkeypatch):
 
     monkeypatch.setattr(_ops, "JSON_PART_VALUES", 10)
     rows = [{"a": i, "b": i, "c": i, "d": i} for i in range(5)]
-    parts = _ops.json_parts(rows)
-    assert [len(p) for p in parts] == [2, 2, 1]
+    assert [len(p) for p in _ops.json_parts(rows, 1000)] == [2, 2, 1]
+    assert [len(p) for p in _ops.json_parts(rows, 40)] == [1, 1, 1, 1, 1]
     monkeypatch.undo()
-    assert [len(p) for p in _ops.json_parts(list(range(250)), 100)] == [100, 100, 50]
+    parts = _ops.json_parts(list(range(250)), 1000, 100)
+    assert [len(p) for p in parts] == [100, 100, 50]

@@ -27,14 +27,12 @@ from tests import fake as service
 from tests.fake import NOW, TOKEN, Fake
 
 
-def _model(
-    full: str, short: str, task: str, rows: int, queries: int = 100
-) -> dict[str, Any]:
+def _model(full: str, short: str, task: str, rows: int) -> dict[str, Any]:
     """A catalog entry with the engine catalog's limits: a forecaster takes 8 inputs, a tabular model 10,000."""
     family = short.split("-")[0]
     inputs = 8 if task == "forecast" else 10000
     return service.model(f"general-forecast/{full}", short, task, family=family,
-                         context_rows=rows, queries=queries, inputs=inputs)  # fmt: skip
+                         context_rows=rows, inputs=inputs)  # fmt: skip
 
 
 CATALOG = [
@@ -48,8 +46,8 @@ CATALOG = [
     _model("tabicl-v2-regressor", "tabicl-v2", "regression", 100000),
     _model("mitra-2-classifier", "mitra-2", "classification", 5120),
     _model("mitra-2-regressor", "mitra-2", "regression", 5120),
-    _model("chronos-2", "chronos-2", "forecast", 100000, 8),
-    _model("timestral-209m", "timestral-209m", "forecast", 100000, 8),
+    _model("chronos-2", "chronos-2", "forecast", 100000),
+    _model("timestral-209m", "timestral-209m", "forecast", 100000),
 ]  # fmt: skip
 
 ADULT_COLUMNS = [
@@ -93,6 +91,7 @@ def context(fake: Fake, name: str, **values: Any) -> dict[str, Any]:
         "name": name, "kind": "snapshot", "state": "ready", "version": 1, "versions": 1,
         "digest": service.digest(name), "rows": 32561, "id": None, "time": None, "source": None,
         "freshness_seconds": None, "read_at": None, "error": None, "predictors": [], "experiments": [],
+        "fine_tunes": [],
         "origin": service.origin(), "created": NOW, "updated": NOW, "file": None,
         "url": fake.link(f"data/contexts/{name}"), "_versions": [], "_rows": [],
         "columns": [{"name": n, "type": t, "missing": m, "distinct": None} for n, t, m in columns],
@@ -164,7 +163,8 @@ def predictor(
     environments = {}
     for env, (number, calls, p50) in envs.items():
         environments[env] = {
-            "name": env, "revision": number, "state": "ready", "generation": number, "calls_today": calls,
+            "name": env, "revision": number, "state": "ready", "generation": number,
+            "resolved": made[number - 1]["resolved"], "calls_today": calls,
             "p50_seconds": p50, "updated": NOW, "url": fake.link(f"predictors/{name}"),
             "_previous": number - 1 if number > 1 else None,
         }  # fmt: skip

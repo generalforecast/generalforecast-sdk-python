@@ -443,19 +443,19 @@ paths:
                       message: model tabicl-v2-classifier is not a catalog id
                       param: model
                       hint: use general-forecast/tabicl-v2-classifier
-                capacity:
+                selection:
                   value:
                     api_version: gf/v1
                     project: acme
                     request_id: r-6e7f8091a2b3c4d5e6f708192a3b4c5d
                     resource: {kind: predictor, name: ad-hoc}
                     error:
-                      code: CapacityExceeded
-                      message: queries exceed the limit for general-forecast/tabicl-v2-classifier
-                      param: queries
-                      hint: send the queries across calls; the SDK splits a larger call itself
-                      limit: 10000
-                      actual: 12000
+                      code: ValidationError
+                      message: selection reads 120000 rows per query; general-forecast/tabicl-v2-classifier reads at most 100000
+                      param: selection
+                      hint: lower selection.core or selection.neighbors
+                      limit: 100000
+                      actual: 120000
         "202":
           $ref: "#/components/responses/Accepted"
         "503":
@@ -549,8 +549,8 @@ paths:
                     resource: {kind: predictor, name: churn}
                     result:
                       environments:
-                        - {name: staging, revision: 8, state: ready, generation: 3, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
-                        - {name: production, revision: 7, state: ready, generation: 9, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
+                        - {name: staging, revision: 8, state: ready, generation: 3, resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
+                        - {name: production, revision: 7, state: ready, generation: 9, resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
 
   /v1/projects/{project}/predictors/{name}/environments/{environment}:
     get:
@@ -575,7 +575,7 @@ paths:
                     project: acme
                     request_id: r-c4d5e6f708192a3b4c5d6e7f8091a2b3
                     resource: {kind: predictor, name: churn}
-                    result: {name: production, revision: 7, state: ready, generation: 9, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
+                    result: {name: production, revision: 7, state: ready, generation: 9, resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
                 failed:
                   value:
                     api_version: gf/v1
@@ -587,6 +587,7 @@ paths:
                       revision: 8
                       state: failed
                       generation: 10
+                      resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                       url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
                       error:
                         message: "revision 8 did not start: its model ran out of memory loading the context"
@@ -630,7 +631,7 @@ paths:
                     project: acme
                     request_id: r-d5e6f708192a3b4c5d6e7f8091a2b3c4
                     resource: {kind: predictor, name: churn}
-                    result: {name: production, revision: 8, state: ready, generation: 10, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
+                    result: {name: production, revision: 8, state: ready, generation: 10, resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
 
   /v1/projects/{project}/predictors/{name}/environments/{environment}/rollback:
     post:
@@ -669,7 +670,7 @@ paths:
                     project: acme
                     request_id: r-e6f708192a3b4c5d6e7f8091a2b3c4d5
                     resource: {kind: predictor, name: churn}
-                    result: {name: production, revision: 7, state: ready, generation: 11, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
+                    result: {name: production, revision: 7, state: ready, generation: 11, resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}, url: "https://app.generalforecast.com/?project=acme#/predictors/churn"}
 
   /v1/projects/{project}/predictors/{name}/environments/{environment}/metrics:
     get:
@@ -946,6 +947,7 @@ paths:
                         error: null
                         predictors: [adult-income]
                         experiments: [adult-income]
+                        fine_tunes: []
                         origin:
                           surface: notebook
                           notebook: jupyter
@@ -976,6 +978,7 @@ paths:
                         error: null
                         predictors: []
                         experiments: []
+                        fine_tunes: []
                         origin:
                           surface: cli
                           notebook: null
@@ -1096,6 +1099,7 @@ paths:
                       error: null
                       predictors: []
                       experiments: []
+                      fine_tunes: []
                       origin:
                         surface: notebook
                         notebook: jupyter
@@ -1129,6 +1133,7 @@ paths:
                       error: null
                       predictors: []
                       experiments: []
+                      fine_tunes: []
                       origin:
                         surface: cli
                         notebook: null
@@ -1165,6 +1170,7 @@ paths:
                       error: null
                       predictors: []
                       experiments: []
+                      fine_tunes: []
                       origin:
                         surface: cli
                         notebook: null
@@ -1199,6 +1205,7 @@ paths:
                       error: null
                       predictors: []
                       experiments: []
+                      fine_tunes: []
                       origin:
                         surface: cli
                         notebook: null
@@ -1273,6 +1280,7 @@ paths:
                       error: null
                       predictors: [adult-income]
                       experiments: [adult-income]
+                      fine_tunes: [acme/credit-default@ft3]
                       origin:
                         surface: notebook
                         notebook: jupyter
@@ -1408,6 +1416,7 @@ paths:
                       error: null
                       predictors: [adult-income]
                       experiments: [adult-income]
+                      fine_tunes: []
                       origin:
                         surface: notebook
                         notebook: jupyter
@@ -1444,6 +1453,7 @@ paths:
                       error: null
                       predictors: [adult-income]
                       experiments: [adult-income]
+                      fine_tunes: []
                       origin:
                         surface: notebook
                         notebook: jupyter
@@ -1540,6 +1550,7 @@ paths:
                       error: null
                       predictors: []
                       experiments: []
+                      fine_tunes: []
                       origin:
                         surface: cli
                         notebook: null
@@ -1992,7 +2003,7 @@ paths:
                         target: income
                         task: classification
                         holdout: {kind: random, fraction: 0.2}
-                      estimate: {calls: 198, rows: 19539, credits: 39.1, usd: 0.0391}
+                      estimate: {calls: 6, rows: 19539, credits: 39.1, usd: 0.0391}
                       warnings: []
         "404":
           description: a model name no model has
@@ -2453,7 +2464,7 @@ paths:
                     request_id: r-978615c7afa668c1864b9577f53cb2b8
                     resource: {kind: experiment, name: adult-income}
                     result:
-                      estimate: {calls: 66, rows: 6513, credits: 13.0, usd: 0.013}
+                      estimate: {calls: 2, rows: 6513, credits: 13.0, usd: 0.013}
   /v1/projects/{project}/experiments/{name}/runs/{number}:
     get:
       operationId: experiments.runs.get
@@ -2780,6 +2791,7 @@ paths:
                             revision: 5
                             state: ready
                             generation: 9
+                            resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                             calls_today: 18330
                             p50_seconds: 0.92
                             updated: "2026-11-21T10:03:10Z"
@@ -2789,6 +2801,7 @@ paths:
                             revision: 5
                             state: ready
                             generation: 4
+                            resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                             calls_today: 0
                             updated: "2026-11-21T10:02:40Z"
                             url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
@@ -2906,6 +2919,7 @@ paths:
                         revision: 1
                         state: starting
                         generation: 1
+                        resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                         url: "https://app.generalforecast.com/?project=acme#/predictors/adult-income"
         "404":
           description: a model name no model has
@@ -3006,6 +3020,7 @@ paths:
                           revision: 5
                           state: ready
                           generation: 9
+                          resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                           calls_today: 18330
                           p50_seconds: 0.92
                           updated: "2026-11-21T10:03:10Z"
@@ -3015,6 +3030,7 @@ paths:
                           revision: 5
                           state: ready
                           generation: 4
+                          resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                           calls_today: 0
                           updated: "2026-11-21T10:02:40Z"
                           url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
@@ -3120,6 +3136,7 @@ paths:
                         revision: 5
                         state: starting
                         generation: 9
+                        resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                         url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
   /v1/projects/{project}/predictors/{name}/deploy:
     post:
@@ -3214,6 +3231,7 @@ paths:
                         revision: 5
                         state: starting
                         generation: 9
+                        resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                         url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
                 unchanged:
                   value:
@@ -3255,6 +3273,7 @@ paths:
                         revision: 5
                         state: ready
                         generation: 9
+                        resolved: {model: general-forecast/kumo-tabular-medium-classifier, short: kumo-medium, model_digest: "sha256:d0f1d0a2b4c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8", base_digest: null, task: classification, context: customers, context_version: 8, context_digest: "sha256:91ac03b7e5d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1", context_rows: 48210, inputs: [tenure_m, plan], types: {tenure_m: number, plan: category}}
                         url: "https://app.generalforecast.com/?project=acme#/predictors/churn"
                 planned:
                   value:
@@ -3456,7 +3475,7 @@ paths:
                     request_id: r-13ed0d6c9bc1190fb113dd21e0ed503f
                     resource: {kind: estimate, name: estimate}
                     result:
-                      calls: 66
+                      calls: 2
                       rows: 6513
                       credits: 13.0
                       usd: 0.013
@@ -3468,7 +3487,7 @@ paths:
                     request_id: r-e6b6d9f422b20f239389a868d23e548d
                     resource: {kind: estimate, name: estimate}
                     result:
-                      calls: 4120
+                      calls: 1
                       rows: 412000
                       credits: 1424.0
                       usd: 1.424
@@ -3928,7 +3947,7 @@ paths:
                             - {name: classification, state: supported}
                             - {name: hosted-predictor, state: supported}
                             - {name: request-context, state: supported}
-                          limits: {context_rows: 100000, queries: 100, inputs: 10000}
+                          limits: {context_rows: 100000, inputs: 10000}
                           warm_shapes: [{context_rows: 4096, queries: 128, inputs: 3, classes: 2}]
 
   /v1/projects/{project}/models/{model}:
@@ -4002,7 +4021,7 @@ paths:
                         - {name: classification, state: supported}
                         - {name: hosted-predictor, state: supported}
                         - {name: request-context, state: supported}
-                      limits: {context_rows: 100000, queries: 100, inputs: 10000}
+                      limits: {context_rows: 100000, inputs: 10000}
                       warm_shapes: [{context_rows: 4096, queries: 128, inputs: 3, classes: 2}]
                 fine_tune:
                   summary: a fine-tune by its name, with its versions
@@ -4059,7 +4078,7 @@ paths:
                         - {name: classification, state: supported}
                         - {name: hosted-predictor, state: supported}
                         - {name: request-context, state: supported}
-                      limits: {context_rows: 100000, queries: 100, inputs: 10000}
+                      limits: {context_rows: 100000, inputs: 10000}
                       warm_shapes: [{context_rows: 4096, queries: 128, inputs: 3, classes: 2}]
         "404":
           description: the server serves no model of that name
@@ -4145,11 +4164,11 @@ paths:
       summary: list the projects the caller can use
       responses:
         "200":
-          description: projects grouped by organization
+          description: the projects, each with its organization
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectListReply"
+                $ref: "#/components/schemas/ProjectsReply"
               examples:
                 listed:
                   value:
@@ -4160,7 +4179,6 @@ paths:
                     result:
                       projects:
                         - {name: acme, organization: acme-corp}
-                      organizations: [acme-corp]
     post:
       operationId: projects.create
       tags: [hosted]
@@ -4260,6 +4278,21 @@ paths:
                     request_id: r-f708192a3b4c5d6e7f8091a2b3c4d5e6
                     resource: {kind: api-key, name: new}
                     result: {id: key-0f1e2d3c4b5a69788796, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761300000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_0123, token: gf_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG}
+        "422":
+          description: a permission an API key may not hold, as `permission_inventory` says by `key_grantable`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorReply"
+              examples:
+                not_grantable:
+                  x-gf-hosted: true
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-f708192a3b4c5d6e7f8091a2b3c4d422
+                    resource: {kind: api-key, name: new}
+                    error: {code: ValidationError, message: "an API key may not hold sso:read", param: permissions, hint: "sso:read is a browser session's; give a key only the permissions permission_inventory marks key_grantable"}
 
   /v1/projects/{project}/keys/{key}/revoke:
     post:
@@ -4336,6 +4369,21 @@ paths:
                     request_id: r-192a3b4c5d6e7f8091a2b3c4d5e6f708
                     resource: {kind: api-key, name: key-0f1e2d3c4b5a69788796}
                     result: {id: key-1a2b3c4d5e6f70819293, project: acme, name: ci, permissions: [predictors:predict], created_at: 1761400000.0, expires_at: 1763892000.0, revoked_at: null, state: active, prefix: gf_ABCD, token: gf_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq, replaces: key-0f1e2d3c4b5a69788796}
+        "422":
+          description: a permission an API key may not hold, as `permission_inventory` says by `key_grantable`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorReply"
+              examples:
+                not_grantable:
+                  x-gf-hosted: true
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-192a3b4c5d6e7f8091a2b3c4d5e6f422
+                    resource: {kind: api-key, name: key-0f1e2d3c4b5a69788796}
+                    error: {code: ValidationError, message: "an API key may not hold sso:read", param: permissions, hint: "sso:read is a browser session's; give a key only the permissions permission_inventory marks key_grantable"}
 
   /v1/projects/{project}/secrets:
     get:
@@ -4782,6 +4830,26 @@ paths:
                       error: null
                       expires: null
                       created: 1761200000.0
+        '402':
+          description: the workspace's plan takes no resumable upload or synthetic batch (the Free plan), or its credits are used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorReply'
+              examples:
+                plan_required:
+                  x-gf-hosted: true
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-0a2c1e9a2b4d6f8031a5c7e9b2d4f402
+                    resource:
+                      kind: snapshot
+                      name: credit-2026-01
+                    error:
+                      code: PaymentRequired
+                      message: the Free plan takes tables of up to 100,000 rows and 32 MiB and does not include fine-tuning; upgrade to Pro to send larger tables and fine-tune models
+                      reason: plan_required
         '409':
           description: the name is another table's; a name is never reused
           content:
@@ -5027,6 +5095,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SyntheticBatchCreatedReply'
+        '402':
+          description: the workspace's plan takes no resumable upload or synthetic batch (the Free plan), or its credits are used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorReply'
+              examples:
+                plan_required:
+                  x-gf-hosted: true
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-0b2c1e9a2b4d6f8031a5c7e9b2d4f402
+                    resource:
+                      kind: snapshot
+                      name: credit-warmup
+                    error:
+                      code: PaymentRequired
+                      message: the Free plan takes tables of up to 100,000 rows and 32 MiB and does not include fine-tuning; upgrade to Pro to send larger tables and fine-tune models
+                      reason: plan_required
         '409':
           description: the batch exists with another payload, or one of its table names is taken
           content:
@@ -5386,6 +5474,26 @@ paths:
                     request_id: r-5e2c1e9a2b4d6f8031a5c7e9b2d4f6a8
                     resource: {kind: snapshot, name: credit-2026-01}
                     result: {name: credit-2026-01, received: 8388608, bytes: 52428800}
+        "402":
+          description: the workspace's plan takes no resumable upload or synthetic batch (the Free plan), or its credits are used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorReply'
+              examples:
+                plan_required:
+                  x-gf-hosted: true
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-0c2c1e9a2b4d6f8031a5c7e9b2d4f402
+                    resource:
+                      kind: snapshot
+                      name: credit-2026-01
+                    error:
+                      code: PaymentRequired
+                      message: the Free plan takes tables of up to 100,000 rows and 32 MiB and does not include fine-tuning; upgrade to Pro to send larger tables and fine-tune models
+                      reason: plan_required
   /v1/projects/{project}/runs:
     get:
       operationId: runs.list
@@ -6509,16 +6617,18 @@ paths:
                     result:
                       authenticated: true
                       principal: {kind: api-key, id: key-0f1e2d3c4b5a69788796, project: acme}
-                      google: configured
                       sign_in: [google, github]
                       secrets: configured
                       capabilities:
                         - {name: api-keys, state: supported}
                         - {name: enterprise-sso, state: unsupported, code: EnterpriseSSOUnavailable, reason: per-company IdP connections are not implemented}
                       permission_inventory:
-                        - {name: predictors:predict, description: Predict with predictors, enforced: true, roles: [admin, editor, scorer]}
-                        - {name: sso:write, description: Reserved; SSO changes need an account admin, enforced: false, roles: [admin]}
+                        - {name: predictors:predict, description: Predict with predictors, enforced: true, key_grantable: true, roles: [admin, editor, scorer]}
+                        - {name: sso:read, description: Read the organization's single sign-on, enforced: true, key_grantable: false, roles: [admin]}
+                        - {name: sso:write, description: Reserved; SSO changes need an account admin, enforced: false, key_grantable: false, roles: [admin]}
                       bootstrap: consumed
+                      trains: true
+                      limits: {snapshot_bytes: 33554432, snapshot_rows: 100000, upload_bytes: 8589934592, upload_rows: 10000000, csv_bytes: 268435456, chunk_bytes: 8388608, request_bytes: 1048576}
                       key: {id: key-0f1e2d3c4b5a69788796, name: cli-tejas-mbp, project: acme, expires_at: 1769076000.0}
                       email: tejas@example.com
                       machine: tejas-mbp
@@ -6663,7 +6773,7 @@ paths:
                     project: acme
                     request_id: r-a8b219703af3956e876f8a2f377e2548
                     resource: {kind: workspace, name: sso}
-                    result: {organization: acme-inc, provider: google, providers: [google, github], enabled: true, configured: true, membership_required: true}
+                    result: {organization: acme-inc, providers: [google, github], enabled: true, configured: true, membership_required: true}
     post:
       operationId: sso.configure
       tags: [hosted]
@@ -6698,7 +6808,7 @@ paths:
                     project: acme
                     request_id: r-2cf9d4ef9cf504e970f5f8d78efb81f6
                     resource: {kind: workspace, name: sso}
-                    result: {organization: acme-inc, provider: google, providers: [google, github], enabled: true, configured: true, membership_required: true}
+                    result: {organization: acme-inc, providers: [google, github], enabled: true, configured: true, membership_required: true}
 
   /v1/projects/{project}/audit:
     get:
@@ -8135,8 +8245,9 @@ components:
         `credential_unavailable`.
 
         Hosted fine-tuning's gates, with their `reason`:
-        `PaymentRequired` 402 `plan_required` (fine-tuning needs a Pro or
-        Enterprise plan) and `credits_exhausted` (an enforced workspace has
+        `PaymentRequired` 402 `plan_required` (fine-tuning, and the resumable
+        uploads and synthetic batches that feed it, need a Pro or Enterprise
+        plan) and `credits_exhausted` (an enforced workspace has
         used its credits, which also refuses predictions);
         `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not
         turned on for the project);
@@ -8308,8 +8419,8 @@ components:
       description: |
         what a call is billed: its scored rows, and past the large-context
         line (`large_context_cells` in the price book) the GPU seconds of its
-        own execution. `calls` is how many model calls the engine made, each
-        as many queries as the model takes at once, as `/estimate` counts them
+        own execution. `calls` is the model calls the engine made to answer
+        it, its result's `timing.calls`
       required: [rows, credits, usd]
       additionalProperties: false
       properties:
@@ -8326,9 +8437,16 @@ components:
         `compile_seconds` is the time its steps spent compiling or loading
         programs they waited on, which `compute_seconds`, its own execution,
         leaves out
-      required: [queued_seconds, cold_start_seconds, compute_seconds]
+      required: [calls, queued_seconds, cold_start_seconds, compute_seconds]
       additionalProperties: false
       properties:
+        calls:
+          type: integer
+          minimum: 1
+          description: |
+            the model calls the engine made to answer the call: each step
+            that answered it, counted once for every piece of the step's
+            queries the device decoded that held some of this call's
         queued_seconds: {type: number, minimum: 0}
         cold_start_seconds: {type: number, minimum: 0}
         compile_seconds: {type: number, minimum: 0}
@@ -8531,13 +8649,15 @@ components:
     Limits:
       type: object
       description: |
-        the sizes a model was trained and measured to; a call past them is
-        admitted by the device's memory and carries a note
-      required: [context_rows, queries, inputs]
+        the context sizes a model was trained and measured to, its own as
+        its catalog entry gives them: a call past them is admitted by the
+        device's memory and carries a note. No count of queries is a
+        limit: a call's queries are decoded in as many model calls as the
+        device needs, which `timing.calls` counts
+      required: [context_rows, inputs]
       additionalProperties: false
       properties:
         context_rows: {type: integer, minimum: 1}
-        queries: {type: integer, minimum: 1}
         inputs: {type: integer, minimum: 1}
 
     Shape:
@@ -8937,6 +9057,25 @@ components:
         organizations:
           type: array
           items: {$ref: "#/components/schemas/Name"}
+
+    Projects:
+      type: object
+      description: the projects the credential reaches; `workspace.get` adds their organizations
+      required: [projects]
+      additionalProperties: false
+      properties:
+        projects:
+          type: array
+          items: {$ref: "#/components/schemas/Project"}
+
+    ProjectsReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/Projects"
 
     ProjectListReply:
       allOf:
@@ -11262,7 +11401,7 @@ components:
     Environment:
       type: object
       description: "a pointer to a revision; `generation` guards promote and rollback"
-      required: [name, revision, state, generation, url]
+      required: [name, revision, state, generation, resolved, url]
       additionalProperties: false
       properties:
         name:
@@ -11275,6 +11414,14 @@ components:
           type: string
           enum: [starting, ready, failed, stopped]
         generation: {type: integer, minimum: 0}
+        resolved:
+          oneOf:
+          - $ref: "#/components/schemas/Resolved"
+          - type: "null"
+          description: |
+            what the revision the environment serves now resolved to, as that
+            revision's `resolved`: while a deploy or promote starts another,
+            the one it still serves; null when it serves none
         calls_today: {type: integer, minimum: 0}
         p50_seconds:
           type:
@@ -11699,13 +11846,20 @@ components:
 
     PermissionGrant:
       type: object
-      description: a permission keys may hold; one that is not enforced authorizes nothing yet
-      required: [name, description, enforced, roles]
+      description: |
+        a permission a role holds; one that is not enforced authorizes
+        nothing yet. `key_grantable` says whether an API key may hold it:
+        false for those only a signed-in browser session uses
+        (`operators:read`, `sso:read`) and for every reserved one, true for
+        every other enforced permission. `keys.create` and `keys.rotate`
+        refuse a key a permission it may not hold
+      required: [name, description, enforced, key_grantable, roles]
       additionalProperties: false
       properties:
         name: {$ref: "#/components/schemas/Permission"}
         description: {type: string}
         enforced: {type: boolean}
+        key_grantable: {type: boolean}
         roles:
           type: array
           items: {type: string, enum: [admin, editor, viewer, scorer]}
@@ -11740,14 +11894,14 @@ components:
 
     AuthStatus:
       type: object
-      required: [authenticated, principal, google, sign_in, secrets, capabilities, permission_inventory, bootstrap]
+      required: [authenticated, principal, sign_in, secrets, capabilities, permission_inventory, bootstrap, trains, limits]
       additionalProperties: false
       properties:
         authenticated: {type: boolean, const: true}
         principal: {$ref: "#/components/schemas/Principal"}
-        google: {type: string, enum: [configured, unconfigured]}
         sign_in:
           type: array
+          description: the sign-in providers the server has configured, none when it signs no one in
           items: {type: string, enum: [google, microsoft, github]}
         secrets: {type: string, enum: [configured, unconfigured]}
         capabilities:
@@ -11757,6 +11911,13 @@ components:
           type: array
           items: {$ref: "#/components/schemas/PermissionGrant"}
         bootstrap: {type: string, enum: [unconfigured, available, consumed]}
+        trains:
+          type: boolean
+          description: |
+            whether this service fine-tunes models at all, as it has a
+            trainer configured; not a plan's say: a plan without fine-tuning
+            is told by `runs.create`'s 402 `plan_required`
+        limits: {$ref: "#/components/schemas/UploadLimits"}
         key: {$ref: "#/components/schemas/KeyIdentity"}
         email: {type: [string, "null"]}
         machine: {type: [string, "null"]}
@@ -11765,6 +11926,28 @@ components:
             - $ref: "#/components/schemas/WorkspaceIdentity"
             - type: "null"
         url: {type: string, description: "the console page of the caller's project"}
+
+    UploadLimits:
+      type: object
+      description: |
+        the sizes this service takes data in, for a client to size its
+        requests by instead of copying them: one streamed snapshot
+        (`snapshots.create` with an Arrow body, `?name=`) holds at most
+        `snapshot_rows` rows and `snapshot_bytes` bytes; a resumable upload
+        at most `upload_rows` rows and `upload_bytes` bytes, or
+        `csv_bytes` for a CSV, sent in chunks of `chunk_bytes` unless the
+        upload names its own; a JSON request body holds at most
+        `request_bytes`
+      required: [snapshot_bytes, snapshot_rows, upload_bytes, upload_rows, csv_bytes, chunk_bytes, request_bytes]
+      additionalProperties: false
+      properties:
+        snapshot_bytes: {type: integer, minimum: 1}
+        snapshot_rows: {type: integer, minimum: 1}
+        upload_bytes: {type: integer, minimum: 1}
+        upload_rows: {type: integer, minimum: 1}
+        csv_bytes: {type: integer, minimum: 1}
+        chunk_bytes: {type: integer, minimum: 1}
+        request_bytes: {type: integer, minimum: 1}
 
     AuthStatusReply:
       allOf:
@@ -11832,11 +12015,10 @@ components:
 
     Sso:
       type: object
-      required: [organization, provider, providers, enabled, configured, membership_required]
+      required: [organization, providers, enabled, configured, membership_required]
       additionalProperties: false
       properties:
         organization: {$ref: "#/components/schemas/Name"}
-        provider: {type: string, const: google}
         providers:
           type: array
           items: {type: string, enum: [google, microsoft, github]}
@@ -12873,7 +13055,13 @@ components:
 
     Estimate:
       type: object
-      description: "what a call or a run would cost from the live price book: model calls, scored rows, credits (1 credit is $0.001) and dollars"
+      description: |
+        what a call or a run would cost from the live price book: model
+        calls, scored rows, credits (1 credit is $0.001) and dollars. `calls`
+        is the model calls the queries of each call decode in, as the
+        engine's worker splits them by its shape buckets (the engine's
+        `gf_engine.hosting.estimate_calls`); no model bounds the queries of
+        a call, and an answered call's `timing.calls` says what it took
       required: [calls, rows, credits, usd]
       additionalProperties: false
       properties:
@@ -13002,7 +13190,7 @@ components:
     Context:
       type: object
       description: "the data a model learns from; `version` is the latest (or the one read), `upload` where an upload's chunks go"
-      required: [name, kind, state, version, versions, digest, rows, columns, id, time, source, freshness_seconds, read_at, error, predictors, experiments, origin, created, updated, url]
+      required: [name, kind, state, version, versions, digest, rows, columns, id, time, source, freshness_seconds, read_at, error, predictors, experiments, fine_tunes, origin, created, updated, url]
       additionalProperties: false
       properties:
         name:
@@ -13066,6 +13254,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Name"
+        fine_tunes:
+          type: array
+          description: "the fine-tuned models made from it, by model id, as `acme/credit-default@ft3`"
+          items: {type: string}
         origin:
           $ref: "#/components/schemas/Origin"
         created: {type: string, format: date-time}

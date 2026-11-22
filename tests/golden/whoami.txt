@@ -1,29 +1,33 @@
 --- 100 columns, not a terminal
 $ gf whoami
-  Email      maya@acme.com
-  Workspace  Acme Analytics
-  Project    acme
-  Key        cli-maya-mbp, expires Feb 19 2027
+  Email        maya@acme.com
+  Workspace    Acme Analytics
+  Project      acme
+  Key          cli-maya-mbp, expires Feb 19 2027
+  Fine-tuning  offered
         View https://app.generalforecast.com/?project=acme
 --- 100 columns, a terminal
 $ gf whoami
-  Email      maya@acme.com
-  Workspace  Acme Analytics
-  Project    acme
-  Key        cli-maya-mbp, expires Feb 19 2027
+  Email        maya@acme.com
+  Workspace    Acme Analytics
+  Project      acme
+  Key          cli-maya-mbp, expires Feb 19 2027
+  Fine-tuning  offered
 [1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme\https://app.generalforecast.com/?project=acme]8;;\
 --- 44 columns, not a terminal
 $ gf whoami
-  Email      maya@acme.com
-  Workspace  Acme Analytics
-  Project    acme
-  Key        cli-maya-mbp, expires Feb 19 2027
+  Email        maya@acme.com
+  Workspace    Acme Analytics
+  Project      acme
+  Key          cli-maya-mbp, expires Feb 19 2027
+  Fine-tuning  offered
         View https://app.generalforecast.com/?project=acme
 --- 44 columns, a terminal
 $ gf whoami
-  Email      maya@acme.com
-  Workspace  Acme Analytics
-  Project    acme
-  Key        cli-maya-mbp,
-             expires Feb 19 2027
+  Email        maya@acme.com
+  Workspace    Acme Analytics
+  Project      acme
+  Key          cli-maya-mbp,
+               expires Feb 19 2027
+  Fine-tuning  offered
 [1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme\https://app.generalforecast.com/?project=acme]8;;\

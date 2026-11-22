@@ -117,6 +117,11 @@ def full_model(resolved: Resolved) -> str:
     return resolved.model + pin
 
 
+def serves(resolved: Resolved | None) -> str:
+    """`kumo-medium on adult v1`, what an environment serves; empty while it serves nothing."""
+    return f"{short_model(resolved)} on {served(resolved)}" if resolved else ""
+
+
 def short_model(resolved: Resolved) -> str:
     """`tabicl-v2`, or the model's name when the service gave no short name."""
     return resolved.short or _render.model_name(resolved.model)
@@ -276,7 +281,8 @@ def contexts_list(call: Call, contexts: list[Context]) -> None:
             context_source(c),
             "" if c.rows is None else count(c.rows),
             when(c.updated),
-            ", ".join(dict.fromkeys([*c.predictors, *c.experiments])) or "none",
+            ", ".join(dict.fromkeys([*c.predictors, *c.experiments, *c.fine_tunes]))
+            or "none",
         ]
         for c in contexts
     ]
@@ -295,6 +301,7 @@ def contexts_get(call: Call, context: Context) -> None:
         kind = "live, rows arrive through the API"
     used = [f"experiment {name}" for name in context.experiments]
     used += [f"predictor {name}" for name in context.predictors]
+    used += [f"fine-tune {model}" for model in context.fine_tunes]
     rows = [
         ("Name", context.name),
         ("Kind", kind),
@@ -373,7 +380,7 @@ def run_ended(call: Call, experiment: Experiment) -> None:
 
 
 def experiment_estimate(call: Call, estimate: Any) -> None:
-    """`Estimated 198 calls on 19,539 rows  39.1 credits ($0.039)`, then any warnings."""
+    """`Estimated 6 calls on 19,539 rows  39.1 credits ($0.039)`, then any warnings."""
     call.out.status(
         "Estimated",
         f"{plural(estimate.calls, 'call')} on {plural(estimate.rows, 'row')}  "
@@ -547,7 +554,7 @@ def predictor_deployed(call: Call, info: PredictorInfo) -> None:
 
 
 def predictors_get(call: Call, info: PredictorInfo) -> None:
-    """The predictor's task, model and context, then its environments."""
+    """The predictor's task, model and context, then its environments and what each serves."""
     out = call.out
     spec, resolved = info.spec, info.resolved
     task = resolved.task if resolved and resolved.task else spec.task if spec else None
@@ -568,15 +575,17 @@ def predictors_get(call: Call, info: PredictorInfo) -> None:
                 e.name,
                 count(e.revision),
                 e.state,
+                serves(e.resolved),
                 count(e.calls_today),
                 duration(e.p50_seconds) if e.p50_seconds else "",
             ]
             for e in info.environments.values()
         ]
         out.table(
-            ["Environment", "Revision", "State", "Calls today", "p50"],
+            ["Environment", "Revision", "State", "Serves", "Calls today", "p50"],
             rows,
-            align="<><>>",
+            align="<><<>>",
+            drop=(3,),
         )
 
 
@@ -822,7 +831,7 @@ def key_changed(verb: str) -> Any:
 
 
 def models_list(call: Call, models: list[Model]) -> None:
-    """One row per model family: its tasks, context rows and queries per call."""
+    """One row per model family: its tasks, and the context rows and inputs it was measured to."""
     families: dict[str, list[Model]] = {}
     for model in models:
         families.setdefault(model.short or model.id, []).append(model)
@@ -834,10 +843,10 @@ def models_list(call: Call, models: list[Model]) -> None:
                 short,
                 ", ".join(dict.fromkeys(m.task or "" for m in found if m.task)),
                 count(limits.context_rows) if limits and limits.context_rows else "",
-                count(limits.queries) if limits and limits.queries else "",
+                count(limits.inputs) if limits and limits.inputs else "",
             ]
         )
-    header = ["Model", "Tasks", "Context rows", "Queries per call"]
+    header = ["Model", "Tasks", "Context rows", "Inputs"]
     call.out.table(header, rows, align="<<>>", drop=(3, 2))
 
 
@@ -852,12 +861,11 @@ def models_get(call: Call, model: Model) -> None:
             f"{count(value)} {noun}"
             for value, noun in (
                 (limits.context_rows, "context rows"),
-                (limits.queries, "queries"),
                 (limits.inputs, "inputs"),
             )
             if value
         ]
-        rows.append(("Limits", listed(parts) + " per call"))
+        rows.append(("Limits", listed(parts)))
     trained = model.trained_on
     if trained is not None:
         parts = [

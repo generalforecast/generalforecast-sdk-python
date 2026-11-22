@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 API_VERSION = "gf/v1"
+AUTH_STATUS = "/v1/auth/status"
 DEFAULT_URL = "https://app.generalforecast.com"
 ARROW = "application/vnd.apache.arrow.stream"
 OCTETS = "application/octet-stream"
@@ -126,8 +127,8 @@ def _query(**params: Any) -> dict[str, Any]:
 
 
 def auth_status() -> Request:
-    """Who the credential acts for."""
-    return Request("GET", "/v1/auth/status", "workspace", "auth", scoped=False)
+    """Who the credential acts for, and the sizes the service takes data in."""
+    return Request("GET", AUTH_STATUS, "workspace", "auth", scoped=False)
 
 
 def auth_logout() -> Request:

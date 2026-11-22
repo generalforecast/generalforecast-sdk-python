@@ -84,6 +84,7 @@ from generalforecast.types import (
     Tag,
     Timing,
     TrainedOn,
+    UploadLimits,
     WriteReceipt,
     instant,
     load,
@@ -137,9 +138,10 @@ class Notify:
 
 @dataclass
 class State:
-    """What a client remembers between calls: snapshots it knows the service holds."""
+    """What a client remembers between calls: snapshots it knows the service holds, and the sizes it takes data in."""
 
     snapshots: set[str] = field(default_factory=set)
+    limits: UploadLimits | None = None
 
 
 Op = Generator[Any, Any, Any]
@@ -266,6 +268,14 @@ def whoami(server: str) -> Op:
     return me_of(reply.result or {}, server)
 
 
+def upload_limits(state: State) -> Op:
+    """The sizes the service takes data in, as `auth.status` says them; asked once a client."""
+    if state.limits is None:
+        reply = yield _http.auth_status()
+        state.limits = load(UploadLimits, reply.result["limits"])
+    return state.limits
+
+
 def me_of(result: Mapping[str, Any], server: str, expires: Any = None) -> Me:
     """A `Me` from an auth status or a device login's token reply."""
     principal = result.get("principal") or {}
@@ -281,6 +291,7 @@ def me_of(result: Mapping[str, Any], server: str, expires: Any = None) -> Me:
     url = result.get("url") or (
         f"{server}/?project={project}" if project else server + "/"
     )
+    limits = result.get("limits")
     return Me(
         email=result.get("email"),
         workspace=workspace,
@@ -288,6 +299,8 @@ def me_of(result: Mapping[str, Any], server: str, expires: Any = None) -> Me:
         key=found,
         token_expires=token_expires,
         url=url,
+        trains=result.get("trains"),
+        limits=load(UploadLimits, limits) if isinstance(limits, Mapping) else None,
     )
 
 
@@ -367,6 +380,7 @@ def _upload_spec(rows: Any, body: bytes, data: Any) -> dict[str, Any]:
 
 
 def context_create(
+    state: State,
     name: str,
     *,
     data: Any = None,
@@ -446,7 +460,7 @@ def context_create(
         )
         found = load(Context, reply.result)
         if rows is not None and rows.num_rows:
-            yield from _write(name, "append", _records(rows), None, {})
+            yield from _write(state, name, "append", _records(rows), None, {})
             reply = yield _http.contexts_get(name)
             found = load(Context, reply.result)
         return found
@@ -491,6 +505,7 @@ def _upload(
         name,
         body,
         upload,
+        upload["chunk_bytes"],
         lambda offset, piece: _http.contexts_bytes(name, version, offset, piece),
     )
     return replace(found, state="uploading" if found.state == "ready" else found.state)
@@ -514,9 +529,10 @@ def _chunks(
     name: str,
     body: bytes,
     upload: Mapping[str, Any],
+    chunk: int,
     plane: Callable[[int, bytes], _http.Request],
 ) -> Op:
-    """Sends an upload's bytes in its `chunk_bytes` chunks, each from where the service holds them to.
+    """Sends an upload's bytes in `chunk`-byte chunks, each from where the service holds them to.
 
     The chunks go to the upload's signed `url`, or to the plane's bytes
     route (`plane`) when the service gave none.
@@ -525,7 +541,6 @@ def _chunks(
         Unavailable: When a chunk added nothing to what the service holds.
     """
     url = upload.get("url")
-    chunk = int(upload.get("chunk_bytes") or _data.UPLOAD_CHUNK_BYTES)
     total, offset = len(body), 0
     while offset < total:
         piece = body[offset : offset + chunk]
@@ -611,14 +626,17 @@ def _records(rows: Any) -> list[dict[str, Any]]:
     return [_jsonable(row) for row in rows.to_pylist()]
 
 
-JSON_PART_BYTES = 900_000
 JSON_PART_VALUES = 60_000
+# The room a write's envelope takes in its request body beside its items.
+ENVELOPE_BYTES = 4096
 # The rows or labels one write to a live context carries at most, as the contract has it.
 WRITE_ITEMS = 100
 
 
-def json_parts(items: list[Any], most: int | None = None) -> list[list[Any]]:
-    """Items in parts under the JSON bounds, bytes and values both (3.10), and at most `most` a part."""
+def json_parts(
+    items: list[Any], max_bytes: int, most: int | None = None
+) -> list[list[Any]]:
+    """Items in parts of at most `max_bytes` and the JSON values bound (3.10), and at most `most` a part."""
     parts: list[list[Any]] = []
     current: list[Any] = []
     size = values = 0
@@ -627,9 +645,7 @@ def json_parts(items: list[Any], most: int | None = None) -> list[list[Any]]:
         count = len(item) + 1 if isinstance(item, Mapping) else 1
         full = most is not None and len(current) == most
         if current and (
-            full
-            or size + encoded > JSON_PART_BYTES
-            or values + count > JSON_PART_VALUES
+            full or size + encoded > max_bytes or values + count > JSON_PART_VALUES
         ):
             parts.append(current)
             current, size, values = [], 0, 0
@@ -642,6 +658,7 @@ def json_parts(items: list[Any], most: int | None = None) -> list[list[Any]]:
 
 
 def _write(
+    state: State,
     name: str,
     verb: str,
     items: list[Any],
@@ -652,7 +669,8 @@ def _write(
     if not items:
         raise InvalidInput(f"there are no {field_name} to {verb}", param="data")
     base = key or f"{verb}-{os.urandom(8).hex()}"
-    parts = json_parts(items, WRITE_ITEMS)
+    limits = yield from upload_limits(state)
+    parts = json_parts(items, limits.request_bytes - ENVELOPE_BYTES, WRITE_ITEMS)
     total = sequence = 0
     for index, part in enumerate(parts):
         write_id = base if len(parts) == 1 else f"{base}-{index + 1}"
@@ -666,19 +684,21 @@ def _write(
 
 
 def context_append(
-    context: Any, data: Any, *, idempotency_key: str | None = None
+    state: State, context: Any, data: Any, *, idempotency_key: str | None = None
 ) -> Op:
     """Appends rows to an API-fed live context."""
     name = name_of(context, "context")
-    return (
-        yield from _write(
-            name, "append", _records(_data.table(data)), idempotency_key, {}
-        )
-    )
+    rows = _records(_data.table(data))
+    return (yield from _write(state, name, "append", rows, idempotency_key, {}))
 
 
 def context_label(
-    context: Any, data: Any, *, target: str, idempotency_key: str | None = None
+    state: State,
+    context: Any,
+    data: Any,
+    *,
+    target: str,
+    idempotency_key: str | None = None,
 ) -> Op:
     """Fills `target` for rows already in a live context, matched by its id column."""
     name = name_of(context, "context")
@@ -702,7 +722,9 @@ def context_label(
         )
     ]
     return (
-        yield from _write(name, "label", labels, idempotency_key, {"target": target})
+        yield from _write(
+            state, name, "label", labels, idempotency_key, {"target": target}
+        )
     )
 
 
@@ -1274,10 +1296,11 @@ def combined(parts: Sequence[Predictions]) -> Predictions:
         table=pa.concat_tables([p.table for p in parts], promote_options="permissive"),
         gpu_seconds=sum(gpu) if gpu else None,
         timing=Timing(
-            sum(t.queued_seconds for t in timings),
-            sum(t.cold_start_seconds for t in timings),
-            sum(t.compute_seconds for t in timings),
-            sum(t.compile_seconds for t in timings),
+            calls=sum(t.calls for t in timings),
+            queued_seconds=sum(t.queued_seconds for t in timings),
+            cold_start_seconds=sum(t.cold_start_seconds for t in timings),
+            compute_seconds=sum(t.compute_seconds for t in timings),
+            compile_seconds=sum(t.compile_seconds for t in timings),
         )
         if timings
         else None,
@@ -1366,14 +1389,24 @@ def predictor_delete(predictor: Any) -> Op:
 def snapshot(state: State, data: Any, *, what: str = "context") -> Op:
     """Uploads a table once as an Arrow snapshot named by its digest; returns the digest.
 
-    Refuses a table past the snapshot ceiling at once, before any request.
+    Refuses a table past the service's snapshot limits before sending it.
     """
     rows = _data.normalized(_data.table(data, what=what))
-    body = _data.stream(rows)
-    _data.check_snapshot(body, rows.num_rows, what=what)
     digest = _data.table_digest(rows)
     if digest in state.snapshots:
         return digest, rows.num_rows
+    body = _data.stream(rows)
+    limits = yield from upload_limits(state)
+    _data.check_table(
+        what,
+        rows.num_rows,
+        len(body),
+        (limits.snapshot_rows, limits.snapshot_bytes),
+        holds="snapshot",
+        hint='store it as a context, `gf.contexts.create("name", data=rows)`, which '
+        "uploads in chunks, and pass that context instead",
+        param=what,
+    )
     try:
         yield _http.snapshot_probe(digest)
     except NotFound:
@@ -1656,15 +1689,21 @@ def predict_estimate(
     return estimate_of(reply.result or {})
 
 
-STREAM_ROWS = 100_000
-STREAM_BYTES = 32 * 1024 * 1024
 UPLOAD_DONE = ("ready", "rejected", "expired")
 
 
 def snapshot_create(
-    name: str, data: Any, tags: Sequence[str], metadata: Mapping[str, Any]
+    state: State,
+    name: str,
+    data: Any,
+    tags: Sequence[str],
+    metadata: Mapping[str, Any],
 ) -> Op:
-    """Uploads a training snapshot: one Arrow stream when small, else a chunked Parquet upload."""
+    """Uploads a training snapshot: one Arrow stream within the service's limits, else a chunked Parquet upload.
+
+    Raises:
+        CapacityExceeded: Before anything is sent, for a table past what one upload holds.
+    """
     _checked_name(name, "snapshot")
     meta = {k: v for k, v in metadata.items() if v is not None}
     if "task" in meta:
@@ -1676,7 +1715,8 @@ def snapshot_create(
         )
     rows = _data.normalized(_data.table(data))
     body = _data.stream(rows)
-    if rows.num_rows <= STREAM_ROWS and len(body) <= STREAM_BYTES:
+    limits = yield from upload_limits(state)
+    if rows.num_rows <= limits.snapshot_rows and len(body) <= limits.snapshot_bytes:
         yield Say(f"Uploading {name}  {rows.num_rows:,} rows, {_data.size(len(body))}")
         reply = yield _http.snapshots_stream(name, meta, body)
         found = load(Snapshot, reply.result)
@@ -1686,12 +1726,21 @@ def snapshot_create(
         return found
     if "target" not in meta:
         raise InvalidInput(
-            f"a snapshot past {STREAM_ROWS:,} rows or {_data.size(STREAM_BYTES)} names its "
-            "target= and task=",
+            f"a snapshot past {limits.snapshot_rows:,} rows or "
+            f"{_data.size(limits.snapshot_bytes)} names its target= and task=",
             hint="the resumable upload a large snapshot takes needs its training metadata",
             param="target",
         )
     parquet = _data.parquet(rows)
+    _data.check_table(
+        "snapshot",
+        rows.num_rows,
+        len(parquet),
+        (limits.upload_rows, limits.upload_bytes),
+        holds="upload",
+        hint="split it into snapshots and train on them together",
+        param="data",
+    )
     payload: dict[str, Any] = {
         "name": name,
         "bytes": len(parquet),
@@ -1707,6 +1756,7 @@ def snapshot_create(
         name,
         parquet,
         opened,
+        opened.get("chunk_bytes") or limits.chunk_bytes,
         lambda offset, piece: _http.snapshots_bytes(name, piece, offset, len(parquet)),
     )
     found = load(Snapshot, opened)

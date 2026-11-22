@@ -17,12 +17,14 @@ from generalforecast.types import (
     Environment,
     Experiment,
     Key,
+    Limits,
     LogEntry,
     PredictorInfo,
     Revision,
     Slice,
     Source,
     SourceTable,
+    UploadLimits,
     load,
     loads,
 )
@@ -80,12 +82,26 @@ def test_the_sdk_reads_a_model_and_a_prediction_as_the_contract_writes_them():
         model.id == "general-forecast/tabicl-v2-classifier"
         and model.short == "tabicl-v2"
     )
-    assert model.digest.startswith("sha256:") and model.limits.queries == 100
+    assert model.digest.startswith("sha256:") and model.limits == Limits(100000, 10000)
     result = contract.example("predictions.get")
     reply = _ops._http.Reply(200, result, {}, "r-1")
     predictions = _ops.predictions_of(reply)
     assert predictions.rows == 2 and predictions.context.rows == 1840
     assert predictions.context.used == "exact"
+    assert predictions.calls == 1
+
+
+def test_the_sdk_reads_the_services_limits_and_what_each_environment_serves():
+    me = _ops.me_of(contract.example("auth.status"), fake.CONSOLE)
+    assert me.trains is True
+    assert me.limits == UploadLimits(
+        snapshot_bytes=33554432, snapshot_rows=100000, upload_bytes=8589934592,
+        upload_rows=10000000, csv_bytes=268435456, chunk_bytes=8388608,
+        request_bytes=1048576,
+    )  # fmt: skip
+    environment = load(Environment, contract.example("environments.get"))
+    assert environment.resolved.short == "kumo-medium"
+    assert environment.resolved.context_version == 8
 
 
 # Request examples the contract gives as what a route refuses.

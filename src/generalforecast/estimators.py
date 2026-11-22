@@ -40,7 +40,7 @@ class NotFittedError(InvalidInput, AttributeError):
 
 
 def predicted_line(result: Predictions, context_rows: int, seconds: float) -> str:
-    """`Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 66 calls, 13.0 credits ($0.013) in 9.4s`."""
+    """`Predicted 6,513 rows with tabicl-v2-classifier from 26,048 context rows: 2 calls, 13.0 credits ($0.013) in 9.4s`."""
     line = (
         f"Predicted {plural(result.rows, 'row')} with {_render.model_name(result.model)} "
         f"from {plural(context_rows, 'context row')}: {plural(result.calls, 'call')}, "

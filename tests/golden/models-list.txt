@@ -1,23 +1,23 @@
 --- 100 columns, not a terminal
 $ gf models list
-  Model           Tasks                       Context rows  Queries per call
-  kumo-small      classification, regression        60,000               100
-  kumo-medium     classification, regression        60,000               100
-  kumo-large      classification, regression        60,000               100
-  tabicl-v2       classification, regression       100,000               100
-  mitra-2         classification, regression         5,120               100
-  chronos-2       forecast                         100,000                 8
-  timestral-209m  forecast                         100,000                 8
+  Model           Tasks                       Context rows  Inputs
+  kumo-small      classification, regression        60,000  10,000
+  kumo-medium     classification, regression        60,000  10,000
+  kumo-large      classification, regression        60,000  10,000
+  tabicl-v2       classification, regression       100,000  10,000
+  mitra-2         classification, regression         5,120  10,000
+  chronos-2       forecast                         100,000       8
+  timestral-209m  forecast                         100,000       8
 --- 100 columns, a terminal
 $ gf models list
-  Model           Tasks                       Context rows  Queries per call
-  kumo-small      classification, regression        60,000               100
-  kumo-medium     classification, regression        60,000               100
-  kumo-large      classification, regression        60,000               100
-  tabicl-v2       classification, regression       100,000               100
-  mitra-2         classification, regression         5,120               100
-  chronos-2       forecast                         100,000                 8
-  timestral-209m  forecast                         100,000                 8
+  Model           Tasks                       Context rows  Inputs
+  kumo-small      classification, regression        60,000  10,000
+  kumo-medium     classification, regression        60,000  10,000
+  kumo-large      classification, regression        60,000  10,000
+  tabicl-v2       classification, regression       100,000  10,000
+  mitra-2         classification, regression         5,120  10,000
+  chronos-2       forecast                         100,000       8
+  timestral-209m  forecast                         100,000       8
 --- 44 columns, not a terminal
 $ gf models list
   Model           Tasks

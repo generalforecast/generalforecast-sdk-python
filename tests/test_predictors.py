@@ -22,6 +22,7 @@ def test_create_deploys_and_waits_until_ready(adult):
     )
     assert p.environments["production"].state == "ready"
     assert p.spec.model == "tabicl-v2" and p.resolved.short == "tabicl-v2"
+    assert p.environments["production"].resolved == p.resolved
     assert repr(p).startswith(
         "Predictor adult-income  revision 1  tabicl-v2, target income"
     )
@@ -145,7 +146,7 @@ def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
     assert out.model.startswith("general-forecast/") and out.predictor == "adult-income"
     assert out.request_id == calls[0].headers["x-gf-request-id"]
     assert out.rows == 100 and out.credits == pytest.approx(0.2)
-    assert out.calls == len(calls)
+    assert out.calls == out.timing.calls == len(calls)
     assert list(out.to_pandas().columns) == ["id", "label", "p_<=50K", "p_>50K"]
     assert out.timing.compute_seconds == pytest.approx(0.4 * len(calls))
     assert out.context.used == "exact"

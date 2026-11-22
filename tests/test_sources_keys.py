@@ -75,3 +75,7 @@ def test_keys_by_id_or_name(fake):
     assert error.value.hint == "a similar name exists: `forever`"
     with pytest.raises(gf.InvalidInput):
         gf.keys.create("bad", expires="soon")
+    # A permission only a browser session uses is not a key's to hold.
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.keys.create("sso", permissions=["sso:read"])
+    assert error.value.param == "permissions"
