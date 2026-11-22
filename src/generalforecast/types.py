@@ -29,9 +29,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "STANDARD_PERMISSIONS",
-    "ArchitectureChange",
     "BatchTable",
-    "Budget",
     "Change",
     "Column",
     "ColumnType",
@@ -44,33 +42,24 @@ __all__ = [
     "Environment",
     "EnvironmentFailure",
     "Estimate",
-    "Evaluation",
     "Experiment",
     "FineTuneRun",
-    "FineTuneSpec",
-    "Full",
     "Holdout",
-    "InputAdapter",
     "Key",
     "KeyOwner",
     "LargeContext",
     "Limits",
-    "LoRA",
+    "Lineage",
     "LogEntry",
     "Logs",
     "Me",
-    "Method",
-    "Missing",
     "Model",
     "NewKey",
     "Origin",
-    "Phase",
-    "Plan",
     "Predictions",
     "Predictor",
     "PredictorInfo",
     "Published",
-    "Range",
     "Report",
     "Resolved",
     "Revision",
@@ -88,7 +77,6 @@ __all__ = [
     "SourceTable",
     "SourceTables",
     "SyntheticBatch",
-    "Tag",
     "Task",
     "Timing",
     "TrainedOn",
@@ -1319,239 +1307,6 @@ class Me:
     limits: UploadLimits | None = None
 
 
-@dataclass(frozen=True)
-class Range:
-    """A range a synthetic setting is drawn from, once per table."""
-
-    min: float
-    max: float
-
-    def __post_init__(self) -> None:
-        """Checks min is at most max."""
-        if self.min > self.max:
-            raise InvalidInput(f"a range's min {self.min} is past its max {self.max}")
-
-    def to_json(self) -> dict[str, float]:
-        """The range as the service takes it."""
-        return {"min": self.min, "max": self.max}
-
-
-@dataclass(frozen=True)
-class Missing:
-    """How a synthetic table's cells go missing: a rate and the patterns they fall in."""
-
-    rate: float | Range = 0.0
-    patterns: Sequence[str] = ()
-
-    def to_json(self) -> dict[str, Any]:
-        """The setting as the service takes it; no patterns leaves the service's default."""
-        rate = self.rate.to_json() if isinstance(self.rate, Range) else self.rate
-        out: dict[str, Any] = {"rate": rate}
-        if self.patterns:
-            out["patterns"] = list(self.patterns)
-        return out
-
-
-@dataclass(frozen=True)
-class LoRA:
-    """Low-rank adapters on the base, with an input adapter beside them if asked."""
-
-    rank: int = 16
-    input_adapter: bool = False
-
-    def to_json(self) -> dict[str, Any]:
-        """The method as a run takes it."""
-        out: dict[str, Any] = {"type": "lora", "rank": self.rank}
-        if self.input_adapter:
-            out["input_adapter"] = True
-        return out
-
-
-@dataclass(frozen=True)
-class InputAdapter:
-    """An input adapter alone; every table then has the same columns in order."""
-
-    def to_json(self) -> dict[str, Any]:
-        """The method as a run takes it."""
-        return {"type": "input_adapter"}
-
-
-FULL_COMPONENTS = (
-    "column_encoder",
-    "row_encoder",
-    "in_context_transformer",
-    "prediction_head",
-)
-
-
-@dataclass(frozen=True)
-class Full:
-    """Full fine-tuning of some components."""
-
-    components: Sequence[str] = FULL_COMPONENTS
-
-    def __post_init__(self) -> None:
-        """Checks each component."""
-        object.__setattr__(self, "components", tuple(self.components))
-        for item in self.components:
-            if item not in FULL_COMPONENTS:
-                raise InvalidInput(
-                    f"`{item}` is not a component full fine-tuning trains",
-                    hint="components are " + ", ".join(FULL_COMPONENTS),
-                )
-
-    def to_json(self) -> dict[str, Any]:
-        """The method as a run takes it."""
-        return {"type": "full", "components": list(self.components)}
-
-
-Method = LoRA | InputAdapter | Full
-DEFAULT_METHOD = LoRA(rank=16)
-"""A run's method when none is given: LoRA of rank 16."""
-
-
-@dataclass(frozen=True)
-class Plan:
-    """The trainer's settings; a field per setting, so a typo fails here."""
-
-    steps: int | None = None
-    learning_rate: float | None = None
-    episode_rows: int | None = None
-    context_fraction: float | None = None
-    episodes_per_step: int | None = None
-    eval_steps: int | None = None
-    optimizer: str | None = None
-    schedule: str | None = None
-    warmup_steps: int | None = None
-    weight_decay: float | None = None
-    beta2: float | None = None
-    grad_clip: float | None = None
-    early_stopping_patience: int | None = None
-    save_steps: int | None = None
-    save_total_limit: int | None = None
-    save_only_model: bool | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        """The plan as a run takes it, settings left out at the service's default."""
-        out: dict[str, Any] = {}
-        sampling: dict[str, Any] = {}
-        for item in fields(self):
-            value = getattr(self, item.name)
-            if value is None:
-                continue
-            if item.name == "episode_rows":
-                sampling["rows"] = value
-            elif item.name == "context_fraction":
-                sampling["context_fraction"] = value
-            else:
-                out[item.name] = value
-        if sampling:
-            out["episode_sampling"] = sampling
-        return out
-
-
-@dataclass(frozen=True)
-class Phase:
-    """One phase of a curriculum: its data and steps, in order with the others.
-
-    `data` takes what a run's `data` takes: snapshots, batches, contexts and tags.
-    """
-
-    name: str
-    data: Sequence[Any]
-    steps: int
-    episode_rows: int | None = None
-    episodes_per_step: int | None = None
-
-
-@dataclass(frozen=True)
-class ArchitectureChange:
-    """A change to a part of the base before it trains; `models.get(base).architecture` lists them."""
-
-    component: str
-    to: Mapping[str, Any]
-    stages: Sequence[str] | None = None
-    init: Mapping[str, Any] | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        """The change as a run takes it."""
-        out: dict[str, Any] = {"component": self.component, "to": dict(self.to)}
-        if self.stages is not None:
-            out["stages"] = list(self.stages)
-        if self.init is not None:
-            out["init"] = dict(self.init)
-        return out
-
-
-@dataclass(frozen=True)
-class Evaluation:
-    """How a run holds out rows and keeps a step: only past `standard_errors` over the base."""
-
-    holdout: float = 0.2
-    context_rows: int | None = None
-    contexts: int = 3
-    standard_errors: float = 2.0
-    report_share: float = 0.5
-
-    def to_json(self) -> dict[str, Any]:
-        """The evaluation as a run takes it."""
-        out: dict[str, Any] = {
-            "holdout": self.holdout,
-            "contexts": self.contexts,
-            "early_stopping_threshold": {"standard_errors": self.standard_errors},
-            "report_share": self.report_share,
-        }
-        if self.context_rows is not None:
-            out["context_rows"] = self.context_rows
-        return out
-
-
-@dataclass(frozen=True)
-class Budget:
-    """Where a run stops and publishes its best kept step: credits or hours."""
-
-    credits: float | None = None
-    hours: float | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        """The budget as a run takes it."""
-        return {
-            k: getattr(self, k)
-            for k in ("credits", "hours")
-            if getattr(self, k) is not None
-        }
-
-
-@dataclass(frozen=True)
-class FineTuneSpec:
-    """A fine-tuning run's settings, kept in a file: `gf fine-tunes runs create NAME --from FILE`.
-
-    The fields are `fine_tunes.runs.create`'s keyword arguments, `wait`
-    and `progress` aside; constructing one is local and makes no call.
-    """
-
-    base: str
-    _: KW_ONLY
-    data: Sequence[Any] | None = None
-    target: str | None = None
-    method: Method = DEFAULT_METHOD
-    plan: Plan | None = None
-    phases: Sequence[Phase] | None = None
-    architecture: Sequence[ArchitectureChange] = ()
-    evaluation: Evaluation | None = None
-    budget: Budget | None = None
-    seed: int | None = None
-    tags: Sequence[str] = ()
-
-    def arguments(self) -> dict[str, Any]:
-        """The keyword arguments `fine_tunes.runs.create` takes."""
-        return {
-            item.name: getattr(self, item.name)
-            for item in fields(self)
-            if item.name != "_"
-        }
-
-
 FINE_TUNE_STATES = ("queued", "running", "finished", "failed", "cancelled")
 _RUN_STATES = {
     "setting_up": "running",
@@ -1569,13 +1324,6 @@ _ARROW_TYPES = {
     "timestamp": "timestamp",
     "date32": "date",
 }
-
-
-@dataclass(frozen=True)
-class Tag:
-    """Selects every ready snapshot carrying a tag, as a run's `data` item."""
-
-    tag: str
 
 
 @dataclass(frozen=True, repr=False)
@@ -1784,6 +1532,14 @@ class RunEvent:
     at: datetime | None = None
     kind: RunEventKind = "state"
     body: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Lineage:
+    """Every change to a run, oldest first: the version it is for and its events."""
+
+    model: str
+    events: tuple[RunEvent, ...] = ()
 
 
 @dataclass(frozen=True, repr=False)

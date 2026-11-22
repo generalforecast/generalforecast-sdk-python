@@ -144,6 +144,7 @@ def test_predict_sends_arrow_in_parts_and_adds_usage(adult, monkeypatch):
     )
     # Each part is answered as Arrow, its envelope under `gf.result`.
     assert out.model.startswith("general-forecast/") and out.predictor == "adult-income"
+    assert (out.environment, out.revision) == ("production", 1)
     assert out.request_id == calls[0].headers["x-gf-request-id"]
     assert out.rows == 100 and out.credits == pytest.approx(0.2)
     assert out.calls == out.timing.calls == len(calls)

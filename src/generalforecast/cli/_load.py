@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: General Forecast, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Python files of specs: `gf deploy FILE` and `gf fine-tunes runs create NAME --from FILE`.
+"""Python files of specs: `gf deploy FILE`.
 
 A file runs with `runpy` in a fresh namespace and its module-level names
 are read; loading it makes no call to the service. A file that fails to
@@ -152,18 +152,3 @@ def predictors(path: str) -> list[types.Predictor]:
             '`churn = gf.Predictor("churn", ...)`',
         )
     return found
-
-
-def fine_tune(path: str) -> types.FineTuneSpec:
-    """The `run = gf.FineTuneSpec(...)` a file defines.
-
-    Raises:
-        InvalidInput: For a file that does not load or defines no `run`.
-    """
-    run = _run(path).get("run")
-    if not isinstance(run, types.FineTuneSpec):
-        raise InvalidInput(
-            f"{path} defines no `run = gf.FineTuneSpec(...)`",
-            hint='write `run = gf.FineTuneSpec("tabicl-v2", data=[...], plan=gf.Plan(steps=200))`',
-        )
-    return run

@@ -66,6 +66,22 @@ class Call:
             target = getattr(target, part)
         return target
 
+    def require(self, *keywords: str) -> None:
+        """Refuses a command line that leaves out a flag for a keyword the SDK method needs.
+
+        Raises:
+            Usage: Naming the first flag left out.
+        """
+        from generalforecast.cli._spec import Usage
+
+        for keyword in keywords:
+            if keyword not in self.values:
+                flag = next(f for f in self.command.flags if f.keyword == keyword)
+                raise Usage(
+                    f"`{self.command.line}` needs {flag.option}",
+                    hint=f"`gf {' '.join(self.command.words)} --help` shows what it takes",
+                )
+
     def invoke(self, **changes: Any) -> Any:
         """Calls the command's SDK method with its arguments, `changes` over its keywords."""
         return self.method()(*self.args, **{**self.values, **changes})

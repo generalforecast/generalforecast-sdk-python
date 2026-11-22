@@ -8,7 +8,7 @@
 this module runs any of them the same way: it reads the command line, makes
 the client, asks before a delete, calls the SDK, and shows the result, or
 under `--json` prints it as one JSON object (one per line for a command
-that streams, such as `gf fine-tunes runs watch`). Status lines go to
+that streams, such as `gf runs watch`). Status lines go to
 stderr and results to stdout.
 
 Every failure goes through `report`, written as cargo writes one: `error:`,
@@ -129,6 +129,7 @@ def _run(argv: list[str], out: term.Output) -> int:
         return 0
     parsed = Parser(command, [*command.flags, *GLOBALS]).parse_args(rest)
     call = _call(command, parsed, out)
+    call.require(*command.needs)
     with out.working() as activity:
         call.state["activity"] = activity
         if command.before is not None:
@@ -210,9 +211,6 @@ def _call(command: Command, parsed: Any, out: term.Output) -> Call:
                 _put(values, key, item)
         else:
             _put(values, flag.keyword, value)
-    for name, build in command.settings.items():
-        if isinstance(values.get(name), dict):
-            values[name] = build(**values[name])
     return Call(
         command, out, args=args, values=values, options=options, connect=_connect
     )
@@ -229,11 +227,10 @@ def _joined(pieces: list[Any]) -> Any:
 
 
 def _put(values: dict[str, Any], key: str, value: Any) -> None:
-    head, dot, tail = key.partition(".")
-    if dot:
-        values.setdefault(head, {})[tail] = value
-    else:
-        values[key] = value
+    *path, last = key.split(".")
+    for head in path:
+        values = values.setdefault(head, {})
+    values[last] = value
 
 
 class Watcher:

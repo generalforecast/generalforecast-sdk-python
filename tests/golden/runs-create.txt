@@ -1,23 +1,23 @@
 --- 100 columns, not a terminal
-$ gf fine-tunes runs create credit-default --base tabicl-v2 --data credit-2026-01 --steps 1000 --wait
+$ gf runs create credit-default --base tabicl-v2 --method lora:16 --data credit-2026-01 --steps 1000 --wait
      Started run credit-default@ft1  base tabicl-v2-classifier, 1 table pinned
     Training credit-default@ft1
     Finished run credit-default@ft1 in 2m10s  val 0.398 (base 0.421), published step 1,000
         View https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default
 --- 100 columns, a terminal
-$ gf fine-tunes runs create credit-default --base tabicl-v2 --data credit-2026-01 --steps 1000 --wait
+$ gf runs create credit-default --base tabicl-v2 --method lora:16 --data credit-2026-01 --steps 1000 --wait
 [1;32m     Started[0m run credit-default@ft1  base tabicl-v2-classifier, 1 table pinned
 [1;32m    Training[0m credit-default@ft1  step 500/1,000  loss 0.450  1m 0s  120.0 credits
 [1;32m    Finished[0m run credit-default@ft1 in 2m10s  val 0.398 (base 0.421), published step 1,000
 [1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default\https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default]8;;\
 --- 44 columns, not a terminal
-$ gf fine-tunes runs create credit-default --base tabicl-v2 --data credit-2026-01 --steps 1000 --wait
+$ gf runs create credit-default --base tabicl-v2 --method lora:16 --data credit-2026-01 --steps 1000 --wait
      Started run credit-default@ft1  base tabicl-v2-classifier, 1 table pinned
     Training credit-default@ft1
     Finished run credit-default@ft1 in 2m10s  val 0.398 (base 0.421), published step 1,000
         View https://app.generalforecast.com/?project=acme#/fine-tunes/credit-default
 --- 44 columns, a terminal
-$ gf fine-tunes runs create credit-default --base tabicl-v2 --data credit-2026-01 --steps 1000 --wait
+$ gf runs create credit-default --base tabicl-v2 --method lora:16 --data credit-2026-01 --steps 1000 --wait
 [1;32m     Started[0m run credit-default@ft1  base
              tabicl-v2-classifier,
              1 table pinned

@@ -30,10 +30,9 @@ predictors create; predictors update; predictors get; predictors list; predictor
 predictors predict; predictors promote; predictors rollback; predictors logs; predictors delete
 sources list; sources get; sources test; sources create; sources tables; sources preview; sources delete
 keys list; keys create; keys rotate; keys revoke; keys delete
-fine-tunes snapshots create; fine-tunes snapshots synthesize; fine-tunes snapshots list;
-fine-tunes snapshots get; fine-tunes snapshots batch; fine-tunes snapshots tag; fine-tunes snapshots delete
-fine-tunes runs create; fine-tunes runs list; fine-tunes runs get; fine-tunes runs wait;
-fine-tunes runs watch; fine-tunes runs events; fine-tunes runs cancel
+snapshots create; snapshots stream; snapshots create-synthetic; snapshots synthetic; snapshots list;
+snapshots get; snapshots update; snapshots delete
+runs create; runs list; runs get; runs cancel; runs lineage; runs wait; runs watch
 models list; models get; models predict
 """
 
@@ -94,7 +93,7 @@ def test_every_command_of_the_spec_is_in_the_table_and_mirrors_an_sdk_method(env
 
 def test_help_and_version(monkeypatch, env):
     code, out, _ = gf_cli(monkeypatch, "--help")
-    assert code == 0 and out.startswith(_help.TAGLINE) and "fine-tunes" in out
+    assert code == 0 and out.startswith(_help.TAGLINE) and "snapshots" in out
     assert gf_cli(monkeypatch, "-V")[1] == f"gf {gf.__version__}\n"
     by_flag = gf_cli(monkeypatch, "contexts", "create", "--help")[1]
     assert gf_cli(monkeypatch, "help", "contexts", "create")[1] == by_flag
@@ -103,8 +102,8 @@ def test_help_and_version(monkeypatch, env):
         and "--sql-file F" in by_flag
     )
     assert "Python: gf.contexts.create(NAME, **flags)" in by_flag
-    group = gf_cli(monkeypatch, "fine-tunes", "--help")[1]
-    assert "snapshots" in group and "runs" in group
+    group = gf_cli(monkeypatch, "runs", "--help")[1]
+    assert "create" in group and "lineage" in group
     code, _, err = gf_cli(monkeypatch, "contexts")
     assert code == 2 and "error: `gf contexts` needs a command" in err
 
@@ -126,7 +125,17 @@ def test_help_and_version(monkeypatch, env):
             ["experiments", "create", "--task", "clustering"],
             "is not classification or regression or forecast",
         ),
-        (["fine-tunes", "runs", "create", "x", "--method", "qlora"], "for --method"),
+        (["runs", "create", "x", "--method", "qlora"], "for --method"),
+        (
+            ["runs", "create", "x", "--base", "tabicl-v2"],
+            "error: `gf runs create NAME` needs --method",
+        ),
+        (["runs", "create", "x", "--data", "table:x"], "for --data"),
+        (["runs", "create", "x", "--budget", "2.5credits"], "for --budget"),
+        (
+            ["snapshots", "update", "x"],
+            "error: `gf snapshots update NAME` needs --tags",
+        ),
     ],
 )
 def test_a_command_line_gf_cannot_read_exits_2(monkeypatch, env, argv, said):
@@ -155,18 +164,28 @@ def test_flags_become_the_sdk_keywords(monkeypatch, fake):
         "exclude": None
     }
     samples._snapshot(fake)
-    code, _, err = gf_cli(monkeypatch, "fine-tunes", "runs", "create", "ft", "--base", "tabicl-v2",
-                          "--data", "credit-2026-01,tag:nightly,adult", "--target", "income",
-                          "--steps", "300", "--learning-rate", "0.0001",
-                          "--holdout", "10%", "--method", "lora:8+adapter", "--budget", "2h")  # fmt: skip
+    code, _, err = gf_cli(monkeypatch, "runs", "create", "ft", "--base", "tabicl-v2",
+                          "--data", "credit-2026-01,tag:nightly,context:adult,context:adult@1",
+                          "--target", "income", "--steps", "300", "--learning-rate", "0.0001",
+                          "--episode-rows", "1024", "--holdout", "10%", "--method", "lora:8+adapter",
+                          "--budget", "2h")  # fmt: skip
     assert code == 0, err
     run = fake.calls_to("POST", r".*/runs")[0].payload
-    assert run["plan"] == {"steps": 300, "learning_rate": 0.0001}
-    assert run["evaluation"]["holdout"] == 0.1 and run["budget"] == {"hours": 2.0}
+    assert run["plan"] == {
+        "steps": 300,
+        "learning_rate": 0.0001,
+        "episode_sampling": {"rows": 1024},
+    }
+    assert run["evaluation"] == {"holdout": 0.1} and run["budget"] == {"gpu_hours": 2.0}
     assert run["method"] == {"type": "lora", "rank": 8, "input_adapter": True}
-    assert run["data"] == ["credit-2026-01", {"tag": "nightly"}, {"context": "adult"}]
+    assert run["data"] == [
+        "credit-2026-01",
+        {"tag": "nightly"},
+        {"context": "adult"},
+        {"context": "adult", "version": 1},
+    ]
     assert run["target"] == "income"
-    assert gf_cli(monkeypatch, "fine-tunes", "snapshots", "synthesize", "warm", "--count", "4",
+    assert gf_cli(monkeypatch, "snapshots", "create-synthetic", "warm", "--count", "4",
                   "--rows", "1024..8192", "--missing", "5%", "--set", "graph_nodes=16",
                   "--set", "categorical.share=0.3", "--reject", "trivial")[0] == 0  # fmt: skip
     batch = fake.calls_to("POST", r".*/snapshots/synthetic")[0].payload
@@ -174,6 +193,48 @@ def test_flags_become_the_sdk_keywords(monkeypatch, fake):
         "rate": 0.05
     }
     assert batch["graph_nodes"] == 16 and batch["categorical"] == {"share": 0.3}
+
+
+def test_snapshots_and_runs_mirror_their_sdk_methods(monkeypatch, fake, tmp_path):
+    table = tmp_path / "t.csv"
+    pd.DataFrame({"x": [1.0, 2.0] * 20, "y": [0, 1] * 20}).to_csv(table, index=False)
+    code, _, err = gf_cli(monkeypatch, "snapshots", "stream", "t", "--file", str(table),
+                          "--target", "y", "--task", "classification")  # fmt: skip
+    assert code == 0 and "Created snapshot t" in err
+    code, _, err = gf_cli(monkeypatch, "snapshots", "update", "t", "--tags", "")
+    assert code == 0 and "Tagged snapshot t  no tags" in err
+    assert fake.calls_to("POST", r".*/snapshots/t/update")[0].payload == {"tags": []}
+    code, _, err = gf_cli(monkeypatch, "runs", "create", "a", "--base", "tabicl-v2",
+                          "--method", "adapter", "--data", "t", "--steps", "10")  # fmt: skip
+    assert code == 0 and "Started run a@ft1" in err
+    assert fake.calls_to("POST", r".*/runs")[0].payload["method"] == {
+        "type": "input_adapter"
+    }
+    code, out, _ = gf_cli(monkeypatch, "runs", "watch", "a", "--json")
+    kinds = [json.loads(line)["kind"] for line in out.splitlines()]
+    code, out, _ = gf_cli(monkeypatch, "runs", "lineage", "a@ft1", "--json")
+    lineage = json.loads(out)
+    assert lineage["model"] == "acme/a@ft1"
+    assert [e["kind"] for e in lineage["events"]] == kinds
+    out = gf_cli(monkeypatch, "runs", "lineage", "a")[1]
+    assert len(out.splitlines()) == len(kinds) and "published" in out
+    code, _, err = gf_cli(
+        monkeypatch, "runs", "create", "a", "--from", str(table), "--base", "m"
+    )
+    assert code == 2 and "--from takes every setting from its file, not --base" in err
+    for budget, sent in (
+        ("500credits", {"credits": 500}),
+        ("1.5h", {"gpu_hours": 1.5}),
+    ):
+        code, _, err = gf_cli(monkeypatch, "runs", "create", "a", "--base", "tabicl-v2",
+                              "--method", "adapter", "--data", "t", "--steps", "10",
+                              "--budget", budget)  # fmt: skip
+        assert code == 0, err
+        payload = fake.calls_to("POST", r".*/runs")[-1].payload
+        assert (
+            payload["budget"] == sent
+            and type(payload["budget"].get("credits", 0)) is int
+        )
 
 
 def test_json_prints_one_object_lists_under_their_noun_and_errors_too(
@@ -258,14 +319,17 @@ def test_sdk_hints_read_as_commands():
     assert cli.for_cli(
         "see gf.predictors.logs('churn', env='staging', level='error')"
     ) == ("see `gf predictors logs churn --env staging --level error`")
-    assert cli.for_cli(
-        "gf.fine_tunes.snapshots.list() and gf.contexts.list() show them"
-    ) == ("`gf fine-tunes snapshots list` and `gf contexts list` show them")
+    assert cli.for_cli("gf.snapshots.list() and gf.contexts.list() show them") == (
+        "`gf snapshots list` and `gf contexts list` show them"
+    )
+    assert cli.for_cli("gf.runs.wait('a@ft1') picks it up again") == (
+        "`gf runs wait a@ft1` picks it up again"
+    )
     assert (
         cli.for_cli("run gf.login() again, or pass key=")
         == "run `gf login` again, or pass --key"
     )
-    assert cli.for_cli("pass plan=gf.Plan(steps=200)") == "pass plan=gf.Plan(steps=200)"
+    assert cli.for_cli("pass gf.Selection(core=0.5)") == "pass gf.Selection(core=0.5)"
 
 
 def test_ctrl_c_exits_130_and_a_closed_pipe_141(monkeypatch, fake):
