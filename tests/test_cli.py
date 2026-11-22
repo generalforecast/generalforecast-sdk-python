@@ -131,6 +131,7 @@ def test_help_and_version(monkeypatch, env):
             "error: `gf runs create NAME` needs --method",
         ),
         (["runs", "create", "x", "--data", "table:x"], "for --data"),
+        (["runs", "create", "x", "--budget", "2.5credits"], "for --budget"),
         (
             ["snapshots", "update", "x"],
             "error: `gf snapshots update NAME` needs --tags",
@@ -221,6 +222,19 @@ def test_snapshots_and_runs_mirror_their_sdk_methods(monkeypatch, fake, tmp_path
         monkeypatch, "runs", "create", "a", "--from", str(table), "--base", "m"
     )
     assert code == 2 and "--from takes every setting from its file, not --base" in err
+    for budget, sent in (
+        ("500credits", {"credits": 500}),
+        ("1.5h", {"gpu_hours": 1.5}),
+    ):
+        code, _, err = gf_cli(monkeypatch, "runs", "create", "a", "--base", "tabicl-v2",
+                              "--method", "adapter", "--data", "t", "--steps", "10",
+                              "--budget", budget)  # fmt: skip
+        assert code == 0, err
+        payload = fake.calls_to("POST", r".*/runs")[-1].payload
+        assert (
+            payload["budget"] == sent
+            and type(payload["budget"].get("credits", 0)) is int
+        )
 
 
 def test_json_prints_one_object_lists_under_their_noun_and_errors_too(

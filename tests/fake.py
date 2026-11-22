@@ -266,6 +266,37 @@ class Fake:
         raise Refusal(404, "NotFound", f"no route {call.method} {call.path}")
 
 
+def budget_of(budget: Any) -> None:
+    """Refuses a budget the plane refuses: whole credits, or GPU-hours from 0.01."""
+    if budget is None:
+        return
+    if not isinstance(budget, dict) or len(budget) != 1:
+        raise Refusal(
+            422,
+            "ValidationError",
+            "budget is either credits or gpu_hours",
+            param="budget",
+        )
+    if "credits" in budget:
+        credits = budget["credits"]
+        if type(credits) is not int or not 1 <= credits <= 10**12:
+            raise Refusal(422, "ValidationError", "budget credits must be a whole number "
+                          "from 1 to 1000000000000", param="budget")  # fmt: skip
+    elif "gpu_hours" not in budget:
+        raise Refusal(
+            422,
+            "ValidationError",
+            "budget is either credits or gpu_hours",
+            param="budget",
+        )
+    elif (
+        type(budget["gpu_hours"]) not in (int, float)
+        or not 0.01 <= budget["gpu_hours"] <= 10_000
+    ):
+        raise Refusal(422, "ValidationError", "budget gpu_hours must be from 0.01 to 10000",
+                      param="budget")  # fmt: skip
+
+
 def ok(
     result: Any, status: int = 200, **headers: str
 ) -> tuple[int, Any, dict[str, str]]:
@@ -1299,6 +1330,7 @@ def runs_post(fake: Fake, call: Call) -> Any:
     if versions and versions[0]["base"] != entry(p["base"])["name"]:
         raise Refusal(409, "Conflict", f"{p['name']} trains from {versions[0]['base']}")
     version = len(versions) + 1
+    budget_of(p.get("budget"))
     data = []
     items = [(None, d) for d in p.get("data") or ()]
     items += [

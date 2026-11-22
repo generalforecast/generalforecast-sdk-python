@@ -154,12 +154,13 @@ def _method(text: str) -> dict[str, Any]:
     raise ValueError(text)
 
 
-def _budget(text: str) -> dict[str, float]:
-    """`500credits` or `2h`."""
-    found = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(credits?|h|hours?)\s*", text)
-    if found is None:
-        raise ValueError(text)
-    return {"credits" if found[2].startswith("c") else "gpu_hours": float(found[1])}
+def _budget(text: str) -> dict[str, int | float]:
+    """`500credits`, a whole number, or `2h` or `1.5h` of GPU time."""
+    if credits := re.fullmatch(r"\s*(\d+)\s*credits?\s*", text):
+        return {"credits": int(credits[1])}
+    if hours := re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(?:h|hours?)\s*", text):
+        return {"gpu_hours": float(hours[1])}
+    raise ValueError(text)
 
 
 def _data(text: str) -> list[Any]:
@@ -225,7 +226,9 @@ SPAN = Kind("N|MIN..MAX", _span, "a number or a range such as 1024..8192")
 DATA = Kind("S,...", _data, "snapshots, tag:T and context:NAME[@VERSION]")
 MISSING = Kind("5%", _missing, "a share of cells such as 5%")
 METHOD = Kind("METHOD", _method, "lora:16, lora:16+adapter, adapter or full:COMPONENTS")
-BUDGET = Kind("500credits|2h", _budget, "a budget such as 500credits or 2h")
+BUDGET = Kind(
+    "500credits|2h", _budget, "a budget such as 500credits (whole credits) or 2h"
+)
 SELECTION = Kind(
     "core=X,neighbors=Y", _selection, "a selection such as core=0.5,neighbors=0.5"
 )
