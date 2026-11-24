@@ -23,6 +23,7 @@ from generalforecast.types import (
     ColumnType,
     Context,
     Deploy,
+    Entry,
     Environment,
     Estimate,
     Experiment,
@@ -342,14 +343,41 @@ class Experiments(_Sync):
         run: int | None = None,
         timeout: float | None = None,
         poll: float | None = None,
+        on_model: Callable[[Entry], Any] | None = None,
     ) -> Experiment:
         """Waits for a run to end and returns the experiment with it.
 
         `poll` is the seconds between checks, as in every method that
         waits; left out, checks start 1s apart and slow to one every 5s.
+        With `on_model`, each model's leaderboard entry is passed to it
+        once, as that model ends, while the others still score.
         """
         return self._run(
-            _ops.experiment_wait(experiment, run=run, timeout=timeout, poll=poll)
+            _ops.experiment_wait(
+                experiment, run=run, timeout=timeout, poll=poll, on_model=on_model
+            )
+        )
+
+    def watch(
+        self,
+        experiment: str | Experiment,
+        *,
+        run: int | None = None,
+        timeout: float | None = None,
+        poll: float | None = None,
+    ) -> Iterator[Entry]:
+        """Yields each model's leaderboard entry once, as that model ends, until the run ends.
+
+        An entry's `state` says whether the model scored (its `score` and
+        `metrics`), failed (`error`) or was cancelled. A name alone follows
+        the run that was its latest when the watch began; `get` reads the
+        whole run after.
+
+        Raises:
+            Timeout: Past `timeout` seconds; the run carries on.
+        """
+        return self._client._iterate(
+            _ops.experiment_watch(experiment, run=run, timeout=timeout, poll=poll)
         )
 
     def cancel(
@@ -1081,10 +1109,26 @@ class AsyncExperiments(_Async):
         run: int | None = None,
         timeout: float | None = None,
         poll: float | None = None,
+        on_model: Callable[[Entry], Any] | None = None,
     ) -> Experiment:
-        """See `Experiments.wait`."""
+        """See `Experiments.wait`; `on_model` may be a coroutine function."""
         return await self._run(
-            _ops.experiment_wait(experiment, run=run, timeout=timeout, poll=poll)
+            _ops.experiment_wait(
+                experiment, run=run, timeout=timeout, poll=poll, on_model=on_model
+            )
+        )
+
+    def watch(
+        self,
+        experiment: str | Experiment,
+        *,
+        run: int | None = None,
+        timeout: float | None = None,
+        poll: float | None = None,
+    ) -> AsyncIterator[Entry]:
+        """See `Experiments.watch`; iterate it with `async for`."""
+        return self._client._iterate(
+            _ops.experiment_watch(experiment, run=run, timeout=timeout, poll=poll)
         )
 
     async def cancel(
