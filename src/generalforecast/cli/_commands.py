@@ -52,7 +52,7 @@ from generalforecast.types import TASKS
 FOLLOW_SECONDS = 2.0
 
 NAME = Arg("NAME", "The name")
-FILE = Arg("FILE", "A .csv, .tsv, .parquet, .arrow, .feather or .jsonl file")
+FILE = Arg("FILE", "A .csv, .tsv, .parquet, .xlsx, .arrow, .feather or .jsonl file")
 RUN = Arg("RUN", "A run, NAME@ftN, or NAME for its latest")
 KEY = Arg("ID", "The key's id, or its name")
 TASK = choice(*TASKS)

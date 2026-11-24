@@ -13101,7 +13101,7 @@ components:
       properties:
         format:
           type: string
-          enum: [parquet, arrow, csv]
+          enum: [parquet, arrow, csv, tsv, xlsx]
         bytes: {type: integer, minimum: 1}
         digest:
           $ref: "#/components/schemas/Digest"
