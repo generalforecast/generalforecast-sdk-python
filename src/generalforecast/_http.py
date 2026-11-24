@@ -653,6 +653,18 @@ def sources_list() -> Request:
     return Request("GET", "/sources", "source", "sources")
 
 
+def sources_prepare(kind: str) -> Request:
+    """Makes or reads the workspace's identity, and what to set up for `kind`."""
+    return Request(
+        "POST",
+        "/sources:prepare",
+        "source",
+        "identity",
+        payload={"kind": kind},
+        retry=True,
+    )
+
+
 def sources_get(name: str) -> Request:
     """Reads a source."""
     return Request("GET", f"/sources/{_segment(name)}", "source", name)

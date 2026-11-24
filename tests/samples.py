@@ -516,10 +516,11 @@ SAMPLES = [
     Sample("predictors-logs", ("predictors logs churn --limit 2",), _logs),
     Sample("predictors-delete", ("predictors delete churn",), churn, stdin="y\n"),
     Sample("sources-get", ("sources get bigquery-acme",), _sources),
+    Sample("sources-prepare", ("sources prepare --kind bigquery",)),
     Sample("sources-test", ("sources test snowflake-prod",), _refused),
     Sample("sources-create", ("sources create pg-replica --kind postgres --config host=10.2.0.4,port=5432,database=app,user=gf_read --secret-stdin",),
            stdin="hunter2\n"),
-    Sample("sources-preview", ("sources preview bigquery-acme --table acme.analytics.customers",), _sources),
+    Sample("sources-preview", ("sources preview bigquery-acme --table customers",), _sources),
     Sample("sources-delete", ("sources delete pg-replica --yes",), lambda fake: fake.sources.update(
         {"pg-replica": {"name": "pg-replica", "kind": "postgres", "state": "ready", "config": {}}})),
     Sample("keys-list", ("keys list",), _keys),

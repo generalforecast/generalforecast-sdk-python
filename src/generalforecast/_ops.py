@@ -69,6 +69,7 @@ from generalforecast.types import (
     Snapshot,
     Source,
     SourceList,
+    SourceSetup,
     SourceTables,
     SyntheticBatch,
     Timing,
@@ -1495,10 +1496,10 @@ def model_get(model: str, task: str | None) -> Op:
 
 
 CONFIG_KEYS: dict[str, tuple[str, ...]] = {
-    "bigquery": ("project", "dataset"),
+    "bigquery": ("project", "dataset", "billing_project"),
     "gcs": ("bucket", "prefix"),
     "snowflake": ("account", "warehouse", "database", "role"),
-    "databricks": ("host", "warehouse", "client_id"),
+    "databricks": ("host", "warehouse", "client_id", "catalog", "schema"),
     "s3": ("role_arn", "region", "bucket", "prefix"),
     "postgres": ("host", "port", "database", "user", "tls"),
 }
@@ -1532,6 +1533,22 @@ def source_create(
         payload["secret"] = secret
     reply = yield _http.sources_create(payload)
     return load(Source, reply.result)
+
+
+# The kinds a workspace's identity is prepared for.
+PREPARED_KINDS = ("bigquery", "gcs", "s3", "databricks", "snowflake")
+
+
+def source_prepare(kind: str) -> Op:
+    """The workspace's identity and what to set up for a source of `kind`."""
+    if kind not in PREPARED_KINDS:
+        raise InvalidInput(
+            f"`{kind}` is not a kind a source is prepared for",
+            hint="kinds are " + ", ".join(PREPARED_KINDS),
+            param="kind",
+        )
+    reply = yield _http.sources_prepare(kind)
+    return load(SourceSetup, reply.result or {})
 
 
 def source_get(source: Any) -> Op:
@@ -1569,7 +1586,7 @@ def source_preview(source: Any, table: str | None, sql: str | None) -> Op:
     payload = {"table": table} if table is not None else {"sql": sql}
     reply = yield _http.sources_action(name_of(source, "source"), "preview", payload)
     result = reply.result or {}
-    return _data.frame(result.get("columns"), result.get("rows"))
+    return _data.frame(result.get("columns"), result.get("sample"))
 
 
 def source_delete(source: Any) -> Op:

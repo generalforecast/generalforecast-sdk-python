@@ -32,11 +32,7 @@ def test_sources_take_the_config_keys_of_their_kind(fake):
     assert [s.name for s in listed] == ["pg-replica"] and listed.available
     assert gf.sources.test(source).name == "pg-replica"
     tables = gf.sources.tables("pg-replica", prefix="customers")
-    assert (tables.project, tables.dataset, tables.more) == (
-        "acme-prod",
-        "analytics",
-        False,
-    )
+    assert (tables.location, tables.more) == ("acme-prod.analytics", False)
     assert [(t.name, t.type, t.readable) for t in tables][2] == (
         "customers_model",
         "MODEL",
@@ -79,3 +75,32 @@ def test_keys_by_id_or_name(fake):
     with pytest.raises(gf.InvalidInput) as error:
         gf.keys.create("sso", permissions=["sso:read"])
     assert error.value.param == "permissions"
+
+
+def test_prepare_answers_what_to_set_up_for_a_kind(fake):
+    setup = gf.sources.prepare("bigquery")
+    assert setup.kind == "bigquery"
+    assert setup.identity.email.startswith("gfws-")
+    assert [(g.role, g.on) for g in setup.grants] == [
+        ("roles/bigquery.dataViewer", "dataset"),
+        ("roles/bigquery.jobUser", "project"),
+        ("roles/bigquery.readSessionUser", "project"),
+    ]
+    assert "billing_project" in setup.steps[1]
+    assert setup.oidc is None and setup.policy is None
+    assert fake.calls[-1].payload == {"kind": "bigquery"}
+    with pytest.raises(gf.InvalidInput) as error:
+        gf.sources.prepare("postgres")
+    assert error.value.param == "kind"
+
+
+def test_a_preview_is_its_columns_and_sample(fake):
+    from tests import samples
+
+    samples._sources(fake)
+    frame = gf.sources.preview("bigquery-acme", table="customers")
+    assert list(frame.columns) == ["customer_id", "churned"]
+    assert frame.to_dict("records") == [
+        {"customer_id": "C-100481", "churned": "false"},
+        {"customer_id": "C-100482", "churned": "true"},
+    ]

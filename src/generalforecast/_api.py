@@ -4591,10 +4591,15 @@ class PredictorCreateRequest(Payload):
 class SourcePrepare(Payload):
     """The SourcePrepare schema."""
 
-    kind: Literal["bigquery", "gcs", "snowflake"]
+    kind: Literal["bigquery", "gcs", "s3", "databricks", "snowflake"]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("kind", "kind", True, _literal("bigquery", "gcs", "snowflake")),
+        Field(
+            "kind",
+            "kind",
+            True,
+            _literal("bigquery", "gcs", "s3", "databricks", "snowflake"),
+        ),
     )
 
 
@@ -4637,11 +4642,11 @@ class SourceGrant(Payload):
     """The SourceGrant schema."""
 
     role: str
-    on: Literal["dataset", "bucket"]
+    on: Literal["dataset", "bucket", "project"]
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("role", "role", True, _text),
-        Field("on", "on", True, _literal("dataset", "bucket")),
+        Field("on", "on", True, _literal("dataset", "bucket", "project")),
     )
 
 
@@ -4649,15 +4654,35 @@ class SourceGrant(Payload):
 class SourceTrust(Payload):
     """The SourceTrust schema.
 
-    what a Snowflake source trusts, the issuer and subject of the account's ID tokens
+    what another cloud trusts: the issuer, subject and audience of the account's Google
+    ID tokens
     """
 
     issuer: str
     subject: str
+    audience: str | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("issuer", "issuer", True, _text),
         Field("subject", "subject", True, _text),
+        Field("audience", "audience", False, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePolicy(Payload):
+    """The SourcePolicy schema.
+
+    the document the customer pastes: an AWS role's trust policy, a Databricks service
+    principal's federation policy
+    """
+
+    format: Literal["json"]
+    text: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("format", "format", True, _literal("json")),
+        Field("text", "text", True, _text),
     )
 
 
@@ -4665,16 +4690,25 @@ class SourceTrust(Payload):
 class SourcePrepared(Payload):
     """The SourcePrepared schema."""
 
-    kind: Literal["bigquery", "gcs", "snowflake"]
+    kind: Literal["bigquery", "gcs", "s3", "databricks", "snowflake"]
     identity: SourceIdentity
     grants: tuple[SourceGrant, ...]
+    steps: tuple[str, ...]
     oidc: SourceTrust | None = None
+    policy: SourcePolicy | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("kind", "kind", True, _literal("bigquery", "gcs", "snowflake")),
+        Field(
+            "kind",
+            "kind",
+            True,
+            _literal("bigquery", "gcs", "s3", "databricks", "snowflake"),
+        ),
         Field("identity", "identity", True, _record(SourceIdentity)),
         Field("grants", "grants", True, _items(_record(SourceGrant))),
+        Field("steps", "steps", True, _items(_text)),
         Field("oidc", "oidc", False, _record(SourceTrust)),
+        Field("policy", "policy", False, _record(SourcePolicy)),
     )
 
 
@@ -4712,9 +4746,13 @@ _decode_SourceKind: Decoder = _literal(
 class Source(Payload):
     """A workspace connection to a warehouse or bucket.
 
-    Config keys by kind: bigquery `project, dataset`; gcs `bucket, prefix`; snowflake
-    `account, warehouse, database, role`; databricks `host, warehouse, client_id`; s3
-    `role_arn, region, bucket, prefix`; postgres `host, port, database, user, tls`
+    Config keys by kind: bigquery `project, dataset, billing_project` (queries run and
+    bill in billing_project, the dataset's project unless named); gcs `bucket, prefix`;
+    snowflake `account, warehouse, database, role`; databricks `host, warehouse,
+    client_id, catalog, schema` (client_id is the federated service principal's
+    application id); s3 `role_arn, region, bucket, prefix`; postgres `host, port,
+    database, user, tls`. A bucket's tables are its Parquet and CSV files and folders
+    of their parts under the prefix
     """
 
     name: Name
@@ -8003,18 +8041,18 @@ class SourceTable(Payload):
 class SourceTables(Payload):
     """The SourceTables schema.
 
-    the tables of the source's location, the BigQuery `project` and `dataset`, whose
-    names start with `prefix`; `more` says the warehouse holds more than were listed
+    the tables of the source's location, whose names start with `prefix`; `location` is
+    where they are, as a person writes it (`project.dataset`, `gs://bucket/prefix/`,
+    `s3://bucket/prefix/`, `catalog.schema`); `more` says the location holds more than
+    were listed
     """
 
-    project: str
-    dataset: str
+    location: str
     tables: tuple[SourceTable, ...]
     more: bool
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("project", "project", True, _text),
-        Field("dataset", "dataset", True, _text),
+        Field("location", "location", True, _text),
         Field("tables", "tables", True, _items(_record(SourceTable))),
         Field("more", "more", True, _boolean),
     )
@@ -8022,7 +8060,7 @@ class SourceTables(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class SourcePreview(Payload):
-    """One `table` or a `sql` query; the answer is its first 20 rows."""
+    """One `table` or one `sql` query; the answer is its first 20 rows."""
 
     table: str | None = None
     sql: str | None = None
@@ -8460,6 +8498,76 @@ class SourceReply(Payload):
         Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
         Field("resource", "resource", True, _record(Resource)),
         Field("result", "result", True, _record(Source)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceColumn(Payload):
+    """The SourceColumn schema."""
+
+    name: str
+    type: str
+    mode: Literal["NULLABLE", "REQUIRED", "REPEATED"]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _text),
+        Field("type", "type", True, _text),
+        Field("mode", "mode", True, _literal("NULLABLE", "REQUIRED", "REPEATED")),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreviewed(Payload):
+    """A table's or a query's first 20 rows.
+
+    `table` or `sql` is what was read and `location` where; `type` is the source's kind
+    of table (`QUERY` for a query) and `readable` whether its rows can be read and
+    imported, `sample` empty when not. `rows` and `bytes` are what the source says
+    before reading, null where it says nothing. `columns` name each column's type as
+    the source names it; each sample cell is text, cut to 256 characters, or null
+    """
+
+    source: Name
+    table: str | None
+    sql: str | None
+    location: str
+    type: str
+    readable: bool
+    rows: int | None
+    bytes: int | None
+    columns: tuple[SourceColumn, ...]
+    sample: tuple[tuple[str | None, ...], ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("source", "source", True, _decode_Name),
+        Field("table", "table", True, _union(_text, _null)),
+        Field("sql", "sql", True, _union(_text, _null)),
+        Field("location", "location", True, _text),
+        Field("type", "type", True, _text),
+        Field("readable", "readable", True, _boolean),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("bytes", "bytes", True, _union(_integer, _null)),
+        Field("columns", "columns", True, _items(_record(SourceColumn))),
+        Field("sample", "sample", True, _items(_items(_union(_text, _null)))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreviewedReply(Payload):
+    """The SourcePreviewedReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SourcePreviewed
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SourcePreviewed)),
     )
 
 
@@ -9081,7 +9189,7 @@ ROUTES: tuple[Route, ...] = (
         "POST",
         "/v1/projects/{project}/sources/{source}/preview",
         SourcePreviewRequest,
-        RowsReply,
+        SourcePreviewedReply,
         "application/json",
     ),
     Route(

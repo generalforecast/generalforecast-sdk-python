@@ -3667,8 +3667,7 @@ paths:
                     request_id: r-b3e1af2cef65a512a63e1b610d255d96
                     resource: {kind: source, name: bigquery-acme}
                     result:
-                      project: acme-prod
-                      dataset: analytics
+                      location: acme-prod.analytics
                       tables:
                       - {name: customers, type: TABLE, readable: true}
                       - {name: customers_daily, type: VIEW, readable: true}
@@ -3695,14 +3694,14 @@ paths:
                   project: acme
                   request_id: r-cb2b081fe47044968148e0d0e6c10986
                   resource: {kind: source, name: bigquery-acme}
-                  payload: {table: acme.analytics.customers}
+                  payload: {table: customers}
       responses:
         "200":
           description: the first 20 rows
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RowsReply"
+                $ref: "#/components/schemas/SourcePreviewedReply"
               examples:
                 previewed:
                   value:
@@ -3711,12 +3710,20 @@ paths:
                     request_id: r-cb2b081fe47044968148e0d0e6c10986
                     resource: {kind: source, name: bigquery-acme}
                     result:
+                      source: bigquery-acme
+                      table: customers
+                      sql: null
+                      location: acme-prod.analytics.customers
+                      type: TABLE
+                      readable: true
+                      rows: 61902
+                      bytes: 6190200
                       columns:
-                      - {name: customer_id, type: text, missing: 0, distinct: null}
-                      - {name: churned, type: boolean, missing: 0, distinct: null}
-                      rows:
-                      - {customer_id: C-100481, churned: false}
-                      next: null
+                      - {name: customer_id, type: STRING, mode: REQUIRED}
+                      - {name: churned, type: BOOLEAN, mode: NULLABLE}
+                      sample:
+                      - ["C-100481", "false"]
+                      - ["C-100482", "true"]
   /v1/projects/{project}/sources/{source}/test:
     post:
       operationId: sources.test
@@ -4552,13 +4559,19 @@ paths:
       summary: make or show the identity a data source of a kind is granted to
       description: |
         Makes the workspace's Google service account if it has none and
-        answers its address, its unique id and the roles to grant it for a
-        source of `kind`: BigQuery's on the dataset, Cloud Storage's on the
-        bucket. A Snowflake source grants no Google role; Snowflake trusts
-        the account's ID tokens, whose issuer and subject `oidc` names. The
-        same account answers every kind and every later call. Needs
-        `sources:manage`, which only the admin role holds; each answer and
-        each refusal is in the project's audit log.
+        answers its address, its unique id and what the customer sets up
+        for a source of `kind`, in `steps`, in order. BigQuery and Cloud
+        Storage grant the account Google roles (`grants`): BigQuery's Data
+        Viewer on the dataset, and Job User and Read Session User on the
+        project its queries run and bill in, the source's
+        `billing_project`; Cloud Storage's Object Viewer on the bucket.
+        S3, Databricks and Snowflake grant no Google role: they trust the
+        account's Google ID tokens, whose issuer, subject and audience
+        `oidc` names, and `policy` is the document to paste (an IAM role's
+        trust policy, a service principal's federation policy). No kind
+        stores a secret. The same account answers every kind and every
+        later call. Needs `sources:manage`, which only the admin role
+        holds; each answer and each refusal is in the project's audit log.
       parameters:
         - $ref: "#/components/parameters/project"
       requestBody:
@@ -4597,6 +4610,11 @@ paths:
                         principal: serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com
                       grants:
                         - {role: roles/bigquery.dataViewer, "on": dataset}
+                        - {role: roles/bigquery.jobUser, "on": project}
+                        - {role: roles/bigquery.readSessionUser, "on": project}
+                      steps:
+                        - "Grant serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com BigQuery Data Viewer (roles/bigquery.dataViewer) on the dataset."
+                        - "Grant it BigQuery Job User (roles/bigquery.jobUser) and BigQuery Read Session User (roles/bigquery.readSessionUser) on your project that pays for its queries, and name that project as the source's billing_project."
 
   /v1/projects/{project}/snapshots:
     get:
@@ -11766,7 +11784,7 @@ components:
       required: [kind]
       additionalProperties: false
       properties:
-        kind: {type: string, enum: [bigquery, gcs, snowflake]}
+        kind: {type: string, enum: [bigquery, gcs, s3, databricks, snowflake]}
 
     SourcePrepareRequest:
       allOf:
@@ -11792,28 +11810,43 @@ components:
       additionalProperties: false
       properties:
         role: {type: string, description: "the IAM role, `roles/...`"}
-        "on": {type: string, enum: [dataset, bucket], description: what to grant the role on}
+        "on": {type: string, enum: [dataset, bucket, project], description: what to grant the role on}
 
     SourcePrepared:
       type: object
-      required: [kind, identity, grants]
+      required: [kind, identity, grants, steps]
       additionalProperties: false
       properties:
-        kind: {type: string, enum: [bigquery, gcs, snowflake]}
+        kind: {type: string, enum: [bigquery, gcs, s3, databricks, snowflake]}
         identity: {$ref: "#/components/schemas/SourceIdentity"}
         grants:
           type: array
           items: {$ref: "#/components/schemas/SourceGrant"}
+        steps:
+          type: array
+          description: what the customer does, in order, as the console and the CLI show it
+          items: {type: string}
         oidc: {$ref: "#/components/schemas/SourceTrust"}
+        policy: {$ref: "#/components/schemas/SourcePolicy"}
 
     SourceTrust:
       type: object
-      description: what a Snowflake source trusts, the issuer and subject of the account's ID tokens
+      description: "what another cloud trusts: the issuer, subject and audience of the account's Google ID tokens"
       required: [issuer, subject]
       additionalProperties: false
       properties:
         issuer: {type: string}
-        subject: {type: string}
+        subject: {type: string, description: the account's unique id}
+        audience: {type: string, description: "the tokens' audience, which the trust names; Snowflake's is its own"}
+
+    SourcePolicy:
+      type: object
+      description: "the document the customer pastes: an AWS role's trust policy, a Databricks service principal's federation policy"
+      required: [format, text]
+      additionalProperties: false
+      properties:
+        format: {type: string, enum: [json]}
+        text: {type: string}
 
     SourcePreparedReply:
       allOf:
@@ -14019,7 +14052,7 @@ components:
 
     Source:
       type: object
-      description: "a workspace connection to a warehouse or bucket. Config keys by kind: bigquery `project, dataset`; gcs `bucket, prefix`; snowflake `account, warehouse, database, role`; databricks `host, warehouse, client_id`; s3 `role_arn, region, bucket, prefix`; postgres `host, port, database, user, tls`"
+      description: "a workspace connection to a warehouse or bucket. Config keys by kind: bigquery `project, dataset, billing_project` (queries run and bill in billing_project, the dataset's project unless named); gcs `bucket, prefix`; snowflake `account, warehouse, database, role`; databricks `host, warehouse, client_id, catalog, schema` (client_id is the federated service principal's application id); s3 `role_arn, region, bucket, prefix`; postgres `host, port, database, user, tls`. A bucket's tables are its Parquet and CSV files and folders of their parts under the prefix"
       required: [name, kind, access, state, config, secret_expires, tested_at, tables, contexts, error, origin, created, url]
       additionalProperties: false
       properties:
@@ -14093,20 +14126,21 @@ components:
       additionalProperties: false
       properties:
         name: {type: string, description: the table's name within the dataset}
-        type: {type: string, description: "the warehouse's kind of table, such as `TABLE`, `VIEW` or `MODEL`"}
+        type: {type: string, description: "the warehouse's kind of table, such as `TABLE`, `VIEW` or `MODEL`; a bucket's `PARQUET`, `CSV` or `FOLDER`"}
         readable: {type: boolean, description: whether a context can be made of it}
 
     SourceTables:
       type: object
       description: |
-        the tables of the source's location, the BigQuery `project` and
-        `dataset`, whose names start with `prefix`; `more` says the
-        warehouse holds more than were listed
-      required: [project, dataset, tables, more]
+        the tables of the source's location, whose names start with
+        `prefix`; `location` is where they are, as a person writes it
+        (`project.dataset`, `gs://bucket/prefix/`, `s3://bucket/prefix/`,
+        `catalog.schema`); `more` says the location holds more than were
+        listed
+      required: [location, tables, more]
       additionalProperties: false
       properties:
-        project: {type: string}
-        dataset: {type: string}
+        location: {type: string}
         tables:
           type: array
           items:
@@ -14115,7 +14149,7 @@ components:
 
     SourcePreview:
       type: object
-      description: "one `table` or a `sql` query; the answer is its first 20 rows"
+      description: "one `table` or one `sql` query; the answer is its first 20 rows"
       additionalProperties: false
       properties:
         table: {type: string}
@@ -14327,6 +14361,57 @@ components:
         properties:
           result:
             $ref: "#/components/schemas/Source"
+
+    SourcePreviewed:
+      type: object
+      description: |
+        a table's or a query's first 20 rows. `table` or `sql` is what was
+        read and `location` where; `type` is the source's kind of table
+        (`QUERY` for a query) and `readable` whether its rows can be read
+        and imported, `sample` empty when not. `rows` and `bytes` are what
+        the source says before reading, null where it says nothing.
+        `columns` name each column's type as the source names it; each
+        sample cell is text, cut to 256 characters, or null
+      required: [source, table, sql, location, type, readable, rows, bytes, columns, sample]
+      additionalProperties: false
+      properties:
+        source:
+          $ref: "#/components/schemas/Name"
+        table: {type: [string, "null"]}
+        sql: {type: [string, "null"]}
+        location: {type: string}
+        type: {type: string}
+        readable: {type: boolean}
+        rows: {type: [integer, "null"], minimum: 0}
+        bytes: {type: [integer, "null"], minimum: 0}
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceColumn"
+        sample:
+          type: array
+          maxItems: 20
+          items:
+            type: array
+            items: {type: [string, "null"]}
+
+    SourceColumn:
+      type: object
+      required: [name, type, mode]
+      additionalProperties: false
+      properties:
+        name: {type: string}
+        type: {type: string}
+        mode: {type: string, enum: [NULLABLE, REQUIRED, REPEATED]}
+
+    SourcePreviewedReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/SourcePreviewed"
 
     SourceTablesReply:
       allOf:

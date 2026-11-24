@@ -1789,7 +1789,7 @@ export interface PredictorCreateRequest extends Envelope {
 }
 
 export interface SourcePrepare {
-  kind: "bigquery" | "gcs" | "snowflake";
+  kind: "bigquery" | "gcs" | "s3" | "databricks" | "snowflake";
 }
 
 export interface SourcePrepareRequest extends Envelope {
@@ -1805,22 +1805,35 @@ export interface SourceIdentity {
 
 export interface SourceGrant {
   role: string;
-  on: "dataset" | "bucket";
+  on: "dataset" | "bucket" | "project";
 }
 
 /**
- * what a Snowflake source trusts, the issuer and subject of the account's ID tokens
+ * what another cloud trusts: the issuer, subject and audience of the account's Google
+ * ID tokens
  */
 export interface SourceTrust {
   issuer: string;
   subject: string;
+  audience?: string;
+}
+
+/**
+ * the document the customer pastes: an AWS role's trust policy, a Databricks service
+ * principal's federation policy
+ */
+export interface SourcePolicy {
+  format: "json";
+  text: string;
 }
 
 export interface SourcePrepared {
-  kind: "bigquery" | "gcs" | "snowflake";
+  kind: "bigquery" | "gcs" | "s3" | "databricks" | "snowflake";
   identity: SourceIdentity;
   grants: SourceGrant[];
+  steps: string[];
   oidc?: SourceTrust;
+  policy?: SourcePolicy;
 }
 
 export interface SourcePreparedReply extends Envelope {
@@ -1831,9 +1844,12 @@ export type SourceKind = "bigquery" | "gcs" | "snowflake" | "databricks" | "s3" 
 
 /**
  * a workspace connection to a warehouse or bucket. Config keys by kind: bigquery
- * `project, dataset`; gcs `bucket, prefix`; snowflake `account, warehouse, database,
- * role`; databricks `host, warehouse, client_id`; s3 `role_arn, region, bucket,
- * prefix`; postgres `host, port, database, user, tls`
+ * `project, dataset, billing_project` (queries run and bill in billing_project, the
+ * dataset's project unless named); gcs `bucket, prefix`; snowflake `account, warehouse,
+ * database, role`; databricks `host, warehouse, client_id, catalog, schema` (client_id
+ * is the federated service principal's application id); s3 `role_arn, region, bucket,
+ * prefix`; postgres `host, port, database, user, tls`. A bucket's tables are its
+ * Parquet and CSV files and folders of their parts under the prefix
  */
 export interface Source {
   name: Name;
@@ -3047,17 +3063,18 @@ export interface SourceTable {
 }
 
 /**
- * the tables of the source's location, the BigQuery `project` and `dataset`, whose
- * names start with `prefix`; `more` says the warehouse holds more than were listed
+ * the tables of the source's location, whose names start with `prefix`; `location` is
+ * where they are, as a person writes it (`project.dataset`, `gs://bucket/prefix/`,
+ * `s3://bucket/prefix/`, `catalog.schema`); `more` says the location holds more than
+ * were listed
  */
 export interface SourceTables {
-  project: string;
-  dataset: string;
+  location: string;
   tables: SourceTable[];
   more: boolean;
 }
 
-/** one `table` or a `sql` query; the answer is its first 20 rows */
+/** one `table` or one `sql` query; the answer is its first 20 rows */
 export interface SourcePreview {
   table?: string;
   sql?: string;
@@ -3161,6 +3178,37 @@ export interface SourceReply extends Envelope {
   result: Source;
 }
 
+export interface SourceColumn {
+  name: string;
+  type: string;
+  mode: "NULLABLE" | "REQUIRED" | "REPEATED";
+}
+
+/**
+ * a table's or a query's first 20 rows. `table` or `sql` is what was read and
+ * `location` where; `type` is the source's kind of table (`QUERY` for a query) and
+ * `readable` whether its rows can be read and imported, `sample` empty when not. `rows`
+ * and `bytes` are what the source says before reading, null where it says nothing.
+ * `columns` name each column's type as the source names it; each sample cell is text,
+ * cut to 256 characters, or null
+ */
+export interface SourcePreviewed {
+  source: Name;
+  table: string | null;
+  sql: string | null;
+  location: string;
+  type: string;
+  readable: boolean;
+  rows: number | null;
+  bytes: number | null;
+  columns: SourceColumn[];
+  sample: Array<Array<string | null>>;
+}
+
+export interface SourcePreviewedReply extends Envelope {
+  result: SourcePreviewed;
+}
+
 export interface SourceTablesReply extends Envelope {
   result: SourceTables;
 }
@@ -3258,7 +3306,7 @@ export const ROUTES = {
   "sources.create": { method: "POST", path: "/v1/projects/{project}/sources", request: "SourceCreateRequest", reply: "SourceReply", body: "application/json" },
   "sources.get": { method: "GET", path: "/v1/projects/{project}/sources/{source}", request: "null", reply: "SourceReply", body: null },
   "sources.tables": { method: "GET", path: "/v1/projects/{project}/sources/{source}/tables", request: "null", reply: "SourceTablesReply", body: null },
-  "sources.preview": { method: "POST", path: "/v1/projects/{project}/sources/{source}/preview", request: "SourcePreviewRequest", reply: "RowsReply", body: "application/json" },
+  "sources.preview": { method: "POST", path: "/v1/projects/{project}/sources/{source}/preview", request: "SourcePreviewRequest", reply: "SourcePreviewedReply", body: "application/json" },
   "sources.test": { method: "POST", path: "/v1/projects/{project}/sources/{source}/test", request: "EmptyRequest", reply: "SourceReply", body: "application/json" },
   "sources.delete": { method: "POST", path: "/v1/projects/{project}/sources/{source}/delete", request: "EmptyRequest", reply: "DeletedReply", body: "application/json" },
   "keys.delete": { method: "POST", path: "/v1/projects/{project}/keys/{key}/delete", request: "KeyRefRequest", reply: "KeyDeletedReply", body: "application/json" },

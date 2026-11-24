@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         Slice,
         Snapshot,
         Source,
+        SourceSetup,
         SourceTables,
         SyntheticBatch,
         WriteReceipt,
@@ -752,6 +753,22 @@ def words(state: str) -> str:
     return state.replace("_", " ")
 
 
+def source_setup(call: Call, setup: SourceSetup) -> None:
+    """The identity, the roles to grant or the trust to set, the steps, and the policy to paste."""
+    rows = [("Kind", kind_name(setup.kind)), ("Account", setup.identity.email),
+            ("Unique id", setup.identity.unique_id)]  # fmt: skip
+    rows += [("Grant", f"{g.role} on the {g.on}") for g in setup.grants]
+    if setup.oidc is not None:
+        rows.append(("Trusts", f"{setup.oidc.issuer}, subject {setup.oidc.subject}"))
+        if setup.oidc.audience:
+            rows.append(("Audience", setup.oidc.audience))
+    fields(call, rows)
+    for number, step in enumerate(setup.steps, 1):
+        call.out.say(f"{number}. {step}")
+    if setup.policy is not None:
+        call.out.say(setup.policy.text)
+
+
 def source_tested(call: Call, source: Source) -> None:
     """`Tested source bigquery-acme  ready in 0.4s`."""
     call.out.status(
@@ -772,7 +789,7 @@ def sources_tables(call: Call, tables: SourceTables) -> None:
     rows = [[t.name, t.type, "yes" if t.readable else "no"] for t in tables]
     call.out.table(["Table", "Type", "Readable"], rows)
     if tables.more:
-        call.out.say("The warehouse holds more tables; narrow them with --prefix.")
+        call.out.say(f"{tables.location} holds more tables; narrow them with --prefix.")
 
 
 def permissions(key: Key) -> str:

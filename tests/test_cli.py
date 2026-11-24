@@ -28,7 +28,7 @@ experiments wait; experiments list; experiments cancel; experiments predictions;
 experiments delete
 predictors create; predictors update; predictors get; predictors list; predictors revisions;
 predictors predict; predictors promote; predictors rollback; predictors logs; predictors delete
-sources list; sources get; sources test; sources create; sources tables; sources preview; sources delete
+sources list; sources get; sources prepare; sources test; sources create; sources tables; sources preview; sources delete
 keys list; keys create; keys rotate; keys revoke; keys delete
 snapshots create; snapshots stream; snapshots create-synthetic; snapshots synthetic; snapshots list;
 snapshots get; snapshots update; snapshots delete
@@ -420,11 +420,7 @@ def test_sources_list_and_tables_print_what_the_service_says_of_them(monkeypatch
     assert listed["sources"][0]["access"] == "service_account"
     code, out, _ = gf_cli(monkeypatch, "sources", "tables", "bigquery-acme", "--json")
     tables = json.loads(out)
-    assert (tables["project"], tables["dataset"], tables["more"]) == (
-        "acme-prod",
-        "analytics",
-        False,
-    )
+    assert (tables["location"], tables["more"]) == ("acme-prod.analytics", False)
     assert tables["tables"][2] == {
         "name": "customers_model",
         "type": "MODEL",

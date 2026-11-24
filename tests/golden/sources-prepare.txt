@@ -1,0 +1,45 @@
+--- 100 columns, not a terminal
+$ gf sources prepare --kind bigquery
+  Kind       BigQuery
+  Account    gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com
+  Unique id  104857600000000000001
+  Grant      roles/bigquery.dataViewer on the dataset
+  Grant      roles/bigquery.jobUser on the project
+  Grant      roles/bigquery.readSessionUser on the project
+1. Grant serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com BigQuery Data Viewer (roles/bigquery.dataViewer) on the dataset.
+2. Grant it BigQuery Job User (roles/bigquery.jobUser) and BigQuery Read Session User (roles/bigquery.readSessionUser) on your project that pays for its queries, and name that project as the source's billing_project.
+--- 100 columns, a terminal
+$ gf sources prepare --kind bigquery
+  Kind       BigQuery
+  Account    gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com
+  Unique id  104857600000000000001
+  Grant      roles/bigquery.dataViewer on the dataset
+  Grant      roles/bigquery.jobUser on the project
+  Grant      roles/bigquery.readSessionUser on the project
+1. Grant serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com BigQuery Data Viewer (roles/bigquery.dataViewer) on the dataset.
+2. Grant it BigQuery Job User (roles/bigquery.jobUser) and BigQuery Read Session User (roles/bigquery.readSessionUser) on your project that pays for its queries, and name that project as the source's billing_project.
+--- 44 columns, not a terminal
+$ gf sources prepare --kind bigquery
+  Kind       BigQuery
+  Account    gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com
+  Unique id  104857600000000000001
+  Grant      roles/bigquery.dataViewer on the dataset
+  Grant      roles/bigquery.jobUser on the project
+  Grant      roles/bigquery.readSessionUser on the project
+1. Grant serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com BigQuery Data Viewer (roles/bigquery.dataViewer) on the dataset.
+2. Grant it BigQuery Job User (roles/bigquery.jobUser) and BigQuery Read Session User (roles/bigquery.readSessionUser) on your project that pays for its queries, and name that project as the source's billing_project.
+--- 44 columns, a terminal
+$ gf sources prepare --kind bigquery
+  Kind       BigQuery
+  Account    gfws-3f9a1c2b4d5e6f70@gf-
+             sources.iam.gserviceaccount.
+             com
+  Unique id  104857600000000000001
+  Grant      roles/bigquery.dataViewer on
+             the dataset
+  Grant      roles/bigquery.jobUser on the
+             project
+  Grant      roles/bigquery.readSessionUser
+             on the project
+1. Grant serviceAccount:gfws-3f9a1c2b4d5e6f70@gf-sources.iam.gserviceaccount.com BigQuery Data Viewer (roles/bigquery.dataViewer) on the dataset.
+2. Grant it BigQuery Job User (roles/bigquery.jobUser) and BigQuery Read Session User (roles/bigquery.readSessionUser) on your project that pays for its queries, and name that project as the source's billing_project.
