@@ -11,6 +11,7 @@ fixed row count (section 3.9 of the surface spec).
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import io
 import os
@@ -33,6 +34,7 @@ FILE_FORMATS = {
     ".tsv": "tsv",
     ".parquet": "parquet",
     ".pq": "parquet",
+    ".xlsx": "xlsx",
     ".arrow": "arrow",
     ".feather": "arrow",
     ".jsonl": "jsonl",
@@ -47,7 +49,7 @@ def _from_file(path: Path) -> pa.Table:
     if kind is None:
         raise InvalidInput(
             f"`{path}` is not a file this reads",
-            hint="pass a .csv, .tsv, .parquet, .arrow, .feather or .jsonl file",
+            hint="pass a .csv, .tsv, .parquet, .xlsx, .arrow, .feather or .jsonl file",
         )
     if not path.is_file():
         raise InvalidInput(f"no file at `{path}`")
@@ -61,6 +63,8 @@ def _from_file(path: Path) -> pa.Table:
             import pyarrow.parquet as pq
 
             return pq.read_table(path)
+        if kind == "xlsx":
+            return _workbook(path)
         if kind == "jsonl":
             from pyarrow import json
 
@@ -72,11 +76,87 @@ def _from_file(path: Path) -> pa.Table:
         raise InvalidInput(f"cannot read `{path}`: {error}") from None
 
 
+def _cell_text(value: Any) -> str:
+    """A cell as text, a whole number without Excel's `.0`."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _sheet_column(values: list[Any]) -> pa.Array:
+    """One column of a sheet, typed by what its cells hold, as the service reads one.
+
+    Excel keeps every number as a float: a column of whole numbers is int64.
+    Dates with times are read as UTC, which a workbook does not name. A
+    column whose cells differ in type is text.
+    """
+    held = [v for v in values if v is not None]
+    if held and all(type(v) is bool for v in held):
+        return pa.array(values, pa.bool_())
+    if held and all(type(v) in (int, float) for v in held):
+        if all(float(v).is_integer() and abs(v) < 2**53 for v in held):
+            return pa.array([None if v is None else int(v) for v in values], pa.int64())
+        return pa.array(values, pa.float64())
+    if held and all(isinstance(v, dt.date) for v in held):
+        if all(type(v) is dt.date for v in held):
+            return pa.array(values, pa.date32())
+        return pa.array(
+            [
+                None
+                if v is None
+                else dt.datetime(*v.timetuple()[:6], v.microsecond, tzinfo=dt.UTC)
+                if isinstance(v, dt.datetime)
+                else dt.datetime(v.year, v.month, v.day, tzinfo=dt.UTC)
+                for v in values
+            ],
+            pa.timestamp("us", tz="UTC"),
+        )
+    return pa.array([None if v is None else _cell_text(v) for v in values], pa.string())
+
+
+def _workbook(path: Path) -> pa.Table:
+    """An XLSX file's first sheet: its first row names the columns.
+
+    Rows with no value are skipped, as a CSV's blank lines are, and so is a
+    column with neither a name nor a value.
+    """
+    from python_calamine import CalamineWorkbook
+
+    try:
+        book = CalamineWorkbook.from_path(str(path))
+        rows = book.get_sheet_by_index(0).iter_rows() if book.sheet_names else iter(())
+    except Exception as error:  # noqa: BLE001 - any unreadable workbook is refused
+        raise InvalidInput(f"cannot read `{path}`: {error}") from None
+    header = next(rows, None)
+    if header is None:
+        raise InvalidInput(f"`{path}` has no sheet with a header row")
+    names = [None if cell == "" else _cell_text(cell) for cell in header]
+    columns: list[list[Any]] = [[] for _ in names]
+    for row in rows:
+        cells = [None if cell == "" else cell for cell in row]
+        if any(cell is not None for cell in cells):
+            for column, cell in zip(columns, cells, strict=True):
+                column.append(cell)
+    kept = [
+        (name, column)
+        for name, column in zip(names, columns, strict=True)
+        if name is not None or any(cell is not None for cell in column)
+    ]
+    if any(name is None for name, _ in kept):
+        raise InvalidInput(
+            f"`{path}` has a column with values and no name in its first row"
+        )
+    return pa.table(
+        [_sheet_column(column) for _, column in kept],
+        names=[name for name, _ in kept],
+    )
+
+
 def table(data: Any, *, what: str = "data") -> pa.Table:
     """Rows as one normalized Arrow table.
 
     Takes a pandas or Polars frame, an Arrow table or record batch, a path
-    to a .csv, .tsv, .parquet, .arrow, .feather or .jsonl file, a mapping
+    to a .csv, .tsv, .parquet, .xlsx, .arrow, .feather or .jsonl file, a mapping
     of columns, or a list of row mappings. Schema metadata is dropped and
     dictionary columns decoded and large strings made plain; `normalized`
     goes on to the table the service holds.
@@ -108,7 +188,7 @@ def table(data: Any, *, what: str = "data") -> pa.Table:
             raise InvalidInput(
                 f"{what} must be a DataFrame, an Arrow table or a file path",
                 hint="pass a pandas or Polars DataFrame, a pyarrow.Table, "
-                "or a .csv, .parquet, .arrow or .jsonl path",
+                "or a .csv, .tsv, .parquet, .xlsx, .arrow or .jsonl path",
                 param=what,
             )
     except (pa.ArrowException, TypeError, ValueError) as error:

@@ -24,6 +24,8 @@ dependencies = [
     "numpy>=2.5.3",
     "pandas>=2.2",
     "pyarrow>=24",
+    # XLSX files: the first sheet of a workbook, read by calamine.
+    "python-calamine>=0.6",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +43,8 @@ Issues = "https://github.com/generalforecast/generalforecast-sdk-python/issues"
 [dependency-groups]
 dev = [
     "jsonschema>=4.23",
+    # Writes the XLSX files the tests read.
+    "openpyxl>=3.1",
     "pytest>=8.3",
     "pyyaml>=6.0.2",
     "ruff==0.16.10",

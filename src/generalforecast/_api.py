@@ -7120,14 +7120,19 @@ class ContextData(Payload):
     an upload's announcement; the bytes follow in chunks unless the rows are unchanged
     """
 
-    format: Literal["parquet", "arrow", "csv"]
+    format: Literal["parquet", "arrow", "csv", "tsv", "xlsx"]
     bytes: int
     digest: Digest
     rows: int | None = None
     file: str | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("format", "format", True, _literal("parquet", "arrow", "csv")),
+        Field(
+            "format",
+            "format",
+            True,
+            _literal("parquet", "arrow", "csv", "tsv", "xlsx"),
+        ),
         Field("bytes", "bytes", True, _integer),
         Field("digest", "digest", True, _decode_Digest),
         Field("rows", "rows", False, _integer),

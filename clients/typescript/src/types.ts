@@ -2651,7 +2651,7 @@ export interface Column {
  * an upload's announcement; the bytes follow in chunks unless the rows are unchanged
  */
 export interface ContextData {
-  format: "parquet" | "arrow" | "csv";
+  format: "parquet" | "arrow" | "csv" | "tsv" | "xlsx";
   bytes: number;
   digest: Digest;
   rows?: number;

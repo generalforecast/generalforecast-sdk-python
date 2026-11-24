@@ -92,6 +92,88 @@ def test_a_path_is_read_and_named(fake, tmp_path):
     assert ctx.file == "adult.csv"
 
 
+def as_workbook(frame, path):
+    """`frame` as the first sheet of an XLSX file, with a second sheet not read."""
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.append(list(frame.columns))
+    for row in frame.itertuples(index=False):
+        sheet.append(list(row))
+    book.create_sheet("Notes").append(["not read"])
+    book.save(path)
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".tsv", ".parquet", ".xlsx"])
+def test_each_table_file_goes_up_as_the_same_rows(fake, tmp_path, suffix):
+    path = tmp_path / f"adult{suffix}"
+    frame = adult()
+    if suffix == ".parquet":
+        frame.to_parquet(path, index=False)
+    elif suffix == ".xlsx":
+        as_workbook(frame, path)
+    else:
+        frame.to_csv(path, index=False, sep="\t" if suffix == ".tsv" else ",")
+    ctx = gf.contexts.create("adult", data=str(path))
+    [created] = fake.calls_to("POST", r".*/contexts")
+    assert created.payload["data"]["file"] == f"adult{suffix}"
+    assert ctx.file == f"adult{suffix}"
+    assert created.payload["data"]["digest"] == gf_digest(frame)
+
+
+def gf_digest(frame):
+    from generalforecast import _data
+
+    return _data.table_digest(_data.normalized(_data.table(frame)))
+
+
+def test_an_xlsx_sheet_is_typed_by_its_cells(tmp_path):
+    import datetime as dt
+
+    import openpyxl
+    import pyarrow as pa
+
+    from generalforecast import _data
+
+    path = tmp_path / "people.XLSX"
+    book = openpyxl.Workbook()
+    sheet = book.active
+    for row in (
+        ["id", "score", "joined", "active", "code", None],
+        [1, 2.5, dt.date(2026, 1, 2), True, "A1"],
+        [None, None, None, None, None],
+        [2, None, dt.date(2026, 1, 3), False, 345],
+    ):
+        sheet.append(row)
+    book.save(path)
+    read = _data.table(path)
+    assert read.column_names == ["id", "score", "joined", "active", "code"]
+    assert read.schema.field("id").type == pa.int64()
+    assert read.column("score").to_pylist() == [2.5, None]
+    assert read.column("joined").to_pylist() == [
+        dt.date(2026, 1, 2),
+        dt.date(2026, 1, 3),
+    ]
+    assert read.column("active").to_pylist() == [True, False]
+    assert read.column("code").to_pylist() == ["A1", "345"]
+
+
+def test_a_workbook_column_needs_a_name(tmp_path):
+    import openpyxl
+
+    path = tmp_path / "unnamed.xlsx"
+    book = openpyxl.Workbook()
+    book.active.append(["id", None])
+    book.active.append([1, 2])
+    book.save(path)
+    with pytest.raises(gf.InvalidInput, match="no name"):
+        gf.contexts.create("unnamed", data=str(path))
+    (tmp_path / "broken.xlsx").write_bytes(b"not a workbook")
+    with pytest.raises(gf.InvalidInput, match="cannot read"):
+        gf.contexts.create("broken", data=str(tmp_path / "broken.xlsx"))
+
+
 def test_a_source_import_polls_until_ready(fake):
     ctx = gf.contexts.create(
         "customers",
