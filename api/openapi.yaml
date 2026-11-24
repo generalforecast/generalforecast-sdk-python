@@ -13050,10 +13050,11 @@ components:
           description: "the caller's email, or its key's id"
 
     ModelField:
-      description: "a model by its short name, such as `tabicl-v2`, or its full id; a short name resolves to its family's entry for the task given, else the task inferred from the target column, else the family's only task"
+      description: "a model by its short name, such as `tabicl-v2`, or its full id; a short name resolves to its family's entry for the task given, else the task inferred from the target column, else the family's only task. One of the project's fine-tunes is its id, `<project>/<name>@ft<version>`, or `<name>@ft<version>`, which the plane's routes read in the caller's project; the ad hoc `predict` route, which the pool serves, takes the id, as the SDK sends it"
       anyOf:
       - $ref: "#/components/schemas/ModelId"
       - $ref: "#/components/schemas/ModelName"
+      - $ref: "#/components/schemas/FineTuneName"
 
     Code:
       type: object

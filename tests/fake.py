@@ -134,7 +134,16 @@ NOT_KEY_GRANTABLE = {
 
 
 def entry(full: str) -> dict[str, Any]:
-    """A catalog entry by full id or short name; classification for a short name with several."""
+    """A catalog entry by full id or short name; classification for a short name with several.
+
+    A fine-tune, `credit@ft1` or `acme/credit@ft1`, is one of acme's, on the first entry's base.
+    """
+    if "@ft" in full:
+        return {
+            **CATALOG[0],
+            "name": full if "/" in full else f"acme/{full}",
+            "short": None,
+        }
     return next(m for m in CATALOG if full in (m["name"], m["short"]))
 
 
@@ -1083,14 +1092,9 @@ def models_list(fake: Fake, call: Call) -> Any:
 def models_get(fake: Fake, call: Call, name: str) -> Any:
     name = unquote(name)
     task = call.query.get("task")
-    if "@ft" in name:
+    if "@ft" in name and "/" not in name:
         # One of the project's fine-tunes, `credit-default@ft1`, as the plane reads it.
-        run = _run_for(fake, name)
-        view = contract.example("models.get", "fine_tune")
-        view.pop("versions")
-        return ok(
-            {**view, "model": run["model"], "name": run["model"], "base": run["base"]}
-        )
+        name = f"{fake.project}/{name}"
     found = [
         m
         for m in fake.catalog
@@ -1395,7 +1399,7 @@ def runs_post(fake: Fake, call: Call) -> Any:
 
 
 def _run_for(fake: Fake, segment: str) -> dict[str, Any]:
-    name, _, version = segment.partition("@ft")
+    name, _, version = segment.split("/")[-1].partition("@ft")
     versions = fake.runs.get(name)
     if not versions:
         raise Refusal(404, "NotFound", f"no run named `{segment}`")

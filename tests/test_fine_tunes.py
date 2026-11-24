@@ -430,6 +430,7 @@ def test_a_run_names_the_model_to_pass_and_its_short_name_resolves(fake):
         plan={"steps": 10},
     )
     assert run.model == "acme/credit-default@ft1"
+    fake.catalog.append(dict(fake.catalog[0], name=run.model, short=None))
     queries = pd.DataFrame({"income": [1.0]})
     context = pd.DataFrame({"income": [1.0, 2.0], "defaulted": [0, 1]})
     gf.models.predict(

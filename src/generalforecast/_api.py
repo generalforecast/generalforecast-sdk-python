@@ -486,8 +486,12 @@ class Selection(Payload):
     }
 
 
-ModelField = ModelId | ModelName
-_decode_ModelField: Decoder = _union(_decode_ModelId, _decode_ModelName)
+ModelField = ModelId | ModelName | FineTuneName
+_decode_ModelField: Decoder = _union(
+    _decode_ModelId,
+    _decode_ModelName,
+    _decode_FineTuneName,
+)
 
 
 @dataclass(frozen=True, kw_only=True)

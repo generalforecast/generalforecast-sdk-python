@@ -152,9 +152,12 @@ export interface Selection {
 /**
  * a model by its short name, such as `tabicl-v2`, or its full id; a short name resolves
  * to its family's entry for the task given, else the task inferred from the target
- * column, else the family's only task
+ * column, else the family's only task. One of the project's fine-tunes is its id,
+ * `<project>/<name>@ft<version>`, or `<name>@ft<version>`, which the plane's routes
+ * read in the caller's project; the ad hoc `predict` route, which the pool serves,
+ * takes the id, as the SDK sends it
  */
-export type ModelField = ModelId | ModelName;
+export type ModelField = ModelId | ModelName | FineTuneName;
 
 /** a context the service holds by its digest */
 export interface SnapshotReference {
