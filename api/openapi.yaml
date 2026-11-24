@@ -9581,6 +9581,10 @@ components:
         architecture, so the changed model is not calibrated to the base
         and starts from `start_loss` where the base scores `base_loss`, on
         the evaluation rows; both are null until step 0 measures them.
+        `base_kept`: no training step beat the base on the rows the run held
+        out, so the version it published keeps the base's own weights
+        (`kept_step` 0) and predicts exactly as the base does; `base_loss`
+        is the base's loss on those rows and `start_loss` is null.
       required:
       - code
       - message
@@ -9592,6 +9596,7 @@ components:
           type: string
           enum:
           - uncalibrated_architecture
+          - base_kept
         message:
           type: string
         base_loss:
@@ -9600,7 +9605,7 @@ components:
           - type: number
           - type: 'null'
         start_loss:
-          description: the changed model's loss on the same rows at step 0; null until measured, or without a finite one
+          description: the changed model's loss on the same rows at step 0; null until measured, without a finite one, or for `base_kept`
           anyOf:
           - type: number
           - type: 'null'

@@ -2200,16 +2200,19 @@ class RunWarning(Payload):
     `uncalibrated_architecture`: the run changes the base's architecture, so the
     changed model is not calibrated to the base and starts from `start_loss` where the
     base scores `base_loss`, on the evaluation rows; both are null until step 0
-    measures them.
+    measures them. `base_kept`: no training step beat the base on the rows the run held
+    out, so the version it published keeps the base's own weights (`kept_step` 0) and
+    predicts exactly as the base does; `base_loss` is the base's loss on those rows and
+    `start_loss` is null.
     """
 
-    code: Literal["uncalibrated_architecture"]
+    code: Literal["uncalibrated_architecture", "base_kept"]
     message: str
     base_loss: float | None
     start_loss: float | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
-        Field("code", "code", True, _literal("uncalibrated_architecture")),
+        Field("code", "code", True, _literal("uncalibrated_architecture", "base_kept")),
         Field("message", "message", True, _text),
         Field("base_loss", "base_loss", True, _union(_number, _null)),
         Field("start_loss", "start_loss", True, _union(_number, _null)),

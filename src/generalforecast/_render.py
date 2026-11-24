@@ -321,6 +321,12 @@ def _run_parts(run: FineTuneRun) -> list[str]:
         parts.append(f"loss {run.loss:.3f}")
     if run.validation_loss is not None:
         parts.append(f"val {validation(run.validation_loss, run.base_validation_loss)}")
+    if run.published is not None and run.kept_step == 0:
+        # No step beat the base, so the version is the base's own weights.
+        base = run.base.split("/")[-1] or "the base"
+        parts.append(
+            f"kept {base}'s weights: no step beat it, so it predicts as {base}"
+        )
     if run.seconds:
         parts.append(spaced(run.seconds))
     if run.credits:
