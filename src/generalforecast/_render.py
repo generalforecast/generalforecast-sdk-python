@@ -126,6 +126,15 @@ def leaderboard(run: Run, *, width: int = WIDTH) -> list[str]:
     return columns(header, rows, align=align, drop=drop, width=width).lines
 
 
+def failures(run: Run) -> list[str]:
+    """Why each of a run's models failed, as `mitra-2 failed: inference timed out`."""
+    return [
+        f"{_model(entry)} failed: {entry.error}"
+        for entry in _ranked(run)
+        if entry.state == "failed" and entry.error
+    ]
+
+
 def _header(experiment: Experiment) -> str:
     text = f"Experiment {experiment.name}"
     run = experiment.run
@@ -146,6 +155,7 @@ def experiment_text(experiment: Experiment, *, width: int = WIDTH) -> str:
     lines = [_header(experiment)]
     if experiment.run is not None and experiment.run.leaderboard:
         lines += leaderboard(experiment.run, width=width)
+        lines += [f"  {line}" for line in failures(experiment.run)]
     if experiment.run is not None and experiment.run.error:
         lines.append(f"  failed: {experiment.run.error}")
     if experiment.url:
@@ -213,6 +223,9 @@ def experiment_html(experiment: Experiment) -> str:
     parts = [f"<div>{_title(_header(experiment))}"]
     if experiment.run is not None and experiment.run.leaderboard:
         parts.append(leaderboard_html(experiment.run))
+        parts += [
+            f"<div>{html.escape(line)}</div>" for line in failures(experiment.run)
+        ]
     if experiment.run is not None and experiment.run.error:
         parts.append(f"<div>failed: {html.escape(experiment.run.error)}</div>")
     parts.append(_link(experiment.url))
