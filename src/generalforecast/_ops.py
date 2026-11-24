@@ -44,6 +44,7 @@ from generalforecast.types import (
     Context,
     ContextUse,
     Deploy,
+    Entry,
     Environment,
     EnvironmentFailure,
     Estimate,
@@ -917,29 +918,34 @@ def _progress(name: str, run: Run) -> Say:
     return Say(f"{head}  {finished} of {models} finished", log=f"{head}  {models}")
 
 
-def experiment_wait(
+def _follow_experiment(
     experiment: Any,
-    *,
-    run: int | None = None,
-    timeout: float | None = None,
-    poll: float | None = None,
+    run: int | None,
+    timeout: float | None,
+    poll: float | None,
+    each: Callable[[Entry], Any] | None,
 ) -> Op:
-    """Polls until the run ends, every `poll` seconds; raises when it failed."""
+    """Polls a run every `poll` seconds until it ends and returns its experiment.
+
+    `each` makes the step for each model's leaderboard entry once that model
+    has ended, once, as the run reads when it lands: its score while other
+    models still score.
+    """
     name = name_of(experiment, "experiment")
     deadline = _deadline(timeout, poll)
     attempt = 0
+    ended: set[str] = set()
     while True:
         found = yield from experiment_get(name, run=run)
         current = found.run
         if current is None:
             return found
+        if each is not None:
+            for entry in current.leaderboard:
+                if entry.done and entry.model not in ended:
+                    ended.add(entry.model)
+                    yield each(entry)
         if current.done:
-            if current.state == "failed":
-                raise failed(
-                    f"run {current.number} of {name} failed",
-                    current.error,
-                    code="RunFailed",
-                )
             return found
         if _past(deadline):
             raise _not_done(
@@ -947,10 +953,43 @@ def experiment_wait(
                 timeout,
                 f"gf.experiments.wait({name!r}) picks it up again",
             )
-        yield _progress(name, current)
+        if each is None:
+            yield _progress(name, current)
         yield Sleep(_poll(attempt, poll))
         attempt += 1
         run = current.number
+
+
+def experiment_wait(
+    experiment: Any,
+    *,
+    run: int | None = None,
+    timeout: float | None = None,
+    poll: float | None = None,
+    on_model: Callable[[Entry], Any] | None = None,
+) -> Op:
+    """Polls until the run ends; raises when it failed. `on_model` hears each model's entry as that model ends."""
+    each = None if on_model is None else (lambda entry: Notify(on_model, entry))
+    found = yield from _follow_experiment(experiment, run, timeout, poll, each)
+    current = found.run
+    if current is not None and current.state == "failed":
+        raise failed(
+            f"run {current.number} of {found.name} failed",
+            current.error,
+            code="RunFailed",
+        )
+    return found
+
+
+def experiment_watch(
+    experiment: Any,
+    *,
+    run: int | None = None,
+    timeout: float | None = None,
+    poll: float | None = None,
+) -> Op:
+    """Emits each model's leaderboard entry once that model has ended, until the run ends."""
+    yield from _follow_experiment(experiment, run, timeout, poll, Emit)
 
 
 def _run_number(name: str, run: int | None) -> Op:

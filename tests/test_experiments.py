@@ -165,3 +165,22 @@ def test_a_wait_checks_every_poll_seconds(adult, monkeypatch):
     with pytest.raises(gf.InvalidInput) as error:
         gf.experiments.wait("adult-income", poll=0)
     assert error.value.param == "poll"
+
+
+def test_watch_yields_each_model_once_as_it_ends_while_the_others_score(adult):
+    adult.polls_until_done = 3
+    gf.experiments.create(context="adult", target="income", models=MODELS, wait=False)
+    watched = []
+    for entry in gf.experiments.watch("adult-income", poll=0.01):
+        run = adult.experiments["adult-income"]["_runs"][0]
+        watched.append((entry.short, entry.state, run["state"]))
+    # The first model's score comes while the run still scores the others.
+    assert watched[0] == ("kumo-medium", "finished", "running")
+    assert sorted(short for short, _, _ in watched) == sorted(MODELS)
+    assert all(state == "finished" for _, state, _ in watched)
+    heard = []
+    gf.experiments.run("adult-income", models=MODELS, wait=False)
+    done = gf.experiments.wait("adult-income", poll=0.01, on_model=heard.append)
+    assert done.run.number == 2 and done.run.state == "finished"
+    assert sorted(e.short for e in heard) == sorted(MODELS)
+    assert all(e.done for e in heard)

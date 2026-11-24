@@ -49,7 +49,10 @@ print(exp)
 #   https://app.generalforecast.com/?project=acme#/experiments/adult-income
 
 gf.experiments.slices(exp, model=exp.best.model)[:3]     # error by slice
-gf.experiments.run(exp, models=["kumo-large"])           # run 2, same setup
+gf.experiments.run(exp, models=["kumo-large"], wait=False)  # run 2, same setup
+
+for model in gf.experiments.watch(exp):                  # each model as it ends
+    print(model.short, model.score)
 
 p = gf.predictors.create("adult-income", context="adult",
                          model=exp.best.model, target="income")

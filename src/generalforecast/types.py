@@ -451,6 +451,11 @@ class Entry:
     usd: float = 0.0
     error: str | None = None
 
+    @property
+    def done(self) -> bool:
+        """Whether the model has ended: scored, failed or cancelled."""
+        return self.state in ("finished", "failed", "cancelled")
+
 
 @dataclass(frozen=True, repr=False)
 class Run:
