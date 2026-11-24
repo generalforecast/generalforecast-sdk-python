@@ -3695,14 +3695,14 @@ paths:
                   project: acme
                   request_id: r-cb2b081fe47044968148e0d0e6c10986
                   resource: {kind: source, name: bigquery-acme}
-                  payload: {table: acme.analytics.customers}
+                  payload: {table: customers}
       responses:
         "200":
-          description: the first 20 rows
+          description: the table's columns, size and first 20 rows
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RowsReply"
+                $ref: "#/components/schemas/SourcePreviewReply"
               examples:
                 previewed:
                   value:
@@ -3711,12 +3711,19 @@ paths:
                     request_id: r-cb2b081fe47044968148e0d0e6c10986
                     resource: {kind: source, name: bigquery-acme}
                     result:
+                      source: bigquery-acme
+                      table: customers
+                      location: acme-prod.analytics.customers
+                      type: TABLE
+                      readable: true
+                      rows: 48210
+                      bytes: 3145728
                       columns:
-                      - {name: customer_id, type: text, missing: 0, distinct: null}
-                      - {name: churned, type: boolean, missing: 0, distinct: null}
-                      rows:
-                      - {customer_id: C-100481, churned: false}
-                      next: null
+                      - {name: customer_id, type: STRING, mode: REQUIRED}
+                      - {name: churned, type: BOOLEAN, mode: NULLABLE}
+                      sample:
+                      - [C-100481, "false"]
+                      - [C-100482, null]
   /v1/projects/{project}/sources/{source}/test:
     post:
       operationId: sources.test
@@ -14327,6 +14334,54 @@ components:
         properties:
           result:
             $ref: "#/components/schemas/Source"
+
+    SourceColumn:
+      type: object
+      description: a column of a source's table, as the warehouse types it
+      required: [name, type, mode]
+      additionalProperties: false
+      properties:
+        name: {type: string}
+        type: {type: string, description: "the warehouse's type, such as `STRING` or `INTEGER`"}
+        mode: {type: string, description: "`NULLABLE`, `REQUIRED` or `REPEATED`"}
+
+    SourcePreviewTable:
+      type: object
+      description: |
+        a table of the source's location as a preview shows it: `columns`
+        as the warehouse types them, the table's `rows` and `bytes`, and
+        `sample`, its first 20 rows, each cell as text (or null) cut to 256
+        characters, in the order of `columns`; a table that is not
+        `readable`, such as a view, has no sample
+      required: [source, table, location, type, readable, rows, bytes, columns, sample]
+      additionalProperties: false
+      properties:
+        source: {$ref: "#/components/schemas/Name"}
+        table: {type: string}
+        location: {type: string, description: "the table's full name, `project.dataset.table`"}
+        type: {type: string, description: "the warehouse's kind of table, such as `TABLE` or `VIEW`"}
+        readable: {type: boolean, description: whether a context can be made of it}
+        rows: {type: integer, minimum: 0}
+        bytes: {type: integer, minimum: 0}
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceColumn"
+        sample:
+          type: array
+          maxItems: 20
+          items:
+            type: array
+            items: {type: [string, "null"]}
+
+    SourcePreviewReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/SourcePreviewTable"
 
     SourceTablesReply:
       allOf:

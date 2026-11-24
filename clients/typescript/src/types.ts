@@ -3161,6 +3161,35 @@ export interface SourceReply extends Envelope {
   result: Source;
 }
 
+/** a column of a source's table, as the warehouse types it */
+export interface SourceColumn {
+  name: string;
+  type: string;
+  mode: string;
+}
+
+/**
+ * a table of the source's location as a preview shows it: `columns` as the warehouse
+ * types them, the table's `rows` and `bytes`, and `sample`, its first 20 rows, each
+ * cell as text (or null) cut to 256 characters, in the order of `columns`; a table that
+ * is not `readable`, such as a view, has no sample
+ */
+export interface SourcePreviewTable {
+  source: Name;
+  table: string;
+  location: string;
+  type: string;
+  readable: boolean;
+  rows: number;
+  bytes: number;
+  columns: SourceColumn[];
+  sample: Array<Array<string | null>>;
+}
+
+export interface SourcePreviewReply extends Envelope {
+  result: SourcePreviewTable;
+}
+
 export interface SourceTablesReply extends Envelope {
   result: SourceTables;
 }
@@ -3258,7 +3287,7 @@ export const ROUTES = {
   "sources.create": { method: "POST", path: "/v1/projects/{project}/sources", request: "SourceCreateRequest", reply: "SourceReply", body: "application/json" },
   "sources.get": { method: "GET", path: "/v1/projects/{project}/sources/{source}", request: "null", reply: "SourceReply", body: null },
   "sources.tables": { method: "GET", path: "/v1/projects/{project}/sources/{source}/tables", request: "null", reply: "SourceTablesReply", body: null },
-  "sources.preview": { method: "POST", path: "/v1/projects/{project}/sources/{source}/preview", request: "SourcePreviewRequest", reply: "RowsReply", body: "application/json" },
+  "sources.preview": { method: "POST", path: "/v1/projects/{project}/sources/{source}/preview", request: "SourcePreviewRequest", reply: "SourcePreviewReply", body: "application/json" },
   "sources.test": { method: "POST", path: "/v1/projects/{project}/sources/{source}/test", request: "EmptyRequest", reply: "SourceReply", body: "application/json" },
   "sources.delete": { method: "POST", path: "/v1/projects/{project}/sources/{source}/delete", request: "EmptyRequest", reply: "DeletedReply", body: "application/json" },
   "keys.delete": { method: "POST", path: "/v1/projects/{project}/keys/{key}/delete", request: "KeyRefRequest", reply: "KeyDeletedReply", body: "application/json" },

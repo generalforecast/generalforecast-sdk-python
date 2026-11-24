@@ -1563,13 +1563,13 @@ def source_tables(source: Any, prefix: str | None) -> Op:
 
 
 def source_preview(source: Any, table: str | None, sql: str | None) -> Op:
-    """Twenty rows of a source's table or query."""
+    """Twenty rows of a source's table or query, each cell as the warehouse's text."""
     if (table is None) == (sql is None):
         raise InvalidInput("preview reads one table= or one sql=")
     payload = {"table": table} if table is not None else {"sql": sql}
     reply = yield _http.sources_action(name_of(source, "source"), "preview", payload)
     result = reply.result or {}
-    return _data.frame(result.get("columns"), result.get("rows"))
+    return _data.frame(result.get("columns"), result.get("sample"))
 
 
 def source_delete(source: Any) -> Op:

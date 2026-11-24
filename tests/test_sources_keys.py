@@ -43,8 +43,10 @@ def test_sources_take_the_config_keys_of_their_kind(fake):
         False,
     )
     assert len(tables) == 3 and tables[0].name == "customers"
-    preview = gf.sources.preview("pg-replica", table="acme.analytics.customers")
+    preview = gf.sources.preview("pg-replica", table="customers")
     assert list(preview.columns) == ["customer_id", "churned"]
+    assert preview.iloc[0].tolist() == ["C-100481", "false"]
+    assert preview.churned.isna().tolist() == [False, True]
     with pytest.raises(gf.InvalidInput):
         gf.sources.preview("pg-replica")
     gf.sources.delete("pg-replica")

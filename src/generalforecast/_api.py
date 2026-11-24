@@ -8464,6 +8464,73 @@ class SourceReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SourceColumn(Payload):
+    """A column of a source's table, as the warehouse types it."""
+
+    name: str
+    type: str
+    mode: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("name", "name", True, _text),
+        Field("type", "type", True, _text),
+        Field("mode", "mode", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreviewTable(Payload):
+    """The SourcePreviewTable schema.
+
+    a table of the source's location as a preview shows it: `columns` as the warehouse
+    types them, the table's `rows` and `bytes`, and `sample`, its first 20 rows, each
+    cell as text (or null) cut to 256 characters, in the order of `columns`; a table
+    that is not `readable`, such as a view, has no sample
+    """
+
+    source: Name
+    table: str
+    location: str
+    type: str
+    readable: bool
+    rows: int
+    bytes: int
+    columns: tuple[SourceColumn, ...]
+    sample: tuple[tuple[str | None, ...], ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("source", "source", True, _decode_Name),
+        Field("table", "table", True, _text),
+        Field("location", "location", True, _text),
+        Field("type", "type", True, _text),
+        Field("readable", "readable", True, _boolean),
+        Field("rows", "rows", True, _integer),
+        Field("bytes", "bytes", True, _integer),
+        Field("columns", "columns", True, _items(_record(SourceColumn))),
+        Field("sample", "sample", True, _items(_items(_union(_text, _null)))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourcePreviewReply(Payload):
+    """The SourcePreviewReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: SourcePreviewTable
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(SourcePreviewTable)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class SourceTablesReply(Payload):
     """The SourceTablesReply schema."""
 
@@ -9081,7 +9148,7 @@ ROUTES: tuple[Route, ...] = (
         "POST",
         "/v1/projects/{project}/sources/{source}/preview",
         SourcePreviewRequest,
-        RowsReply,
+        SourcePreviewReply,
         "application/json",
     ),
     Route(
