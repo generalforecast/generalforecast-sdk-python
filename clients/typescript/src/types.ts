@@ -832,10 +832,13 @@ export interface RunArchitectureChange {
  * Something about the run to know, which does not stop it. `uncalibrated_architecture`:
  * the run changes the base's architecture, so the changed model is not calibrated to
  * the base and starts from `start_loss` where the base scores `base_loss`, on the
- * evaluation rows; both are null until step 0 measures them.
+ * evaluation rows; both are null until step 0 measures them. `base_kept`: no training
+ * step beat the base on the rows the run held out, so the version it published keeps
+ * the base's own weights (`kept_step` 0) and predicts exactly as the base does;
+ * `base_loss` is the base's loss on those rows and `start_loss` is null.
  */
 export interface RunWarning {
-  code: "uncalibrated_architecture";
+  code: "uncalibrated_architecture" | "base_kept";
   message: string;
   base_loss: number | null;
   start_loss: number | null;

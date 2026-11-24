@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import asyncio
+import dataclasses
 
 import numpy as np
 import pandas as pd
@@ -270,6 +271,18 @@ def test_wait_passes_each_event_once_and_returns_the_published_version(fake):
         "val 0.398 (base 0.421)  2m 10s  260.0 credits"
     )
     assert "<polyline" in run._repr_html_()
+    # A run none of whose steps beat the base says it published the base's weights.
+    unchanged = dataclasses.replace(
+        run,
+        kept_step=0,
+        published=dataclasses.replace(run.published, kept_step=0),
+        validation_loss=0.421,
+    )
+    assert repr(unchanged) == (
+        "credit-default@ft1  finished  step 1,000/1,000  loss 0.410  "
+        "val 0.421 (base 0.421)  kept tabicl-v2-classifier's weights: no step "
+        "beat it, so it predicts as tabicl-v2-classifier  2m 10s  260.0 credits"
+    )
     second = gf.runs.create(
         "credit-default", base="tabicl-v2", method=LORA, data=["t"], plan={"steps": 10}
     )
