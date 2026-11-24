@@ -348,7 +348,7 @@ class Parser(argparse.ArgumentParser):
         super().__init__(
             prog=" ".join(["gf", *command.words]), add_help=False, allow_abbrev=False
         )
-        self.flags = flags
+        self.command, self.flags = command, flags
         for index, arg in enumerate(command.args):
             self.add_argument(f"arg{index}", metavar=arg.metavar)
         for item in flags:
@@ -362,18 +362,28 @@ class Parser(argparse.ArgumentParser):
                     action="append" if item.repeat else "store",
                 )
 
-    def error(self, message: str) -> NoReturn:
-        """Turns argparse's complaint into a `Usage` error naming a near miss."""
+    def _near(self, bare: str) -> str | None:
+        """What a mistyped flag likely meant: a flag spelled alike, or an argument of that name.
+
+        Names are compared without their dashes, which every flag shares.
+        """
         from generalforecast.term import suggest
 
+        if any(arg.metavar.lower() == bare.lower() for arg in self.command.args):
+            return f"{bare.upper()} is an argument, not a flag: `{self.command.line}`"
+        options = {f.option.lstrip("-"): f.option for f in self.flags}
+        near = suggest(bare, options)
+        return f"a similar flag exists: `{options[near]}`" if near else None
+
+    def error(self, message: str) -> NoReturn:
+        """Turns argparse's complaint into a `Usage` error naming a near miss."""
         unknown = re.search(r"unrecognized arguments: (\S+)", message)
         if unknown:
             word = unknown[1]
             if word.startswith("-"):
-                near = suggest(word, [f.option for f in self.flags])
                 raise Usage(
                     f"`{self.prog}` has no flag `{word}`",
-                    tip=f"a similar flag exists: `{near}`" if near else None,
+                    tip=self._near(word.split("=")[0].lstrip("-")),
                     hint=f"`{self.prog} --help` lists its flags",
                 )
             raise Usage(

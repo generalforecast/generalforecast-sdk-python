@@ -116,6 +116,18 @@ def test_help_and_version(monkeypatch, env):
             ["contexts", "create", "x", "--fiel", "a"],
             "help: a similar flag exists: `--file`",
         ),
+        # The dashes every flag shares make no two names alike.
+        (
+            ["predictors", "predict", "churn", "--file", "new.csv"],
+            (
+                "error: `gf predictors predict` has no flag `--file`\n"
+                "help: `gf predictors predict --help` lists its flags"
+            ),
+        ),
+        (
+            ["contexts", "upload", "adult", "--file", "adult.csv"],
+            "help: FILE is an argument, not a flag: `gf contexts upload NAME FILE`",
+        ),
         (["contexts", "get"], "error: `gf contexts get` needs NAME"),
         (
             ["contexts", "rows", "adult", "--limit", "many"],
