@@ -1111,6 +1111,10 @@ def sources_create(fake: Fake, call: Call) -> Any:
     return ok(_shown(fake.sources[p["name"]]))
 
 
+def sources_prepare(fake: Fake, call: Call) -> Any:
+    return ok({**contract.example("sources.prepare"), "kind": call.payload["kind"]})
+
+
 def sources_get(fake: Fake, call: Call, name: str) -> Any:
     return ok(_shown(fake.sources[name]))
 
@@ -1524,6 +1528,7 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("GET", f"{P}/models", models_list),
     ("GET", f"{P}/models/(.+)", models_get),
     ("GET", f"{P}/sources", sources_list),
+    ("POST", f"{P}/sources:prepare", sources_prepare),
     ("POST", f"{P}/sources", sources_create),
     ("GET", f"{P}/sources/{N}", sources_get),
     ("GET", f"{P}/sources/{N}/tables", sources_tables),
@@ -1561,6 +1566,7 @@ RESOURCES: dict[str, tuple[str, str]] = {
     "environments.rollback": ("predictor", "{name}"),
     "predict": ("predictor", "ad-hoc"),
     "estimate": ("estimate", "estimate"),
+    "sources.prepare": ("source", "identity"),
     "sources.create": ("source", PAYLOAD),
     "sources.test": ("source", "{source}"),
     "sources.preview": ("source", "{source}"),

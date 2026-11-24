@@ -43,6 +43,7 @@ from generalforecast.types import (
     Source,
     SourceKind,
     SourceList,
+    SourceSetup,
     SourceTables,
     SyntheticBatch,
     Task,
@@ -533,6 +534,15 @@ class Sources(_Sync):
         """The workspace's sources; `available` is False where the service connects none."""
         return self._run(_ops.source_list())
 
+    def prepare(self, kind: str) -> SourceSetup:
+        """The workspace's identity, and what to set up on your side for a source of `kind`.
+
+        BigQuery and Cloud Storage: the roles to grant the identity. S3,
+        Databricks and Snowflake: the policy that trusts it, in `policy`.
+        Admins only; it makes the identity the first time.
+        """
+        return self._run(_ops.source_prepare(kind))
+
     def get(self, source: str | Source) -> Source:
         """A source."""
         return self._run(_ops.source_get(source))
@@ -559,7 +569,7 @@ class Sources(_Sync):
     def preview(
         self, source: str | Source, *, table: str | None = None, sql: str | None = None
     ) -> pandas.DataFrame:
-        """Twenty rows of a table or a query."""
+        """Twenty rows of a table or a query, as text: the source's own values, cut to 256 characters."""
         return self._run(_ops.source_preview(source, table, sql))
 
     def delete(self, source: str | Source) -> None:
@@ -1271,6 +1281,10 @@ class AsyncSources(_Async):
     ) -> Source:
         """See `Sources.create`."""
         return await self._run(_ops.source_create(name, kind, secret, config))
+
+    async def prepare(self, kind: str) -> SourceSetup:
+        """See `Sources.prepare`."""
+        return await self._run(_ops.source_prepare(kind))
 
     async def test(self, source: str | Source) -> Source:
         """See `Sources.test`."""

@@ -400,6 +400,9 @@ COMMANDS_LIST = [
              flags=(YES_FLAG,), before=predictor_and_revisions, ask=_views.predictor_question),
     _command("sources list", "List the workspace's sources", _views.sources_list),
     _command("sources get", "Show a source", _views.sources_get, NAME),
+    _command("sources prepare", "Show what to set up so the workspace's identity reads a kind of source",
+             _views.source_setup, flags=(
+                 _flag("kind", "bigquery, gcs, s3, databricks or snowflake", metavar="K"),)),
     _command("sources test", "Test a source's connection now", _views.source_tested, NAME),
     _command("sources create", "Connect a warehouse or bucket", _views.source_created, NAME, flags=(
         _flag("kind", "bigquery, gcs, snowflake, databricks, s3 or postgres", metavar="K"),

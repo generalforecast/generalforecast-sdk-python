@@ -71,11 +71,16 @@ __all__ = [
     "Slice",
     "Snapshot",
     "Source",
+    "SourceGrant",
+    "SourceIdentity",
     "SourceKind",
     "SourceList",
+    "SourcePolicy",
+    "SourceSetup",
     "SourceState",
     "SourceTable",
     "SourceTables",
+    "SourceTrust",
     "SyntheticBatch",
     "Task",
     "Timing",
@@ -1121,6 +1126,58 @@ class SourceList(builtins.list[Source]):
 
 
 @dataclass(frozen=True)
+class SourceGrant:
+    """A Google role the customer grants the workspace's account, and on what: a dataset, bucket or project."""
+
+    role: str
+    on: str = ""
+
+
+@dataclass(frozen=True)
+class SourceTrust:
+    """What another cloud trusts: the issuer, subject and audience of the account's Google ID tokens."""
+
+    issuer: str
+    subject: str
+    audience: str | None = None
+
+
+@dataclass(frozen=True)
+class SourcePolicy:
+    """A document the customer pastes, such as an AWS role's trust policy."""
+
+    format: str
+    text: str
+
+
+@dataclass(frozen=True)
+class SourceIdentity:
+    """The workspace's Google service account: its address, unique id and IAM member."""
+
+    email: str
+    unique_id: str
+    principal: str
+
+
+@dataclass(frozen=True)
+class SourceSetup:
+    """What a customer sets up so the workspace's identity reads a source of `kind`.
+
+    `steps` say it in order. BigQuery and Cloud Storage grant the account
+    Google roles (`grants`); S3, Databricks and Snowflake trust its ID
+    tokens (`oidc`), and `policy` is the document to paste. No kind takes a
+    secret.
+    """
+
+    kind: str
+    identity: SourceIdentity
+    grants: tuple[SourceGrant, ...] = ()
+    steps: tuple[str, ...] = ()
+    oidc: SourceTrust | None = None
+    policy: SourcePolicy | None = None
+
+
+@dataclass(frozen=True)
 class SourceTable:
     """A table of a source's location, as the warehouse lists it.
 
@@ -1135,14 +1192,15 @@ class SourceTable:
 
 @dataclass(frozen=True)
 class SourceTables:
-    """The tables of a source's location: its BigQuery `project` and `dataset`.
+    """The tables of a source's location.
 
-    `more` says the warehouse holds more than were listed; a `prefix`
+    `location` is where they are, as a person writes it: `project.dataset`,
+    `gs://bucket/prefix/`, `s3://bucket/prefix/` or `catalog.schema`.
+    `more` says the location holds more than were listed; a `prefix`
     narrows them. It iterates, indexes and counts as its tables do.
     """
 
-    project: str = ""
-    dataset: str = ""
+    location: str = ""
     tables: tuple[SourceTable, ...] = ()
     more: bool = False
 
