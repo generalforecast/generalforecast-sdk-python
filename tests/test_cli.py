@@ -98,10 +98,10 @@ def test_help_and_version(monkeypatch, env):
     by_flag = gf_cli(monkeypatch, "contexts", "create", "--help")[1]
     assert gf_cli(monkeypatch, "help", "contexts", "create")[1] == by_flag
     assert (
-        "Usage: gf contexts create NAME [flags]" in by_flag
+        "Usage: gf contexts create NAME [FILE] [flags]" in by_flag
         and "--sql-file F" in by_flag
     )
-    assert "Python: gf.contexts.create(NAME, **flags)" in by_flag
+    assert "Python: gf.contexts.create(NAME, [FILE], **flags)" in by_flag
     group = gf_cli(monkeypatch, "runs", "--help")[1]
     assert "create" in group and "lineage" in group
     code, _, err = gf_cli(monkeypatch, "contexts")
@@ -113,8 +113,34 @@ def test_help_and_version(monkeypatch, env):
     [
         (["contxts", "list"], "help: a similar command exists: `gf contexts`"),
         (
-            ["contexts", "create", "x", "--fiel", "a"],
-            "help: a similar flag exists: `--file`",
+            ["contexts", "create", "x", "--sorce", "a"],
+            "help: a similar flag exists: `--source`",
+        ),
+        # A file is the argument after the name on every command that reads one.
+        (
+            ["contexts", "create", "x", "--file", "a.csv"],
+            "help: FILE is an argument, not a flag: `gf contexts create NAME [FILE]`",
+        ),
+        (
+            ["predictors", "predict", "churn", "--file", "new.csv"],
+            "help: FILE is an argument, not a flag: `gf predictors predict NAME FILE`",
+        ),
+        # A flag named as the SDK names the argument is taken to mean it.
+        (
+            ["predictors", "predict", "churn", "--queries", "new.csv"],
+            "help: FILE is an argument, not a flag: `gf predictors predict NAME FILE`",
+        ),
+        (
+            ["models", "predict", "tabicl-v2", "--queries", "new.csv"],
+            "help: FILE is an argument, not a flag: `gf models predict NAME FILE`",
+        ),
+        (
+            ["snapshots", "create", "t", "--file", "t.csv"],
+            "help: FILE is an argument, not a flag: `gf snapshots create NAME FILE`",
+        ),
+        (
+            ["contexts", "upload", "adult", "--file", "adult.csv"],
+            "help: FILE is an argument, not a flag: `gf contexts upload NAME FILE`",
         ),
         (["contexts", "get"], "error: `gf contexts get` needs NAME"),
         (
@@ -198,7 +224,7 @@ def test_flags_become_the_sdk_keywords(monkeypatch, fake):
 def test_snapshots_and_runs_mirror_their_sdk_methods(monkeypatch, fake, tmp_path):
     table = tmp_path / "t.csv"
     pd.DataFrame({"x": [1.0, 2.0] * 20, "y": [0, 1] * 20}).to_csv(table, index=False)
-    code, _, err = gf_cli(monkeypatch, "snapshots", "stream", "t", "--file", str(table),
+    code, _, err = gf_cli(monkeypatch, "snapshots", "stream", "t", str(table),
                           "--target", "y", "--task", "classification")  # fmt: skip
     assert code == 0 and "Created snapshot t" in err
     code, _, err = gf_cli(monkeypatch, "snapshots", "update", "t", "--tags", "")
@@ -405,9 +431,31 @@ def test_whoami_shows_a_key_that_never_expires_without_a_date(monkeypatch, fake)
     code, out, _ = gf_cli(monkeypatch, "whoami")
     assert code == 0
     assert re.search(r"Key\s+notebook-maya-mbp$", out, re.MULTILINE), out
-    fake.trains = False
-    out = gf_cli(monkeypatch, "whoami")[1]
-    assert re.search(r"Fine-tuning\s+not offered by this service$", out, re.MULTILINE)
+
+
+def test_whoami_says_what_the_plan_allows_and_what_the_key_holds(monkeypatch, fake):
+    """On Free it said "Fine-tuning offered", and `permissions=()` for a key holding 20."""
+
+    def line(field: str) -> str:
+        out = gf_cli(monkeypatch, "whoami")[1]
+        found = re.search(rf"^  {field}\s+(.+)$", out, re.MULTILINE)
+        assert found, out
+        return found[1]
+
+    assert (line("Plan"), line("Fine-tuning")) == ("Pro", "included")
+    assert line("Permissions") == "standard"
+    fake.key["permissions"] = ["predictors:predict", "contexts:read"]
+    assert line("Permissions") == "2 permissions"
+    assert gf.whoami().key.permissions == ("predictors:predict", "contexts:read")
+    fake.plan = "free"
+    assert (line("Plan"), line("Fine-tuning")) == (
+        "Free",
+        "not included in the Free plan",
+    )
+    me = gf.whoami()
+    assert (me.plan, me.trains) == ("free", False)
+    fake.plan, fake.trains = "pro", False
+    assert line("Fine-tuning") == "not available to this project"
 
 
 def test_sources_list_and_tables_print_what_the_service_says_of_them(monkeypatch, fake):

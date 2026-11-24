@@ -52,7 +52,9 @@ from generalforecast.types import TASKS
 FOLLOW_SECONDS = 2.0
 
 NAME = Arg("NAME", "The name")
-FILE = Arg("FILE", "A .csv, .tsv, .parquet, .arrow, .feather or .jsonl file")
+FORMATS = "a .csv, .tsv, .parquet, .arrow, .feather or .jsonl file"
+FILE = Arg("FILE", FORMATS[0].upper() + FORMATS[1:], keyword="data")
+QUERIES = Arg("FILE", f"The rows to score: {FORMATS}", keyword="queries")
 RUN = Arg("RUN", "A run, NAME@ftN, or NAME for its latest")
 KEY = Arg("ID", "The key's id, or its name")
 TASK = choice(*TASKS)
@@ -287,6 +289,16 @@ def _key_question(verb: str, after: str = "") -> Any:
     return lambda call: f"{verb} key {call.before.name}?{after}"
 
 
+def model_get(call: Call) -> list[Any]:
+    """The model NAME names; without --task, a short name a family shares names each of its models."""
+    from generalforecast.errors import AmbiguousReference
+
+    try:
+        return [call.invoke()]
+    except AmbiguousReference:
+        return [m for m in call.method("models.list")(all=True) if m.short == call.name]
+
+
 def _get(path: str, **keywords: Any) -> Any:
     """A `before` that reads the resource the command is about."""
     return lambda call: call.method(path)(
@@ -310,8 +322,8 @@ COMMANDS_LIST = [
     _command("whoami", "Show who the login acts for, and in which project", _login.whoami_view,
              run=_login.whoami, sdk="whoami"),
     _command("contexts create", "Create a context from a file, a source's table or query, or the API",
-             _views.contexts_created, NAME, flags=(
-                 Flag("file", "Upload this file as version 1", to="data", metavar="F"),
+             _views.contexts_created, NAME, Arg("FILE", f"Upload this file as version 1: {FORMATS}", keyword="data", optional=True),
+             flags=(
                  _flag("source", "Import from this source", metavar="S"),
                  _flag("table", "The source's table", metavar="T"),
                  *SQL,
@@ -379,8 +391,8 @@ COMMANDS_LIST = [
     _command("predictors list", "List predictors", _views.predictors_list),
     _command("predictors revisions", "List a predictor's revisions and where each serves",
              _views.predictors_revisions, NAME, before=_get("predictors.get"), key="revisions"),
-    _command("predictors predict", "Score rows with a predictor", _views.predicted, NAME, flags=(
-        Flag("queries", "The rows to score", metavar="F"), ENV,
+    _command("predictors predict", "Score rows with a predictor", _views.predicted, NAME, QUERIES, flags=(
+        ENV,
         _flag("as-of", "Read a live context as it was then", metavar="T"), OUTPUT)),
     _command("predictors promote", "Point an environment at what another serves", _views.promoted, NAME,
              before=_get("predictors.get"), flags=(
@@ -425,15 +437,13 @@ COMMANDS_LIST = [
              flags=(YES_FLAG,), before=find_key, ask=_key_question("Delete")),
     _command("models list", "List the models you can host, fine-tune versions included", _views.models_list,
              flags=(_flag("task", "Only models for this task", TASK), Flag("all", "Every model", YES))),
-    _command("models get", "Show a model's task and limits", _views.models_get, NAME,
-             flags=(_flag("task", "The task, for a family with several", TASK),)),
+    _command("models get", "Show a model's task and limits, or each of a family's", _views.models_get, NAME,
+             run=model_get, key="models", python="gf.models.get(NAME, **flags); a family, gf.models.get(NAME, task=T) for each task",
+             flags=(_flag("task", "Only the model for this task", TASK),)),
     _command("models predict", "Score rows with a model and context rows sent once by digest", _views.predicted,
-             NAME, flags=(Flag("context", "The context rows", metavar="F"), Flag("queries", "The rows to score",
-                                                                              metavar="F"),
-                          *SPEC[2:], OUTPUT)),
-    _command("snapshots create", "Upload a training table in chunks", _views.snapshot_created, NAME,
-             needs=("data", "target", "task"), flags=(
-        Flag("file", "The table", to="data", metavar="F"),
+             NAME, QUERIES, flags=(Flag("context", "The context rows", metavar="F"), *SPEC[2:], OUTPUT)),
+    _command("snapshots create", "Upload a training table in chunks", _views.snapshot_created, NAME, FILE,
+             needs=("target", "task"), flags=(
         _flag("target", "The column a run learns to predict"),
         _flag("task", "classification or regression", TASK),
         Flag("column-type", "A column's type, as age=numerical (repeatable)", PAIRS, to="column_types",
@@ -443,8 +453,7 @@ COMMANDS_LIST = [
         _flag("tag", "A tag (repeatable)", metavar="T", to="tags", repeat=True),
         WAIT[0])),
     _command("snapshots stream", "Send a small training table as one Arrow stream", _views.snapshot_created, NAME,
-             needs=("data",), flags=(
-                 Flag("file", "The table", to="data", metavar="F"),
+             FILE, flags=(
                  _flag("target", "The column a run learns to predict"),
                  _flag("task", "classification or regression", TASK),
                  _flag("time", "The time column"), _flag("group", "The group column"))),

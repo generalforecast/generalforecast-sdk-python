@@ -189,7 +189,7 @@ def test_a_run_takes_snapshots_tags_and_contexts(fake):
         budget={"credits": 500},
         tags=["nightly"],
     )
-    assert run.model == "acme/credit-default@ft1" and run.version == 1
+    assert run.model == "acme/credit-default@ft1" and not hasattr(run, "version")
     assert run.state == "queued"
     sent = fake.calls_to("POST", r".*/runs")[0].payload
     assert sent == {
@@ -274,9 +274,12 @@ def test_wait_passes_each_event_once_and_returns_the_published_version(fake):
         "credit-default", base="tabicl-v2", method=LORA, data=["t"], plan={"steps": 10}
     )
     assert second.model.endswith("@ft2")
-    assert gf.runs.get("credit-default").version == 2
+    assert gf.runs.get("credit-default").model == "acme/credit-default@ft2"
     assert gf.runs.get("acme/credit-default@ft1").state == "finished"
-    assert [r.version for r in gf.runs.list()] == [1, 2]
+    assert [r.model for r in gf.runs.list()] == [
+        "acme/credit-default@ft1",
+        "acme/credit-default@ft2",
+    ]
     assert fake.calls_to("GET", r".*/runs")[-1].query == {}
     found = gf.runs.list(state="queued", data_digest=second.data_digest, tag="x")
     assert fake.calls_to("GET", r".*/runs")[-1].query == {
@@ -414,3 +417,23 @@ def test_the_async_client_fine_tunes_too(fake):
     run, events, seen, lineage = asyncio.run(go())
     assert run.state == "finished" and events[-2].kind == "published"
     assert seen == [e.kind for e in events] == [e.kind for e in lineage.events]
+
+
+def test_a_run_names_the_model_to_pass_and_its_short_name_resolves(fake):
+    """A run's `version`, 1, read like a model; `credit-default@ft1` was refused."""
+    snapshot("credit-2026-01")
+    run = gf.runs.create(
+        "credit-default",
+        base="tabicl-v2",
+        method=LORA,
+        data=["credit-2026-01"],
+        plan={"steps": 10},
+    )
+    assert run.model == "acme/credit-default@ft1"
+    fake.catalog.append(dict(fake.catalog[0], name=run.model, short=None))
+    queries = pd.DataFrame({"income": [1.0]})
+    context = pd.DataFrame({"income": [1.0, 2.0], "defaulted": [0, 1]})
+    gf.models.predict(
+        "credit-default@ft1", queries, context=context, target="defaulted"
+    )
+    assert fake.last_prediction["model"] == run.model

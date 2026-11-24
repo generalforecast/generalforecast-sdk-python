@@ -1,23 +1,23 @@
 --- 100 columns, not a terminal
-$ gf contexts create adult --file adult.csv
+$ gf contexts create adult adult.csv
    Uploading adult.csv  32,561 rows, 15 columns, 202.2 KiB
    Verifying adult
      Created context adult version 1  32,561 rows, 15 columns in 1.8s
         View https://app.generalforecast.com/?project=acme#/data/contexts/adult
 --- 100 columns, a terminal
-$ gf contexts create adult --file adult.csv
+$ gf contexts create adult adult.csv
 [1;32m   Uploading[0m adult.csv  32,561 rows, 15 columns, 202.2 KiB
 [1;32m   Verifying[0m adult
 [1;32m     Created[0m context adult version 1  32,561 rows, 15 columns in 1.8s
 [1;32m        View[0m ]8;;https://app.generalforecast.com/?project=acme#/data/contexts/adult\https://app.generalforecast.com/?project=acme#/data/contexts/adult]8;;\
 --- 44 columns, not a terminal
-$ gf contexts create adult --file adult.csv
+$ gf contexts create adult adult.csv
    Uploading adult.csv  32,561 rows, 15 columns, 202.2 KiB
    Verifying adult
      Created context adult version 1  32,561 rows, 15 columns in 1.8s
         View https://app.generalforecast.com/?project=acme#/data/contexts/adult
 --- 44 columns, a terminal
-$ gf contexts create adult --file adult.csv
+$ gf contexts create adult adult.csv
 [1;32m   Uploading[0m adult.csv  32,561 rows, 15 co[0m…
 [1;32m   Verifying[0m adult
 [1;32m     Created[0m context adult version 1

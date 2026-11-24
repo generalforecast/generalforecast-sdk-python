@@ -851,8 +851,15 @@ def models_list(call: Call, models: list[Model]) -> None:
     call.out.table(header, rows, align="<<>>", drop=(3, 2))
 
 
-def models_get(call: Call, model: Model) -> None:
-    """The model's id, task, limits, and what it was trained on."""
+def models_get(call: Call, models: list[Model]) -> None:
+    """Each model's id, task, limits, and what it was trained on, a blank line between."""
+    for index, model in enumerate(models):
+        if index:
+            call.out.line()
+        _model(call, model)
+
+
+def _model(call: Call, model: Model) -> None:
     rows = [("Model", f"{model.short}, {model.id}"), ("Task", model.task or "")]
     if model.kind == "fine-tune":
         rows.append(("Base", model.base or ""))

@@ -392,7 +392,10 @@ def _unchanged(fake: Fake) -> None:
 
 
 def _login(fake: Fake) -> None:
-    fake.key = {"id": CLI_KEY, "name": "cli-maya-mbp", "expires_at": 1803029524.0}
+    from generalforecast.types import STANDARD_PERMISSIONS
+
+    fake.key = {"id": CLI_KEY, "name": "cli-maya-mbp", "expires_at": 1803029524.0,
+                "permissions": list(STANDARD_PERMISSIONS)}  # fmt: skip
 
 
 def _logout(fake: Fake) -> None:
@@ -446,7 +449,7 @@ def _queries(rows: int) -> Callable[[], pd.DataFrame]:
 SAMPLES = [
     Sample("login", ("login",), _login, logged_in=False, knobs={"pending_logins": 2}),
     Sample("whoami", ("whoami",), _login),
-    Sample("contexts-create-file", ("contexts create adult --file adult.csv",),
+    Sample("contexts-create-file", ("contexts create adult adult.csv",),
            files={"adult.csv": lambda: adult(32561)}),
     Sample("contexts-upload-unchanged", ("contexts upload adult adult.csv",),
            lambda fake: _upload_adult(fake), files={"adult.csv": lambda: adult(2000)}),
@@ -483,7 +486,7 @@ SAMPLES = [
            lambda fake: (adult_context(fake), predictor(fake, "adult-income", [
                {"context": "adult", "model": "tabicl-v2", "target": "income"}], {"production": (1, 0, None)}))),
     Sample("predictors-get", ("predictors get adult-income",), lambda fake: (adult_context(fake), adult_income(fake))),
-    Sample("predictors-predict", ("predictors predict adult-income --queries applicants.csv --output scored.csv",),
+    Sample("predictors-predict", ("predictors predict adult-income applicants.csv --output scored.csv",),
            lambda fake: (adult_context(fake), adult_income(fake)), files={"applicants.csv": _queries(1000)}),
     Sample("predictors-promote-rollback", ("predictors promote churn --from staging --env production",
                                            "predictors rollback churn"), churn),
@@ -525,11 +528,11 @@ SAMPLES = [
     Sample("keys-list", ("keys list",), _keys),
     Sample("keys-rotate", (f"keys rotate {CI_KEY} --yes",), _keys),
     Sample("keys-delete", (f"keys delete {OLD_KEY} --yes",), _keys),
-    Sample("models-get", ("models get kumo-medium --task regression",)),
-    Sample("models-predict", ("models predict tabicl-v2 --context train.csv --queries new.csv --target income",),
+    Sample("models-get", ("models get tabicl-v2", "models get kumo-medium --task regression")),
+    Sample("models-predict", ("models predict tabicl-v2 new.csv --context train.csv --target income",),
            files={"train.csv": lambda: adult(26048), "new.csv": _queries(3)}),
     Sample("snapshots", (
-        "snapshots create credit-2026-01 --file credit.csv --tag nightly --target defaulted --task classification",
+        "snapshots create credit-2026-01 credit.csv --tag nightly --target defaulted --task classification",
         "snapshots list",
     ), files={"credit.csv": lambda: pd.DataFrame({"income": [float(i) for i in range(40)],
                                                   "defaulted": [i % 2 for i in range(40)]})}),

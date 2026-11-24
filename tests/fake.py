@@ -26,6 +26,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 import pyarrow as pa
 
 from generalforecast import _data
+from generalforecast.types import STANDARD_PERMISSIONS
 from tests import contract
 
 TOKEN = "gf_test_0123456789abcdefghijklmnopqrstuv"
@@ -133,7 +134,16 @@ NOT_KEY_GRANTABLE = {
 
 
 def entry(full: str) -> dict[str, Any]:
-    """A catalog entry by full id or short name; classification for a short name with several."""
+    """A catalog entry by full id or short name; classification for a short name with several.
+
+    A fine-tune, `credit@ft1` or `acme/credit@ft1`, is one of acme's, on the first entry's base.
+    """
+    if "@ft" in full:
+        return {
+            **CATALOG[0],
+            "name": full if "/" in full else f"acme/{full}",
+            "short": None,
+        }
     return next(m for m in CATALOG if full in (m["name"], m["short"]))
 
 
@@ -194,7 +204,7 @@ class Fake:
     limits: dict[str, int] = field(
         default_factory=lambda: contract.example("auth.status")["limits"]
     )
-    # Whether the service fine-tunes, as `auth.status` says.
+    # Whether the service fine-tunes; `auth.status` says the project does where its plan does too.
     trains: bool = True
     # The workspace's plan: on `free`, resumable uploads and synthetic batches are refused with 402.
     plan: str = "pro"
@@ -210,7 +220,8 @@ class Fake:
     errors: list[str] = field(default_factory=list)
     # The key the tests call with never expires, as a key made with `expires=None`.
     key: dict[str, Any] = field(default_factory=lambda: {
-        "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": None})  # fmt: skip
+        "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": None,
+        "permissions": list(STANDARD_PERMISSIONS)})  # fmt: skip
     catalog: list[dict[str, Any]] = field(default_factory=lambda: list(CATALOG))
     log_entries: list[dict[str, Any]] = field(
         default_factory=lambda: contract.example("environments.logs")["logs"]
@@ -330,7 +341,7 @@ def auth_status(fake: Fake, call: Call) -> Any:
         principal={"kind": "api-key", "id": fake.key["id"], "project": fake.project},
         key={**fake.key, "project": fake.project}, email="maya@acme.com", machine="maya-mbp",
         workspace={"id": "acme", "display_name": "Acme Analytics"}, url=fake.link(),
-        trains=fake.trains, limits=fake.limits,
+        plan=fake.plan, trains=fake.trains and fake.plan != "free", limits=fake.limits,
     )  # fmt: skip
     return ok(status)
 
@@ -364,7 +375,8 @@ def device_token(fake: Fake, call: Call) -> Any:
     token.update(
         access_token=TOKEN, expires_at=expires, project=fake.project,
         key={"id": "key-0f1e2d3c4b5a69788796", "name": f"{login['client']}-{login['machine']}",
-             "project": fake.project, "expires_at": expires, "ephemeral": notebook},
+             "project": fake.project, "permissions": list(STANDARD_PERMISSIONS),
+             "expires_at": expires, "ephemeral": notebook},
         email="maya@acme.com", workspace={"id": "acme", "display_name": "Acme Analytics"},
         url=fake.link(),
     )  # fmt: skip
@@ -1080,6 +1092,9 @@ def models_list(fake: Fake, call: Call) -> Any:
 def models_get(fake: Fake, call: Call, name: str) -> Any:
     name = unquote(name)
     task = call.query.get("task")
+    if "@ft" in name and "/" not in name:
+        # One of the project's fine-tunes, `credit-default@ft1`, as the plane reads it.
+        name = f"{fake.project}/{name}"
     found = [
         m
         for m in fake.catalog
@@ -1384,7 +1399,7 @@ def runs_post(fake: Fake, call: Call) -> Any:
 
 
 def _run_for(fake: Fake, segment: str) -> dict[str, Any]:
-    name, _, version = segment.partition("@ft")
+    name, _, version = segment.split("/")[-1].partition("@ft")
     versions = fake.runs.get(name)
     if not versions:
         raise Refusal(404, "NotFound", f"no run named `{segment}`")
