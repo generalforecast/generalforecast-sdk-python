@@ -65,6 +65,19 @@ def test_the_leaderboard_drops_columns_to_fit(adult):
     assert repr(exp.run).splitlines()[1].split()[:2] == ["1", "tabicl-v2"]
 
 
+def test_the_leaderboard_says_why_a_model_failed(adult):
+    exp = gf.experiments.create(context="adult", target="income", models=MODELS)
+    run = adult.experiments["adult-income"]["_runs"][0]
+    run["leaderboard"][2].update(
+        state="failed", score=None, interval=None, error="inference timed out"
+    )
+    exp = gf.experiments.get(exp)
+    lines = str(exp).splitlines()
+    assert lines[4].split()[:3] == ["3", "mitra-2", "failed"]
+    assert lines[5] == "  mitra-2 failed: inference timed out"
+    assert "<div>mitra-2 failed: inference timed out</div>" in exp._repr_html_()
+
+
 def test_estimate_is_a_dry_run(adult):
     estimate = gf.experiments.estimate(context="adult", target="income", models=MODELS)
     assert repr(estimate) == "Estimate(calls=6, rows=19539, credits=39.1, usd=0.0391)"
