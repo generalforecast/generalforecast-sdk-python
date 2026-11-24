@@ -1783,7 +1783,7 @@ paths:
                     resource: {kind: context, name: adult}
                     result:
                       python: "gf.contexts.create(\"adult\", data=\"adult.csv\")"
-                      cli: gf contexts create adult --file adult.csv
+                      cli: gf contexts create adult adult.csv
                       curl: "curl -X POST https://app.generalforecast.com/v1/projects/acme/contexts ..."
   /v1/projects/{project}/experiments:
     get:
