@@ -30,7 +30,7 @@ cols = ["age", "workclass", "fnlwgt", "education", "education_num", "marital_sta
 adult = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
                     names=cols, skipinitialspace=True)
 
-ctx = gf.contexts.create("adult", data=adult)
+ctx = gf.contexts.create("adult", adult)
 ctx        # Context adult  snapshot v1  32,561 rows  15 columns
 
 gf.experiments.estimate(context="adult", target="income",
@@ -108,12 +108,15 @@ gf.predictors.promote("churn", from_env="staging", env="production")
 
 `gf <resource> <verb> [NAME] [flags]` is the Python API from a shell, word for
 word: `gf experiments wait adult-income --run 2` calls
-`gf.experiments.wait("adult-income", run=2)`. Status lines go to stderr and
-results to stdout; `--json` prints the result as one JSON object.
+`gf.experiments.wait("adult-income", run=2)`. A file of rows is the argument
+after the name, as the SDK takes it: `gf predictors predict churn new.csv` calls
+`gf.predictors.predict("churn", "new.csv")`, and `gf models get tabicl-v2` shows
+each of a family's models. Status lines go to stderr and results to stdout;
+`--json` prints the result as one JSON object.
 
 ```console
 $ gf login
-$ gf contexts create adult --file adult.csv
+$ gf contexts create adult adult.csv
    Uploading adult.csv  32,561 rows, 15 columns, 1.1 MiB
      Created context adult version 1  32,561 rows, 15 columns in 3.4s
         View https://app.generalforecast.com/?project=acme#/data/contexts/adult
@@ -137,7 +140,7 @@ declined, 130 Ctrl-C, 141 a closed pipe.
 
 ## Contexts
 
-A context is uploaded (`data=`), imported from a source (`source=` with
+A context is uploaded (its rows, `data`), imported from a source (`source=` with
 `table=` or `sql=`), read live from a source (`live=True`), or fed through the
 API (`live=True` with `columns=`, then `append` and `label`). Uploads add a
 version only when the rows changed, so a CI re-run is a no-op. Any reference
@@ -145,7 +148,7 @@ can pin a version: `"adult@2"`.
 
 ## Models and estimators
 
-`gf.models.predict(model, context=..., queries=..., target=...)` sends the
+`gf.models.predict(model, queries, context=..., target=...)` sends the
 context once, as an Arrow snapshot named by its digest, and the queries as
 Arrow in parts by bytes. `Classifier`, `Regressor` and `Forecaster` are
 hosted and in-context: `fit` uploads your rows and trains nothing; `predict`
@@ -186,7 +189,13 @@ run = gf.runs.create("credit-default", base="tabicl-v2",
                      target="defaulted", plan={"steps": 1000})
 run = gf.runs.wait(run)
 run        # credit-default@ft1  finished  step 1,000/1,000  loss 0.410  ...
+run.model  # 'acme/credit-default@ft1', the model to pass anywhere a model goes
+gf.predictors.create("credit-default", context="credit", model=run.model,
+                     target="defaulted")
 ```
+
+A fine-tune's id is `<project>/<name>@ft<n>`; in its own project
+`credit-default@ft1` names it too.
 
 `snapshots.create` uploads in chunks; `snapshots.stream` sends a small table
 as one Arrow stream. A run's `data` names snapshots, `{"tag": T}` for every

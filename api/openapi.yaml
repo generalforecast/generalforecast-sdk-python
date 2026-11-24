@@ -68,6 +68,11 @@ paths:
         `param` naming the field and the message `declared by the
         predictor`, and any other field the payload does not take with
         `param` naming it and a `hint` listing the ones it takes.
+
+        The queries carry every input column the predictor reads: one no
+        query has is refused with `param: "queries"` and a message naming
+        each such column. A cell a query leaves out or sends null is a
+        missing value, read as the model reads one.
       parameters:
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/predictor"
@@ -184,7 +189,7 @@ paths:
                       param: name
                       hint: list predictors with `gf predictors list`
         "422":
-          description: the payload names something the predictor declares
+          description: the payload names something the predictor declares, or the queries lack an input column
           content:
             application/json:
               schema:
@@ -212,6 +217,17 @@ paths:
                       message: context is declared by the predictor
                       param: context
                       hint: churn reads its context from the stored context customers
+                missing-input:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-1d2e3f405162738495a6b7c8d9e0f1a2
+                    resource: {kind: predictor, name: churn}
+                    error:
+                      code: ValidationError
+                      message: the queries lack the input column `plan`
+                      param: queries
+                      hint: send every input column the predictor reads; a value sent null is missing
         "202":
           $ref: "#/components/responses/Accepted"
         "503":
@@ -246,9 +262,10 @@ paths:
         it and by retrieval past that, as the result's `context.used` says.
 
         The rows bind as a request context's do, so text and category
-        inputs are read as the model reads them in process. No row, query,
-        series or input count is refused, and a context past what the model
-        was trained on carries a note. Every limit error carries `limit`
+        inputs are read as the model reads them in process. Every input
+        column must be among the queries, as a predictor's call refuses one
+        no query has. No row, query, series or input count is refused, and a
+        context past what the model was trained on carries a note. Every limit error carries `limit`
         and `actual` and names the model in `message`.
       parameters:
         - $ref: "#/components/parameters/project"
@@ -4831,7 +4848,7 @@ paths:
                       expires: null
                       created: 1761200000.0
         '402':
-          description: the workspace's plan takes no resumable upload or synthetic batch (the Free plan), or its credits are used
+          description: the workspace's plan takes no resumable upload (the Free plan streams a snapshot of up to 100,000 rows and 32 MiB), or its credits are used
           content:
             application/json:
               schema:
@@ -4848,7 +4865,7 @@ paths:
                       name: credit-2026-01
                     error:
                       code: PaymentRequired
-                      message: the Free plan takes tables of up to 100,000 rows and 32 MiB and does not include fine-tuning; upgrade to Pro to send larger tables and fine-tune models
+                      message: the Free plan takes a snapshot only as one Arrow stream of up to 100,000 rows and 32 MiB, not as a resumable upload; upgrade to Pro to upload larger snapshots and fine-tune models
                       reason: plan_required
         '409':
           description: the name is another table's; a name is never reused
@@ -5096,7 +5113,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/SyntheticBatchCreatedReply'
         '402':
-          description: the workspace's plan takes no resumable upload or synthetic batch (the Free plan), or its credits are used
+          description: the workspace's plan does not include fine-tuning (the Free plan), or its credits are used
           content:
             application/json:
               schema:
@@ -5113,7 +5130,7 @@ paths:
                       name: credit-warmup
                     error:
                       code: PaymentRequired
-                      message: the Free plan takes tables of up to 100,000 rows and 32 MiB and does not include fine-tuning; upgrade to Pro to send larger tables and fine-tune models
+                      message: the Free plan does not include fine-tuning; upgrade to Pro to fine-tune models
                       reason: plan_required
         '409':
           description: the batch exists with another payload, or one of its table names is taken
@@ -5475,7 +5492,7 @@ paths:
                     resource: {kind: snapshot, name: credit-2026-01}
                     result: {name: credit-2026-01, received: 8388608, bytes: 52428800}
         "402":
-          description: the workspace's plan takes no resumable upload or synthetic batch (the Free plan), or its credits are used
+          description: the workspace's plan takes no resumable upload (the Free plan streams a snapshot of up to 100,000 rows and 32 MiB), or its credits are used
           content:
             application/json:
               schema:
@@ -5492,7 +5509,7 @@ paths:
                       name: credit-2026-01
                     error:
                       code: PaymentRequired
-                      message: the Free plan takes tables of up to 100,000 rows and 32 MiB and does not include fine-tuning; upgrade to Pro to send larger tables and fine-tune models
+                      message: the Free plan takes a snapshot only as one Arrow stream of up to 100,000 rows and 32 MiB, not as a resumable upload; upgrade to Pro to upload larger snapshots and fine-tune models
                       reason: plan_required
   /v1/projects/{project}/runs:
     get:
@@ -6081,7 +6098,7 @@ paths:
                       name: credit-default
                     error:
                       code: PaymentRequired
-                      message: fine-tuning needs a Pro or Enterprise plan
+                      message: the Free plan does not include fine-tuning; upgrade to Pro to fine-tune models
                       reason: plan_required
         '409':
           description: another run of the name is still queued or running, the base is not the one
@@ -6595,9 +6612,10 @@ paths:
       summary: who the credential acts for, and what the server offers
       description: |
         The credential's principal, the sign-in providers and capabilities the
-        server has configured, and the permissions keys may be granted. An API key
-        also shows itself, and, for a key `gf login` minted, the email, machine and
-        workspace it was approved for. Like every route under `/v1` outside a
+        server has configured, and the permissions keys may be granted; the plan
+        of the project's workspace and whether the project may fine-tune. An API
+        key also shows itself with its permissions, and, for a key `gf login`
+        minted, the email, machine and workspace it was approved for. Like every route under `/v1` outside a
         project, it names the client's project in the envelope and in
         `X-GF-Project`.
       responses:
@@ -6627,9 +6645,10 @@ paths:
                         - {name: sso:read, description: Read the organization's single sign-on, enforced: true, key_grantable: false, roles: [admin]}
                         - {name: sso:write, description: Reserved; SSO changes need an account admin, enforced: false, key_grantable: false, roles: [admin]}
                       bootstrap: consumed
+                      plan: pro
                       trains: true
                       limits: {snapshot_bytes: 33554432, snapshot_rows: 100000, upload_bytes: 8589934592, upload_rows: 10000000, csv_bytes: 268435456, chunk_bytes: 8388608, request_bytes: 1048576}
-                      key: {id: key-0f1e2d3c4b5a69788796, name: cli-tejas-mbp, project: acme, expires_at: 1769076000.0}
+                      key: {id: key-0f1e2d3c4b5a69788796, name: cli-tejas-mbp, project: acme, permissions: [predictors:predict, contexts:read], expires_at: 1769076000.0}
                       email: tejas@example.com
                       machine: tejas-mbp
                       workspace: {id: acme-inc, display_name: Acme Inc}
@@ -6927,7 +6946,7 @@ paths:
                     access_token: gf_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG
                     token_type: bearer
                     expires_at: 1795294444.0
-                    key: {id: key-0f1e2d3c4b5a69788796aabb, name: notebook-maya-mbp, project: acme, expires_at: 1795294444.0, ephemeral: true}
+                    key: {id: key-0f1e2d3c4b5a69788796aabb, name: notebook-maya-mbp, project: acme, permissions: [predictors:predict, contexts:read], expires_at: 1795294444.0, ephemeral: true}
                     email: maya@acme.com
                     workspace: {id: acme-inc, display_name: Acme Inc}
                     project: acme
@@ -8247,10 +8266,13 @@ components:
         Hosted fine-tuning's gates, with their `reason`:
         `PaymentRequired` 402 `plan_required` (fine-tuning, and the resumable
         uploads and synthetic batches that feed it, need a Pro or Enterprise
-        plan) and `credits_exhausted` (an enforced workspace has
+        plan: the Free plan streams snapshots of up to 100,000 rows and 32
+        MiB, uploads context files of up to 32 MiB and imports tables of up
+        to 100,000 rows and 32 MiB, and its `message` says which of these was
+        refused) and `credits_exhausted` (an enforced workspace has
         used its credits, which also refuses predictions);
         `Unauthorized` 403 `fine_tuning_unavailable` (fine-tuning is not
-        turned on for the project);
+        turned on for the project; its `message` names what was refused);
         `CapacityExceeded` 429 `run_limit_reached` (the project has as many
         runs queued or running as it may), `quota_exceeded` (the project's
         training data would pass its quota) and `snapshot_quota_exceeded`.
@@ -11866,12 +11888,16 @@ components:
 
     KeyIdentity:
       type: object
-      required: [id, name, project, expires_at]
+      required: [id, name, project, permissions, expires_at]
       additionalProperties: false
       properties:
         id: {type: string, pattern: "^key-[0-9a-f]{20,24}$"}
         name: {$ref: "#/components/schemas/Name"}
         project: {$ref: "#/components/schemas/Name"}
+        permissions:
+          type: array
+          description: the permissions the key holds, as `keys.list` shows them
+          items: {$ref: "#/components/schemas/Permission"}
         expires_at: {type: [number, "null"], description: Unix seconds; null for a key that never expires}
         ephemeral: {type: boolean, description: a notebook login's short-lived key}
 
@@ -11894,7 +11920,7 @@ components:
 
     AuthStatus:
       type: object
-      required: [authenticated, principal, sign_in, secrets, capabilities, permission_inventory, bootstrap, trains, limits]
+      required: [authenticated, principal, sign_in, secrets, capabilities, permission_inventory, bootstrap, plan, trains, limits]
       additionalProperties: false
       properties:
         authenticated: {type: boolean, const: true}
@@ -11911,12 +11937,17 @@ components:
           type: array
           items: {$ref: "#/components/schemas/PermissionGrant"}
         bootstrap: {type: string, enum: [unconfigured, available, consumed]}
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          description: the plan of the workspace the caller's project is in
         trains:
           type: boolean
           description: |
-            whether this service fine-tunes models at all, as it has a
-            trainer configured; not a plan's say: a plan without fine-tuning
-            is told by `runs.create`'s 402 `plan_required`
+            whether the caller's project may fine-tune here: the service has
+            a trainer, fine-tuning is on for the workspace, and its `plan`
+            includes it, as the Free plan does not. When false, `runs.create`
+            is refused as this reply's project would be
         limits: {$ref: "#/components/schemas/UploadLimits"}
         key: {$ref: "#/components/schemas/KeyIdentity"}
         email: {type: [string, "null"]}

@@ -1,20 +1,20 @@
 --- 100 columns, not a terminal
-$ gf predictors predict adult-income --queries applicants.csv --output scored.csv
+$ gf predictors predict adult-income applicants.csv --output scored.csv
   Predicting 1,000 rows with adult-income in production
    Predicted 1,000 rows in 0.40s  1 call, 2.0 credits ($0.002)
        Wrote scored.csv  1,000 rows
 --- 100 columns, a terminal
-$ gf predictors predict adult-income --queries applicants.csv --output scored.csv
+$ gf predictors predict adult-income applicants.csv --output scored.csv
 [1;32m  Predicting[0m 1,000 rows with adult-income in production
 [1;32m   Predicted[0m 1,000 rows in 0.40s  1 call, 2.0 credits ($0.002)
 [1;32m       Wrote[0m scored.csv  1,000 rows
 --- 44 columns, not a terminal
-$ gf predictors predict adult-income --queries applicants.csv --output scored.csv
+$ gf predictors predict adult-income applicants.csv --output scored.csv
   Predicting 1,000 rows with adult-income in production
    Predicted 1,000 rows in 0.40s  1 call, 2.0 credits ($0.002)
        Wrote scored.csv  1,000 rows
 --- 44 columns, a terminal
-$ gf predictors predict adult-income --queries applicants.csv --output scored.csv
+$ gf predictors predict adult-income applicants.csv --output scored.csv
 [1;32m  Predicting[0m 1,000 rows with adult-income [0m…
 [1;32m   Predicted[0m 1,000 rows in 0.40s  1 call,
              2.0 credits ($0.002)

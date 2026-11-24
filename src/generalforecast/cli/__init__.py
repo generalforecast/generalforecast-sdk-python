@@ -186,9 +186,10 @@ def _unknown(words: tuple[str, ...], word: str, commands: dict, groups: dict) ->
 
 def _call(command: Command, parsed: Any, out: term.Output) -> Call:
     """The run of a command: its arguments, SDK keywords and the CLI's own options."""
+    texts = [getattr(parsed, f"arg{index}") for index in range(len(command.args))]
     args = [
-        arg.kind.read(getattr(parsed, f"arg{index}"), arg.metavar)
-        for index, arg in enumerate(command.args)
+        None if text is None else arg.kind.read(text, arg.metavar)
+        for arg, text in zip(command.args, texts, strict=True)
     ]
     values: dict[str, Any] = {}
     options: dict[str, Any] = {}

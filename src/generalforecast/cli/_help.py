@@ -64,6 +64,6 @@ def command(command: Command, globals_: Sequence[Flag], width: int) -> str:
     if command.flags:
         lines += ["", "Flags:", *_flags(command.flags, width)]
     lines += ["", "Global flags:", *_flags(globals_, width)]
-    arguments = ", ".join([*(a.metavar for a in command.args), "**flags"])
+    arguments = ", ".join([*(a.shown for a in command.args), "**flags"])
     lines += ["", f"Python: {command.python or f'gf.{command.path}({arguments})'}"]
     return "\n".join(lines)

@@ -13,7 +13,7 @@ rows = pd.read_csv(Path(__file__).parent / "churn" / "customers.csv")
 context, queries = rows.iloc[:200], rows.iloc[200:].drop(columns=["churned"])
 
 out = gf.models.predict(
-    "tabicl-v2", context=context, queries=queries, target="churned", id="customer_id"
+    "tabicl-v2", queries, context=context, target="churned", id="customer_id"
 )
 print(out.to_pandas().head())
 print(f"{out.rows} rows, {out.credits} credits (${out.usd})")

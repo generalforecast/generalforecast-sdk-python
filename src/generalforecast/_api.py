@@ -334,18 +334,21 @@ class ErrorCode(StrEnum):
     `CredentialUnavailable` 503 is `Unavailable` with reason `credential_unavailable`.
     Hosted fine-tuning's gates, with their `reason`: `PaymentRequired` 402
     `plan_required` (fine-tuning, and the resumable uploads and synthetic batches that
-    feed it, need a Pro or Enterprise plan) and `credits_exhausted` (an enforced
-    workspace has used its credits, which also refuses predictions); `Unauthorized` 403
-    `fine_tuning_unavailable` (fine-tuning is not turned on for the project);
-    `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs queued or
-    running as it may), `quota_exceeded` (the project's training data would pass its
-    quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and `actual`,
-    and lift only when the caller ends a run or deletes data, so clients do not retry
-    them; a 429 `rate_limited` passes on its own and may be retried. A run's create is
-    refused with `Conflict` 409 `run_active` (another run of the fine-tune is still
-    queued or running) or `base_mismatch` (the fine-tune's versions train from another
-    base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent as the
-    base).
+    feed it, need a Pro or Enterprise plan: the Free plan streams snapshots of up to
+    100,000 rows and 32 MiB, uploads context files of up to 32 MiB and imports tables
+    of up to 100,000 rows and 32 MiB, and its `message` says which of these was
+    refused) and `credits_exhausted` (an enforced workspace has used its credits, which
+    also refuses predictions); `Unauthorized` 403 `fine_tuning_unavailable`
+    (fine-tuning is not turned on for the project; its `message` names what was
+    refused); `CapacityExceeded` 429 `run_limit_reached` (the project has as many runs
+    queued or running as it may), `quota_exceeded` (the project's training data would
+    pass its quota) and `snapshot_quota_exceeded`. Those three 429s carry `limit` and
+    `actual`, and lift only when the caller ends a run or deletes data, so clients do
+    not retry them; a 429 `rate_limited` passes on its own and may be retried. A run's
+    create is refused with `Conflict` 409 `run_active` (another run of the fine-tune is
+    still queued or running) or `base_mismatch` (the fine-tune's versions train from
+    another base), and with `ValidationError` 422 `base_is_fine_tune` (a fine-tune sent
+    as the base).
     """
 
     ValidationError = "ValidationError"
@@ -4831,6 +4834,7 @@ class KeyIdentity(Payload):
     id: str
     name: Name
     project: Name
+    permissions: tuple[Permission, ...]
     expires_at: float | None
     ephemeral: bool | None = None
 
@@ -4838,6 +4842,7 @@ class KeyIdentity(Payload):
         Field("id", "id", True, _pattern("^key-[0-9a-f]{20,24}$")),
         Field("name", "name", True, _decode_Name),
         Field("project", "project", True, _decode_Name),
+        Field("permissions", "permissions", True, _items(_decode_Permission)),
         Field("expires_at", "expires_at", True, _union(_number, _null)),
         Field("ephemeral", "ephemeral", False, _boolean),
     )
@@ -4913,6 +4918,7 @@ class AuthStatus(Payload):
     capabilities: tuple[Capability, ...]
     permission_inventory: tuple[PermissionGrant, ...]
     bootstrap: Literal["unconfigured", "available", "consumed"]
+    plan: Literal["free", "pro", "enterprise"]
     trains: bool
     limits: UploadLimits
     key: KeyIdentity | None = None
@@ -4944,6 +4950,7 @@ class AuthStatus(Payload):
             True,
             _literal("unconfigured", "available", "consumed"),
         ),
+        Field("plan", "plan", True, _literal("free", "pro", "enterprise")),
         Field("trains", "trains", True, _boolean),
         Field("limits", "limits", True, _record(UploadLimits)),
         Field("key", "key", False, _record(KeyIdentity)),

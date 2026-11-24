@@ -1292,9 +1292,10 @@ class UploadLimits:
 class Me:
     """Who the credential acts for.
 
-    `trains` says whether the service fine-tunes models at all, and
-    `limits` the sizes it takes data in; a device login's reply says
-    neither, so they are None there.
+    `plan` is the plan of the project's workspace (`free`, `pro` or
+    `enterprise`), `trains` whether the project may fine-tune here, its
+    plan included, and `limits` the sizes the service takes data in; a
+    device login's reply says none of them, so they are None there.
     """
 
     email: str | None
@@ -1303,6 +1304,7 @@ class Me:
     key: Key | None
     token_expires: datetime | None
     url: str
+    plan: str | None = None
     trains: bool | None = None
     limits: UploadLimits | None = None
 
@@ -1546,6 +1548,10 @@ class Lineage:
 class FineTuneRun:
     """A fine-tuning run: the one that publishes version `<name>@ft<version>`.
 
+    `model` is that version's model id, `<project>/<name>@ft<version>`: pass
+    it, or `<name>@ft<version>` in the same project, wherever a model goes,
+    as `gf.predictors.create(..., model=run.model)`.
+
     `curve` holds `(step, loss, validation_loss)` points for the loss chart,
     read from the run's metrics events. In the API, CLI and console it is a run.
 
@@ -1559,7 +1565,6 @@ class FineTuneRun:
 
     model: str
     name: str = ""
-    version: int = 0
     base: str = ""
     target: str | None = None
     state: Literal["queued", "running", "finished", "failed", "cancelled"] = "queued"
@@ -1636,7 +1641,6 @@ class FineTuneRun:
         return cls(
             model=model,
             name=str(data.get("name") or model.split("/")[-1].split("@ft")[0]),
-            version=int(data.get("version") or 0),
             base=str(data.get("base") or ""),
             target=data.get("target"),
             state=typing.cast(Any, _RUN_STATES.get(state, state)),

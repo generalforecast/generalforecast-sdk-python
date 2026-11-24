@@ -1,19 +1,61 @@
 --- 100 columns, not a terminal
+$ gf models get tabicl-v2
+  Model       tabicl-v2, general-forecast/tabicl-v2-classifier
+  Task        classification
+  Limits      100,000 context rows and 10,000 inputs
+  Trained on  up to 100,000 rows, 100 inputs and 10 classes; past that quality is untested
+
+  Model   tabicl-v2, general-forecast/tabicl-v2-regressor
+  Task    regression
+  Limits  100,000 context rows and 10,000 inputs
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/kumo-tabular-medium-regressor
   Task    regression
   Limits  60,000 context rows and 10,000 inputs
 --- 100 columns, a terminal
+$ gf models get tabicl-v2
+  Model       tabicl-v2, general-forecast/tabicl-v2-classifier
+  Task        classification
+  Limits      100,000 context rows and 10,000 inputs
+  Trained on  up to 100,000 rows, 100 inputs and 10 classes; past that quality is untested
+
+  Model   tabicl-v2, general-forecast/tabicl-v2-regressor
+  Task    regression
+  Limits  100,000 context rows and 10,000 inputs
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/kumo-tabular-medium-regressor
   Task    regression
   Limits  60,000 context rows and 10,000 inputs
 --- 44 columns, not a terminal
+$ gf models get tabicl-v2
+  Model       tabicl-v2, general-forecast/tabicl-v2-classifier
+  Task        classification
+  Limits      100,000 context rows and 10,000 inputs
+  Trained on  up to 100,000 rows, 100 inputs and 10 classes; past that quality is untested
+
+  Model   tabicl-v2, general-forecast/tabicl-v2-regressor
+  Task    regression
+  Limits  100,000 context rows and 10,000 inputs
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/kumo-tabular-medium-regressor
   Task    regression
   Limits  60,000 context rows and 10,000 inputs
 --- 44 columns, a terminal
+$ gf models get tabicl-v2
+  Model       tabicl-v2, general-forecast/
+              tabicl-v2-classifier
+  Task        classification
+  Limits      100,000 context rows and
+              10,000 inputs
+  Trained on  up to 100,000 rows, 100
+              inputs and 10 classes; past
+              that quality is untested
+
+  Model   tabicl-v2, general-forecast/
+          tabicl-v2-regressor
+  Task    regression
+  Limits  100,000 context rows and 10,000
+          inputs
 $ gf models get kumo-medium --task regression
   Model   kumo-medium, general-forecast/
           kumo-tabular-medium-regressor

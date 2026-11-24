@@ -26,6 +26,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 import pyarrow as pa
 
 from generalforecast import _data
+from generalforecast.types import STANDARD_PERMISSIONS
 from tests import contract
 
 TOKEN = "gf_test_0123456789abcdefghijklmnopqrstuv"
@@ -194,7 +195,7 @@ class Fake:
     limits: dict[str, int] = field(
         default_factory=lambda: contract.example("auth.status")["limits"]
     )
-    # Whether the service fine-tunes, as `auth.status` says.
+    # Whether the service fine-tunes; `auth.status` says the project does where its plan does too.
     trains: bool = True
     # The workspace's plan: on `free`, resumable uploads and synthetic batches are refused with 402.
     plan: str = "pro"
@@ -210,7 +211,8 @@ class Fake:
     errors: list[str] = field(default_factory=list)
     # The key the tests call with never expires, as a key made with `expires=None`.
     key: dict[str, Any] = field(default_factory=lambda: {
-        "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": None})  # fmt: skip
+        "id": "key-0f1e2d3c4b5a69788796", "name": "notebook-maya-mbp", "expires_at": None,
+        "permissions": list(STANDARD_PERMISSIONS)})  # fmt: skip
     catalog: list[dict[str, Any]] = field(default_factory=lambda: list(CATALOG))
     log_entries: list[dict[str, Any]] = field(
         default_factory=lambda: contract.example("environments.logs")["logs"]
@@ -330,7 +332,7 @@ def auth_status(fake: Fake, call: Call) -> Any:
         principal={"kind": "api-key", "id": fake.key["id"], "project": fake.project},
         key={**fake.key, "project": fake.project}, email="maya@acme.com", machine="maya-mbp",
         workspace={"id": "acme", "display_name": "Acme Analytics"}, url=fake.link(),
-        trains=fake.trains, limits=fake.limits,
+        plan=fake.plan, trains=fake.trains and fake.plan != "free", limits=fake.limits,
     )  # fmt: skip
     return ok(status)
 
@@ -364,7 +366,8 @@ def device_token(fake: Fake, call: Call) -> Any:
     token.update(
         access_token=TOKEN, expires_at=expires, project=fake.project,
         key={"id": "key-0f1e2d3c4b5a69788796", "name": f"{login['client']}-{login['machine']}",
-             "project": fake.project, "expires_at": expires, "ephemeral": notebook},
+             "project": fake.project, "permissions": list(STANDARD_PERMISSIONS),
+             "expires_at": expires, "ephemeral": notebook},
         email="maya@acme.com", workspace={"id": "acme", "display_name": "Acme Analytics"},
         url=fake.link(),
     )  # fmt: skip
@@ -1080,6 +1083,14 @@ def models_list(fake: Fake, call: Call) -> Any:
 def models_get(fake: Fake, call: Call, name: str) -> Any:
     name = unquote(name)
     task = call.query.get("task")
+    if "@ft" in name:
+        # One of the project's fine-tunes, `credit-default@ft1`, as the plane reads it.
+        run = _run_for(fake, name)
+        view = contract.example("models.get", "fine_tune")
+        view.pop("versions")
+        return ok(
+            {**view, "model": run["model"], "name": run["model"], "base": run["base"]}
+        )
     found = [
         m
         for m in fake.catalog

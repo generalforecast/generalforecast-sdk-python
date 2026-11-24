@@ -288,6 +288,7 @@ def me_of(result: Mapping[str, Any], server: str, expires: Any = None) -> Me:
         key=found,
         token_expires=token_expires,
         url=url,
+        plan=result.get("plan"),
         trains=result.get("trains"),
         limits=load(UploadLimits, limits) if isinstance(limits, Mapping) else None,
     )
@@ -391,8 +392,8 @@ def context_create(
         targets = [targets]
     if data is not None and source is not None:
         raise InvalidInput(
-            "a context has one origin: pass data= or source=, not both",
-            hint="upload the rows with data=, or import them with source=",
+            "a context has one origin: rows to upload or source=, not both",
+            hint="upload the rows, or import them with source=",
         )
     if source is not None:
         if columns is not None or targets:
@@ -425,7 +426,7 @@ def context_create(
         if columns is None and rows is None:
             raise InvalidInput(
                 "a live context fed through the API declares its columns",
-                hint='pass columns={"plan": "category", ...}, or data= to infer them',
+                hint='pass columns={"plan": "category", ...}, or rows to infer them from',
             )
         declared = (
             _types(columns, "columns")
@@ -456,8 +457,8 @@ def context_create(
     if data is None:
         raise InvalidInput(
             "a context needs an origin",
-            hint="pass data= to upload rows, source= with table= or sql= to "
-            "import them, or live=True with columns=",
+            hint='upload rows, as `gf.contexts.create("adult", "adult.csv")`, import '
+            "them with source= and table= or sql=, or pass live=True with columns=",
         )
     if targets:
         raise InvalidInput("targets= is for live contexts fed through the API")
@@ -1392,7 +1393,7 @@ def snapshot(state: State, data: Any, *, what: str = "context") -> Op:
         len(body),
         (limits.snapshot_rows, limits.snapshot_bytes),
         holds="snapshot",
-        hint='store it as a context, `gf.contexts.create("name", data=rows)`, which '
+        hint='store it as a context, `gf.contexts.create("name", rows)`, which '
         "uploads in chunks, and pass that context instead",
         param=what,
     )
@@ -1405,6 +1406,10 @@ def snapshot(state: State, data: Any, *, what: str = "context") -> Op:
         yield _http.snapshot_put(digest, body)
     state.snapshots.add(digest)
     return digest, rows.num_rows
+
+
+# A version of one of the project's fine-tunes, named without the project.
+OWN_FINE_TUNE = re.compile(r"[a-z][a-z0-9-]{0,62}@ft[1-9][0-9]*")
 
 
 def model_predict(
@@ -1434,8 +1439,9 @@ def model_predict(
     else:
         digest, rows = yield from snapshot(state, context)
     # The route takes no task: the service picks a short name's task from the
-    # target column. A task the caller names picks the catalog model instead.
-    if task:
+    # target column. A task the caller names picks the catalog model instead,
+    # and the project's own fine-tune, `credit@ft1`, is read as its full id.
+    if task or OWN_FINE_TUNE.fullmatch(model):
         model = (yield from model_get(model, task)).id
     payload = {
         "model": model,

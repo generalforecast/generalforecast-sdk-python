@@ -108,8 +108,8 @@ class Contexts(_Sync):
     def create(
         self,
         name: str,
-        *,
         data: DataLike | None = None,
+        *,
         source: str | Source | None = None,
         table: str | None = None,
         sql: str | None = None,
@@ -124,7 +124,7 @@ class Contexts(_Sync):
     ) -> Context:
         """Creates a context from exactly one origin.
 
-        `data=` uploads a snapshot, version 1. `source=` with `table=` or
+        `data` uploads a snapshot, version 1. `source=` with `table=` or
         `sql=` imports one; with `live=True` it is read at call time and
         cached for `freshness` (1m to 24h). `live=True` with `columns=`
         (or `data=` to infer them and seed rows) makes a context fed
@@ -613,9 +613,9 @@ class Models(_Sync):
     def predict(
         self,
         model: str,
+        queries: DataLike,
         *,
         context: DataLike | Context,
-        queries: DataLike,
         target: str,
         task: Task | None = None,
         **predictor_fields: Any,
@@ -875,8 +875,8 @@ class AsyncContexts(_Async):
     async def create(
         self,
         name: str,
-        *,
         data: DataLike | None = None,
+        *,
         source: str | Source | None = None,
         table: str | None = None,
         sql: str | None = None,
@@ -1339,9 +1339,9 @@ class AsyncModels(_Async):
     async def predict(
         self,
         model: str,
+        queries: DataLike,
         *,
         context: DataLike | Context,
-        queries: DataLike,
         target: str,
         task: Task | None = None,
         **predictor_fields: Any,

@@ -190,21 +190,32 @@ def whoami(call: Call) -> Me:
 
 
 def whoami_view(call: Call, me: Me) -> None:
-    """Email, workspace, project, key, and whether the service fine-tunes."""
-    from generalforecast.cli._views import day
+    """Email, workspace, project and its plan, the key and its permissions, and whether the project fine-tunes."""
+    from generalforecast.cli._views import day, permissions
 
-    key = ""
+    key = held = ""
     if me.key is not None:
         expires = day(me.token_expires or me.key.expires)
         key = me.key.name + (f", expires {expires}" if expires else "")
+        held = permissions(me.key) if me.key.permissions else ""
+    plan = me.plan.title() if me.plan else ""
     fine_tuning = None
-    if me.trains is not None:
-        fine_tuning = "offered" if me.trains else "not offered by this service"
+    if me.trains:
+        fine_tuning = "included"
+    elif me.trains is not None:
+        free = me.plan == "free"
+        fine_tuning = (
+            f"not included in the {plan} plan"
+            if free
+            else "not available to this project"
+        )
     fields = [
         ("Email", me.email),
         ("Workspace", me.workspace),
         ("Project", me.project),
+        ("Plan", plan),
         ("Key", key),
+        ("Permissions", held),
         ("Fine-tuning", fine_tuning),
     ]
     call.out.details([(k, v or "", "") for k, v in fields if v], stream=call.out.out)
