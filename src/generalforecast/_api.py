@@ -7802,14 +7802,20 @@ class TelemetrySpan(Payload):
 
 @dataclass(frozen=True, kw_only=True)
 class TelemetryContext(Payload):
-    """How a request's context was read: whole, or a core of rows every query shares."""
+    """The TelemetryContext schema.
+
+    how a request's context was read: whole, or a core of rows every query shares; and
+    whether its encode was a hit
+    """
 
     read: Literal["whole", "core"]
     rows: int
+    encode: str | None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("read", "read", True, _literal("whole", "core")),
         Field("rows", "rows", True, _integer),
+        Field("encode", "encode", True, _union(_text, _null)),
     )
 
 
@@ -8002,6 +8008,7 @@ class RequestSummary(Payload):
     code: str | None
     rows: int | None
     start: str | None
+    context_encode: str | None
     container: str | None
     gpu: str | None
     gpus: int | None
@@ -8019,6 +8026,7 @@ class RequestSummary(Payload):
         Field("code", "code", True, _union(_text, _null)),
         Field("rows", "rows", True, _union(_integer, _null)),
         Field("start", "start", True, _union(_text, _null)),
+        Field("context_encode", "context_encode", True, _union(_text, _null)),
         Field("container", "container", True, _union(_text, _null)),
         Field("gpu", "gpu", True, _union(_text, _null)),
         Field("gpus", "gpus", True, _union(_integer, _null)),
@@ -8086,6 +8094,7 @@ class RequestTelemetry(Payload):
     rows: int | None
     rows_done: int
     start: str | None
+    context_encode: str | None
     container: TelemetryContainer
     gpu: str | None
     gpus: int | None
@@ -8110,6 +8119,7 @@ class RequestTelemetry(Payload):
         Field("rows", "rows", True, _union(_integer, _null)),
         Field("rows_done", "rows_done", True, _integer),
         Field("start", "start", True, _union(_text, _null)),
+        Field("context_encode", "context_encode", True, _union(_text, _null)),
         Field("container", "container", True, _record(TelemetryContainer)),
         Field("gpu", "gpu", True, _union(_text, _null)),
         Field("gpus", "gpus", True, _union(_integer, _null)),

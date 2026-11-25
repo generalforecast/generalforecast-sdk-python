@@ -197,7 +197,7 @@ def test_a_runs_telemetry_reads_its_models_stages_containers_and_events(adult):
         6513,
     )
     assert model.container.id == "k3f9" and model.container.start == "warm"
-    assert model.container.context == {"read": "whole", "rows": 26048}
+    assert model.container.context == {"read": "whole", "rows": 26048, "encode": "hit"}
     # A span is its phase's seconds since the run started, the last under way.
     assert [(s.phase, s.start, s.end) for s in model.stages][:2] == [
         ("encode_prepare", 0.3, 1.4),

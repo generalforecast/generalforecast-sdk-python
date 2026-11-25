@@ -605,8 +605,8 @@ class TelemetryContainer:
 
     `start` is `cold` or `warm`; a cold one's `snapshot` is `restoring`,
     `restored`, `creating` or `created`. `ready_at` and `first_rows` are
-    seconds since the origin; `context` says `read` (`whole` or `core`) and
-    `rows`.
+    seconds since the origin; `context` says `read` (`whole` or `core`),
+    `rows`, and `encode`: `hit`, `adopted` or `encoded`.
     """
 
     id: str | None = None
@@ -677,7 +677,9 @@ class RequestSummary:
 
     `received` is seconds since the epoch; `status` is `answering`,
     `answered` or `failed`; `start` is `cold` or `warm` once its container
-    is known.
+    is known, and `context_encode` whether its context's encode was a `hit`
+    on that container's GPU, `adopted` from the shared store or `encoded`
+    in the call.
     """
 
     request_id: str
@@ -689,6 +691,7 @@ class RequestSummary:
     code: str | None = None
     rows: int | None = None
     start: str | None = None
+    context_encode: str | None = None
     container: str | None = None
     gpu: str | None = None
     gpus: int | None = None
@@ -722,6 +725,8 @@ class RequestTelemetry:
     received: float = 0.0
     rows: int | None = None
     rows_done: int = 0
+    start: str | None = None
+    context_encode: str | None = None
     stage: str | None = None
     container: TelemetryContainer | None = None
     stages: tuple[Span, ...] = ()

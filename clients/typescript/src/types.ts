@@ -2959,10 +2959,14 @@ export interface TelemetrySpan {
   ongoing: boolean;
 }
 
-/** how a request's context was read: whole, or a core of rows every query shares */
+/**
+ * how a request's context was read: whole, or a core of rows every query shares; and
+ * whether its encode was a hit
+ */
 export interface TelemetryContext {
   read: "whole" | "core";
   rows: number;
+  encode: string | null;
 }
 
 /**
@@ -3055,6 +3059,7 @@ export interface RequestSummary {
   code: string | null;
   rows: number | null;
   start: string | null;
+  context_encode: string | null;
   container: string | null;
   gpu: string | null;
   gpus: number | null;
@@ -3096,6 +3101,7 @@ export interface RequestTelemetry {
   rows: number | null;
   rows_done: number;
   start: string | null;
+  context_encode: string | null;
   container: TelemetryContainer;
   gpu: string | null;
   gpus: number | null;

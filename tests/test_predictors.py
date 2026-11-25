@@ -213,9 +213,14 @@ def test_an_environments_requests_today_and_one_requests_stages(adult):
         "warm",
         "m2c8",
     )
+    assert recent.context_encode == "hit"
     found = gf.predictors.request("adult-income", "req_7c41e2a9")
     assert (found.status, found.rows_done, found.stage) == ("answering", 412, "decode")
     assert found.container.snapshot == "restored" and found.container.ready_at == 7.6
+    assert (
+        found.context_encode == "encoded"
+        and found.container.context["encode"] == "encoded"
+    )
     assert [s.phase for s in found.stages] == ["schedule", "decode"]
     assert found.events[0].message.startswith("Request req_7c41e2a9")
     assert found.rows_back[0]["at"] == 10.4

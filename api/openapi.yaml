@@ -904,7 +904,7 @@ paths:
                       containers: 1
                       containers_state: starting
                       recent:
-                      - {request_id: req_52b90d1e, environment: production, revision: 3, model: general-forecast/kumo-tabular-medium-classifier, received: 1795564915.0, status: answered, code: null, rows: 250, start: warm, container: m2c8, gpu: H100, gpus: 4, first_row_seconds: 0.21, latency_seconds: 0.29, seconds: 0.29}
+                      - {request_id: req_52b90d1e, environment: production, revision: 3, model: general-forecast/kumo-tabular-medium-classifier, received: 1795564915.0, status: answered, code: null, rows: 250, start: warm, context_encode: hit, container: m2c8, gpu: H100, gpus: 4, first_row_seconds: 0.21, latency_seconds: 0.29, seconds: 0.29}
   /v1/projects/{project}/predictors/{name}/environments/{environment}/requests/{request_id}:
     get:
       operationId: environments.request
@@ -951,13 +951,14 @@ paths:
                       rows: 1000
                       rows_done: 412
                       start: cold
+                      context_encode: encoded
                       gpu: H100
                       gpus: 4
                       first_row_seconds: null
                       latency_seconds: null
                       seconds: 10.4
                       stage: decode
-                      container: {id: q7n4, gpu: H100, gpus: 4, start: cold, snapshot: restored, snapshot_seconds: 2.5, ready_at: 7.6, context: {read: whole, rows: 81413}, first_rows: 10.0}
+                      container: {id: q7n4, gpu: H100, gpus: 4, start: cold, snapshot: restored, snapshot_seconds: 2.5, ready_at: 7.6, context: {read: whole, rows: 81413, encode: encoded}, first_rows: 10.0}
                       stages:
                       - {stage: start, phase: schedule, from: 0.1, to: 1.7, ongoing: false}
                       - {stage: decode, phase: decode, from: 9.9, to: 10.4, ongoing: true}
@@ -2836,7 +2837,7 @@ paths:
                         stage: decode
                         seconds: 13.8
                         first_rows: 8.6
-                        container: {id: k3f9, gpu: H100, gpus: 4, start: warm, snapshot: null, snapshot_seconds: null, ready_at: 0.0, context: {read: whole, rows: 26048}, first_rows: 8.6}
+                        container: {id: k3f9, gpu: H100, gpus: 4, start: warm, snapshot: null, snapshot_seconds: null, ready_at: 0.0, context: {read: whole, rows: 26048, encode: hit}, first_rows: 8.6}
                         stages:
                         - {stage: encode, phase: encode_prepare, from: 0.3, to: 1.4, ongoing: false}
                         - {stage: encode, phase: fit, from: 1.4, to: 2.0, ongoing: false}
@@ -13911,12 +13912,13 @@ components:
 
     TelemetryContext:
       type: object
-      description: "how a request's context was read: whole, or a core of rows every query shares"
-      required: [read, rows]
+      description: "how a request's context was read: whole, or a core of rows every query shares; and whether its encode was a hit"
+      required: [read, rows, encode]
       additionalProperties: false
       properties:
         read: {type: string, enum: [whole, core]}
         rows: {type: integer}
+        encode: {type: [string, "null"], description: "hit (on the container's GPU already), adopted (from the shared store) or encoded (in the call)"}
 
     TelemetryEvent:
       type: object
@@ -14007,7 +14009,7 @@ components:
     RequestSummary:
       type: object
       description: "one request as the recent requests list it"
-      required: [request_id, environment, revision, model, received, status, code, rows, start, container, gpu, gpus, first_row_seconds, latency_seconds, seconds]
+      required: [request_id, environment, revision, model, received, status, code, rows, start, context_encode, container, gpu, gpus, first_row_seconds, latency_seconds, seconds]
       additionalProperties: false
       properties:
         request_id: {type: string}
@@ -14019,6 +14021,7 @@ components:
         code: {type: [string, "null"]}
         rows: {type: [integer, "null"]}
         start: {type: [string, "null"], description: "cold or warm"}
+        context_encode: {type: [string, "null"], description: "hit, adopted or encoded: how its context's encode came"}
         container: {type: [string, "null"]}
         gpu: {type: [string, "null"]}
         gpus: {type: [integer, "null"]}
@@ -14042,7 +14045,7 @@ components:
 
     RequestTelemetry:
       type: object
-      required: [request_id, kind, subject, environment, revision, model, received, status, code, rows, rows_done, start, container, gpu, gpus, first_row_seconds, latency_seconds, seconds, stage, stages, events, rows_back]
+      required: [request_id, kind, subject, environment, revision, model, received, status, code, rows, rows_done, start, context_encode, container, gpu, gpus, first_row_seconds, latency_seconds, seconds, stage, stages, events, rows_back]
       additionalProperties: false
       properties:
         request_id: {type: string}
@@ -14057,6 +14060,7 @@ components:
         rows: {type: [integer, "null"]}
         rows_done: {type: integer}
         start: {type: [string, "null"], description: "cold or warm"}
+        context_encode: {type: [string, "null"], description: "hit, adopted or encoded: how its context's encode came"}
         container: {$ref: "#/components/schemas/TelemetryContainer"}
         gpu: {type: [string, "null"]}
         gpus: {type: [integer, "null"]}
