@@ -63,15 +63,19 @@ from generalforecast.types import (
     Predictions,
     Predictor,
     PredictorInfo,
+    RequestsToday,
+    RequestTelemetry,
     Revision,
     Run,
     RunEvent,
+    RunTelemetry,
     Slice,
     Snapshot,
     Source,
     SourceList,
     SourceTables,
     SyntheticBatch,
+    TelemetryEvent,
     Timing,
     TrainedOn,
     UploadLimits,
@@ -924,22 +928,32 @@ def _follow_experiment(
     timeout: float | None,
     poll: float | None,
     each: Callable[[Entry], Any] | None,
+    event: Callable[[Any], Any] | None = None,
 ) -> Op:
     """Polls a run every `poll` seconds until it ends and returns its experiment.
 
     `each` makes the step for each model's leaderboard entry once that model
     has ended, once, as the run reads when it lands: its score while other
-    models still score.
+    models still score. `event` makes the step for each of the run's
+    telemetry events, oldest first, as each poll reads those after the last.
     """
     name = name_of(experiment, "experiment")
     deadline = _deadline(timeout, poll)
     attempt = 0
     ended: set[str] = set()
+    after = "0"
     while True:
         found = yield from experiment_get(name, run=run)
         current = found.run
         if current is None:
             return found
+        if event is not None:
+            told = yield from experiment_telemetry(
+                name, run=current.number, after=after
+            )
+            after = told.next
+            for said in told.events:
+                yield event(said)
         if each is not None:
             for entry in current.leaderboard:
                 if entry.done and entry.model not in ended:
@@ -949,11 +963,11 @@ def _follow_experiment(
             return found
         if _past(deadline):
             raise _not_done(
-                f"run {current.number} of {name}",
+                f"run {current.number} of {name} is still {current.state}",
                 timeout,
                 f"gf.experiments.wait({name!r}) picks it up again",
             )
-        if each is None:
+        if each is None and event is None:
             yield _progress(name, current)
         yield Sleep(_poll(attempt, poll))
         attempt += 1
@@ -967,10 +981,16 @@ def experiment_wait(
     timeout: float | None = None,
     poll: float | None = None,
     on_model: Callable[[Entry], Any] | None = None,
+    on_event: Callable[[TelemetryEvent], Any] | None = None,
 ) -> Op:
-    """Polls until the run ends; raises when it failed. `on_model` hears each model's entry as that model ends."""
+    """Polls until the run ends; raises when it failed.
+
+    `on_model` hears each model's entry as that model ends, `on_event`
+    each of the run's telemetry events as it lands.
+    """
     each = None if on_model is None else (lambda entry: Notify(on_model, entry))
-    found = yield from _follow_experiment(experiment, run, timeout, poll, each)
+    event = None if on_event is None else (lambda said: Notify(on_event, said))
+    found = yield from _follow_experiment(experiment, run, timeout, poll, each, event)
     current = found.run
     if current is not None and current.state == "failed":
         raise failed(
@@ -987,9 +1007,24 @@ def experiment_watch(
     run: int | None = None,
     timeout: float | None = None,
     poll: float | None = None,
+    events: bool = False,
 ) -> Op:
-    """Emits each model's leaderboard entry once that model has ended, until the run ends."""
-    yield from _follow_experiment(experiment, run, timeout, poll, Emit)
+    """Emits each model's leaderboard entry once that model has ended, until the run ends; with `events`, each telemetry event too."""
+    yield from _follow_experiment(
+        experiment, run, timeout, poll, Emit, Emit if events else None
+    )
+
+
+def experiment_telemetry(
+    experiment: Any, *, run: int | None = None, after: str | None = None
+) -> Op:
+    """Where a run's time goes: its models' stages and containers, and its events after cursor `after`."""
+    name = name_of(experiment, "experiment")
+    number = yield from _run_number(name, run)
+    reply = yield _http.experiments_telemetry(
+        name, number, None if after in (None, "0") else after
+    )
+    return load(RunTelemetry, reply.result or {})
 
 
 def _run_number(name: str, run: int | None) -> Op:
@@ -1390,6 +1425,22 @@ def predictor_move(
     if not wait:
         return found
     return (yield from _env_wait(name, env, found.revision, None, poll))
+
+
+def predictor_requests(predictor: Any, env: str) -> Op:
+    """An environment's requests today: their figures and the most recent."""
+    reply = yield _http.predictors_requests(name_of(predictor, "predictor"), env)
+    return load(RequestsToday, reply.result or {})
+
+
+def predictor_request(predictor: Any, request_id: str, env: str) -> Op:
+    """One request of an environment: its stages, container, events and rows back."""
+    if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+        raise InvalidInput("a request is named by its id", param="request_id")
+    reply = yield _http.predictors_request(
+        name_of(predictor, "predictor"), env, request_id
+    )
+    return load(RequestTelemetry, reply.result or {})
 
 
 def predictor_logs(predictor: Any, env: str, params: Mapping[str, Any]) -> Op:

@@ -194,3 +194,30 @@ def test_promote_rollback_logs_and_delete(adult):
     gf.predictors.delete("churn")
     with pytest.raises(gf.NotFound):
         gf.predictors.get("churn")
+
+
+def test_an_environments_requests_today_and_one_requests_stages(adult):
+    gf.predictors.create(
+        "adult-income", context="adult", model="tabicl-v2", target="income"
+    )
+    today = gf.predictors.requests("adult-income")
+    assert (today.requests, today.warm_p50_seconds, today.cold_p50_seconds) == (
+        214,
+        0.31,
+        11.2,
+    )
+    assert (today.containers, today.containers_state) == (1, "starting")
+    (recent,) = today.recent
+    assert (recent.request_id, recent.start, recent.container) == (
+        "req_52b90d1e",
+        "warm",
+        "m2c8",
+    )
+    found = gf.predictors.request("adult-income", "req_7c41e2a9")
+    assert (found.status, found.rows_done, found.stage) == ("answering", 412, "decode")
+    assert found.container.snapshot == "restored" and found.container.ready_at == 7.6
+    assert [s.phase for s in found.stages] == ["schedule", "decode"]
+    assert found.events[0].message.startswith("Request req_7c41e2a9")
+    assert found.rows_back[0]["at"] == 10.4
+    with pytest.raises(gf.NotFound):
+        gf.predictors.request("adult-income", "req_unknown")

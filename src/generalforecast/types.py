@@ -54,6 +54,7 @@ __all__ = [
     "Logs",
     "Me",
     "Model",
+    "ModelTelemetry",
     "NewKey",
     "Origin",
     "Predictions",
@@ -61,12 +62,16 @@ __all__ = [
     "PredictorInfo",
     "Published",
     "Report",
+    "RequestSummary",
+    "RequestTelemetry",
+    "RequestsToday",
     "Resolved",
     "Revision",
     "Run",
     "RunEvent",
     "RunEventKind",
     "RunSummary",
+    "RunTelemetry",
     "Selection",
     "Slice",
     "Snapshot",
@@ -76,8 +81,11 @@ __all__ = [
     "SourceState",
     "SourceTable",
     "SourceTables",
+    "Span",
     "SyntheticBatch",
     "Task",
+    "TelemetryContainer",
+    "TelemetryEvent",
     "Timing",
     "TrainedOn",
     "UploadLimits",
@@ -568,6 +576,160 @@ class Experiment:
 
     def _mime_(self) -> tuple[str, str]:
         return ("text/html", self._repr_html_())
+
+
+@dataclass(frozen=True)
+class Span:
+    """One phase of a model's run or a request, in seconds since its origin.
+
+    `stage` is `start`, `load`, `encode` or `decode`; `phase` one of its
+    phases (`schedule`, `snapshot`, `boot`, `load`, `encode_prepare`,
+    `fit`, `encode`, `decode`). An `ongoing` span runs to now.
+    """
+
+    stage: str
+    phase: str
+    start: float = field(default=0.0, metadata={"wire": "from"})
+    end: float = field(default=0.0, metadata={"wire": "to"})
+    ongoing: bool = False
+
+    @property
+    def seconds(self) -> float:
+        """How long it took, or has so far."""
+        return max(0.0, self.end - self.start)
+
+
+@dataclass(frozen=True)
+class TelemetryContainer:
+    """The container that served a model's run or a request: its GPUs, how it started and how the context was read.
+
+    `start` is `cold` or `warm`; a cold one's `snapshot` is `restoring`,
+    `restored`, `creating` or `created`. `ready_at` and `first_rows` are
+    seconds since the origin; `context` says `read` (`whole` or `core`) and
+    `rows`.
+    """
+
+    id: str | None = None
+    gpu: str | None = None
+    gpus: int | None = None
+    start: str | None = None
+    snapshot: str | None = None
+    snapshot_seconds: float | None = None
+    ready_at: float | None = None
+    context: Mapping[str, Any] | None = None
+    first_rows: float | None = None
+
+
+@dataclass(frozen=True)
+class ModelTelemetry:
+    """One model of a run as its telemetry says it: its rows, its stages and its container."""
+
+    model: str
+    short: str | None = None
+    state: str = "queued"
+    rows: int = 0
+    total: int = 0
+    stage: str | None = None
+    container: TelemetryContainer | None = None
+    stages: tuple[Span, ...] = ()
+    phases: Mapping[str, float] = field(default_factory=dict)
+    stage_seconds: Mapping[str, float] = field(default_factory=dict)
+    first_rows: float | None = None
+    seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class TelemetryEvent:
+    """One event of a run or a request: `at` seconds since its origin, who said it and what.
+
+    `source` is `plane`, `modal` (a container), `gf-server` or `engine`;
+    `event` names it (docs/telemetry.md in gfi); `message` is it for a person.
+    """
+
+    id: int
+    at: float = 0.0
+    level: str = "info"
+    source: str = ""
+    event: str = ""
+    model: str | None = None
+    container: str | None = None
+    request_id: str | None = None
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class RunTelemetry:
+    """Where a run's time goes: each model's stages and container, and its events after a cursor, `next`."""
+
+    number: int
+    state: str = "queued"
+    started: float | None = None
+    elapsed_seconds: float = 0.0
+    held_rows: int = 0
+    models: tuple[ModelTelemetry, ...] = ()
+    events: tuple[TelemetryEvent, ...] = ()
+    next: str = "0"
+
+
+@dataclass(frozen=True)
+class RequestSummary:
+    """One request of a predictor environment as the recent requests list it.
+
+    `received` is seconds since the epoch; `status` is `answering`,
+    `answered` or `failed`; `start` is `cold` or `warm` once its container
+    is known.
+    """
+
+    request_id: str
+    environment: str | None = None
+    revision: int | None = None
+    model: str | None = None
+    received: float = 0.0
+    status: str = "answering"
+    code: str | None = None
+    rows: int | None = None
+    start: str | None = None
+    container: str | None = None
+    gpu: str | None = None
+    gpus: int | None = None
+    first_row_seconds: float | None = None
+    latency_seconds: float | None = None
+    seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class RequestsToday:
+    """A predictor environment's requests today: their figures and the most recent, newest first."""
+
+    day: str = ""
+    requests: int = 0
+    warm_p50_seconds: float | None = None
+    cold_p50_seconds: float | None = None
+    cold_starts: int = 0
+    containers: int = 0
+    containers_state: str | None = None
+    recent: tuple[RequestSummary, ...] = ()
+
+
+@dataclass(frozen=True)
+class RequestTelemetry:
+    """One request: its stages, the container that served it, its events, and its latest rows back where the caller may read them."""
+
+    request_id: str
+    status: str = "answering"
+    environment: str | None = None
+    model: str | None = None
+    received: float = 0.0
+    rows: int | None = None
+    rows_done: int = 0
+    stage: str | None = None
+    container: TelemetryContainer | None = None
+    stages: tuple[Span, ...] = ()
+    events: tuple[TelemetryEvent, ...] = ()
+    first_row_seconds: float | None = None
+    latency_seconds: float | None = None
+    seconds: float | None = None
+    rows_back: tuple[Mapping[str, Any], ...] | None = None
 
 
 @dataclass(frozen=True)

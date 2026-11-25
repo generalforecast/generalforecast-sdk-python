@@ -184,3 +184,44 @@ def test_watch_yields_each_model_once_as_it_ends_while_the_others_score(adult):
     assert done.run.number == 2 and done.run.state == "finished"
     assert sorted(e.short for e in heard) == sorted(MODELS)
     assert all(e.done for e in heard)
+
+
+def test_a_runs_telemetry_reads_its_models_stages_containers_and_events(adult):
+    gf.experiments.create(context="adult", target="income", models=MODELS, wait=False)
+    told = gf.experiments.telemetry("adult-income")
+    (model,) = told.models
+    assert (model.short, model.stage, model.rows, model.total) == (
+        "kumo-medium",
+        "decode",
+        4096,
+        6513,
+    )
+    assert model.container.id == "k3f9" and model.container.start == "warm"
+    assert model.container.context == {"read": "whole", "rows": 26048}
+    # A span is its phase's seconds since the run started, the last under way.
+    assert [(s.phase, s.start, s.end) for s in model.stages][:2] == [
+        ("encode_prepare", 0.3, 1.4),
+        ("fit", 1.4, 2.0),
+    ]
+    assert model.stages[-1].ongoing and round(model.stages[0].seconds, 1) == 1.1
+    assert [e.message for e in told.events] == ["1 of 6,513 rows"]
+    # A cursor reads what came after it.
+    again = gf.experiments.telemetry("adult-income", after=told.next)
+    assert [e.id for e in again.events] == [2]
+
+
+def test_watch_with_events_yields_the_runs_events_as_they_land_and_wait_hears_them(
+    adult,
+):
+    adult.polls_until_done = 3
+    gf.experiments.create(context="adult", target="income", models=MODELS, wait=False)
+    seen = list(gf.experiments.watch("adult-income", poll=0.01, events=True))
+    events = [item for item in seen if isinstance(item, gf.types.TelemetryEvent)]
+    entries = [item for item in seen if isinstance(item, gf.types.Entry)]
+    # Each event once, in order, beside each model as it ends.
+    assert [e.id for e in events] == list(range(1, len(events) + 1)) and events
+    assert sorted(e.short for e in entries) == sorted(MODELS)
+    heard = []
+    gf.experiments.run("adult-income", models=MODELS, wait=False)
+    gf.experiments.wait("adult-income", poll=0.01, on_event=heard.append)
+    assert heard and all(isinstance(e, gf.types.TelemetryEvent) for e in heard)

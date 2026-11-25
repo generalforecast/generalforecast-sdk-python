@@ -37,8 +37,11 @@ from generalforecast.types import (
     Predictions,
     Predictor,
     PredictorInfo,
+    RequestsToday,
+    RequestTelemetry,
     Revision,
     RunEvent,
+    RunTelemetry,
     Slice,
     Snapshot,
     Source,
@@ -47,6 +50,7 @@ from generalforecast.types import (
     SourceTables,
     SyntheticBatch,
     Task,
+    TelemetryEvent,
     WriteReceipt,
 )
 
@@ -344,17 +348,25 @@ class Experiments(_Sync):
         timeout: float | None = None,
         poll: float | None = None,
         on_model: Callable[[Entry], Any] | None = None,
+        on_event: Callable[[TelemetryEvent], Any] | None = None,
     ) -> Experiment:
         """Waits for a run to end and returns the experiment with it.
 
         `poll` is the seconds between checks, as in every method that
         waits; left out, checks start 1s apart and slow to one every 5s.
         With `on_model`, each model's leaderboard entry is passed to it
-        once, as that model ends, while the others still score.
+        once, as that model ends, while the others still score. With
+        `on_event`, each of the run's telemetry events is, as it lands:
+        its containers starting, each model's stages and rows answered.
         """
         return self._run(
             _ops.experiment_wait(
-                experiment, run=run, timeout=timeout, poll=poll, on_model=on_model
+                experiment,
+                run=run,
+                timeout=timeout,
+                poll=poll,
+                on_model=on_model,
+                on_event=on_event,
             )
         )
 
@@ -365,20 +377,42 @@ class Experiments(_Sync):
         run: int | None = None,
         timeout: float | None = None,
         poll: float | None = None,
-    ) -> Iterator[Entry]:
+        events: bool = False,
+    ) -> Iterator[Entry | TelemetryEvent]:
         """Yields each model's leaderboard entry once, as that model ends, until the run ends.
 
         An entry's `state` says whether the model scored (its `score` and
-        `metrics`), failed (`error`) or was cancelled. A name alone follows
-        the run that was its latest when the watch began; `get` reads the
-        whole run after.
+        `metrics`), failed (`error`) or was cancelled. With `events`, each of
+        the run's telemetry events is yielded too, as it lands, in seconds
+        since the run started: a container starting cold or warm, its
+        snapshot, its gf-server ready, each model's phases and rows
+        answered. A name alone follows the run that was its latest when the
+        watch began; `get` reads the whole run after, `telemetry` its stages.
 
         Raises:
             Timeout: Past `timeout` seconds; the run carries on.
         """
         return self._client._iterate(
-            _ops.experiment_watch(experiment, run=run, timeout=timeout, poll=poll)
+            _ops.experiment_watch(
+                experiment, run=run, timeout=timeout, poll=poll, events=events
+            )
         )
+
+    def telemetry(
+        self,
+        experiment: str | Experiment,
+        *,
+        run: int | None = None,
+        after: str | None = None,
+    ) -> RunTelemetry:
+        """Where a run's time goes: each model's stages, container and rows, and its events after cursor `after`.
+
+        A model's `stages` are spans of its phases in seconds since the run
+        started; its `container` says its GPUs, whether it started cold and
+        how its context was read. Read again with `after=telemetry.next`
+        for the events since.
+        """
+        return self._run(_ops.experiment_telemetry(experiment, run=run, after=after))
 
     def cancel(
         self, experiment: str | Experiment, *, run: int | None = None
@@ -548,6 +582,22 @@ class Predictors(_Sync):
             "after": after,
         }
         return self._run(_ops.predictor_logs(predictor, env, params))
+
+    def requests(
+        self, predictor: str | PredictorInfo, *, env: str = "production"
+    ) -> RequestsToday:
+        """An environment's requests today: how many, warm and cold p50 latency, cold starts, containers, and the most recent."""
+        return self._run(_ops.predictor_requests(predictor, env))
+
+    def request(
+        self,
+        predictor: str | PredictorInfo,
+        request_id: str,
+        *,
+        env: str = "production",
+    ) -> RequestTelemetry:
+        """One request: its stages in seconds since it came, its container and start, its events, and its latest rows back where your role reads rows."""
+        return self._run(_ops.predictor_request(predictor, request_id, env))
 
     def delete(self, predictor: str | PredictorInfo) -> None:
         """Deletes a predictor and its revisions."""
@@ -1110,11 +1160,17 @@ class AsyncExperiments(_Async):
         timeout: float | None = None,
         poll: float | None = None,
         on_model: Callable[[Entry], Any] | None = None,
+        on_event: Callable[[TelemetryEvent], Any] | None = None,
     ) -> Experiment:
-        """See `Experiments.wait`; `on_model` may be a coroutine function."""
+        """See `Experiments.wait`; `on_model` and `on_event` may be coroutine functions."""
         return await self._run(
             _ops.experiment_wait(
-                experiment, run=run, timeout=timeout, poll=poll, on_model=on_model
+                experiment,
+                run=run,
+                timeout=timeout,
+                poll=poll,
+                on_model=on_model,
+                on_event=on_event,
             )
         )
 
@@ -1125,10 +1181,25 @@ class AsyncExperiments(_Async):
         run: int | None = None,
         timeout: float | None = None,
         poll: float | None = None,
-    ) -> AsyncIterator[Entry]:
+        events: bool = False,
+    ) -> AsyncIterator[Entry | TelemetryEvent]:
         """See `Experiments.watch`; iterate it with `async for`."""
         return self._client._iterate(
-            _ops.experiment_watch(experiment, run=run, timeout=timeout, poll=poll)
+            _ops.experiment_watch(
+                experiment, run=run, timeout=timeout, poll=poll, events=events
+            )
+        )
+
+    async def telemetry(
+        self,
+        experiment: str | Experiment,
+        *,
+        run: int | None = None,
+        after: str | None = None,
+    ) -> RunTelemetry:
+        """See `Experiments.telemetry`."""
+        return await self._run(
+            _ops.experiment_telemetry(experiment, run=run, after=after)
         )
 
     async def cancel(
@@ -1293,6 +1364,22 @@ class AsyncPredictors(_Async):
             "after": after,
         }
         return await self._run(_ops.predictor_logs(predictor, env, params))
+
+    async def requests(
+        self, predictor: str | PredictorInfo, *, env: str = "production"
+    ) -> RequestsToday:
+        """See `Predictors.requests`."""
+        return await self._run(_ops.predictor_requests(predictor, env))
+
+    async def request(
+        self,
+        predictor: str | PredictorInfo,
+        request_id: str,
+        *,
+        env: str = "production",
+    ) -> RequestTelemetry:
+        """See `Predictors.request`."""
+        return await self._run(_ops.predictor_request(predictor, request_id, env))
 
     async def delete(self, predictor: str | PredictorInfo) -> None:
         """See `Predictors.delete`."""

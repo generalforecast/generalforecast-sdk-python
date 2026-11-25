@@ -770,6 +770,22 @@ def experiments_slices(fake: Fake, call: Call, name: str, number: str) -> Any:
     return ok(found)
 
 
+def experiments_telemetry(fake: Fake, call: Call, name: str, number: str) -> Any:
+    """The run's telemetry, its events one more each read until the run ends, after the cursor asked."""
+    run = fake.experiments[name]["_runs"][int(number) - 1]
+    told = contract.example("experiments.telemetry")
+    said = told["events"][0]
+    run["_said"] = run.get("_said", 0) + 1
+    events = [
+        dict(said, id=i, at=1.5 * i, message=f"{i:,} of 6,513 rows")
+        for i in range(1, run["_said"] + 1)
+    ]
+    after = int(call.query.get("after", 0))
+    told.update(number=int(number), state=run["state"], events=[e for e in events if e["id"] > after],
+                next=str(max(after, len(events))))  # fmt: skip
+    return ok(told)
+
+
 def experiments_delete(fake: Fake, call: Call, name: str) -> Any:
     del fake.experiments[name]
     return ok({"name": name, "deleted": True})
@@ -971,6 +987,19 @@ def predictors_logs(fake: Fake, call: Call, name: str, env: str) -> Any:
             "previous": None,
         }
     )
+
+
+def predictors_requests(fake: Fake, call: Call, name: str, env: str) -> Any:
+    return ok(contract.example("environments.requests"))
+
+
+def predictors_request(
+    fake: Fake, call: Call, name: str, env: str, request_id: str
+) -> Any:
+    found = contract.example("environments.request")
+    if request_id != found["request_id"]:
+        raise Refusal(404, "NotFound", "no such request of this environment")
+    return ok(found)
 
 
 def predictors_delete(fake: Fake, call: Call, name: str) -> Any:
@@ -1503,6 +1532,7 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
     ("POST", f"{P}/experiments/{N}/runs/(\\d+)/cancel", experiments_cancel),
     ("GET", f"{P}/experiments/{N}/runs/(\\d+)/rows", experiments_rows),
     ("GET", f"{P}/experiments/{N}/runs/(\\d+)/slices", experiments_slices),
+    ("GET", f"{P}/experiments/{N}/runs/(\\d+)/telemetry", experiments_telemetry),
     ("POST", f"{P}/experiments/{N}/delete", experiments_delete),
     ("POST", f"{P}/predictors", predictors_create),
     ("GET", f"{P}/predictors", predictors_list),
@@ -1517,6 +1547,8 @@ ROUTES: list[tuple[str, str, Callable[..., Any]]] = [
         predictors_move,
     ),
     ("GET", f"{P}/predictors/{N}/environments/{N}/logs", predictors_logs),
+    ("GET", f"{P}/predictors/{N}/environments/{N}/requests", predictors_requests),
+    ("GET", f"{P}/predictors/{N}/environments/{N}/requests/{N}", predictors_request),
     ("POST", f"{P}/predictors/{N}/delete", predictors_delete),
     ("POST", f"{P}/predictors/{N}/predict", predictors_predict),
     ("POST", f"{P}/predict", predict),
