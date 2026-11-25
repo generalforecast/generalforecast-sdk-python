@@ -382,6 +382,17 @@ def experiments_slices(name: str, run: int, *, model: str | None) -> Request:
     )
 
 
+def experiments_telemetry(name: str, run: int, after: str | None = None) -> Request:
+    """Reads where a run's time goes, and its events after cursor `after`."""
+    return Request(
+        "GET",
+        f"/experiments/{_segment(name)}/runs/{run}/telemetry",
+        "experiment",
+        name,
+        params=_query(after=after),
+    )
+
+
 def experiments_delete(name: str) -> Request:
     """Deletes an experiment and its runs."""
     return Request(
@@ -468,6 +479,27 @@ def predictors_logs(name: str, env: str, params: Mapping[str, Any]) -> Request:
         "predictor",
         name,
         params=_query(**params),
+    )
+
+
+def predictors_requests(name: str, env: str) -> Request:
+    """Reads an environment's requests today."""
+    return Request(
+        "GET",
+        f"/predictors/{_segment(name)}/environments/{_segment(env)}/requests",
+        "predictor",
+        name,
+    )
+
+
+def predictors_request(name: str, env: str, request_id: str) -> Request:
+    """Reads one request of an environment."""
+    return Request(
+        "GET",
+        f"/predictors/{_segment(name)}/environments/{_segment(env)}"
+        f"/requests/{_segment(request_id)}",
+        "predictor",
+        name,
     )
 
 

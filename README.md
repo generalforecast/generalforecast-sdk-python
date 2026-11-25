@@ -54,6 +54,10 @@ gf.experiments.run(exp, models=["kumo-large"], wait=False)  # run 2, same setup
 for model in gf.experiments.watch(exp):                  # each model as it ends
     print(model.short, model.score)
 
+for said in gf.experiments.watch(exp, events=True):     # and where the time goes
+    print(said)                                          # containers, stages, rows
+gf.experiments.telemetry(exp).models[0].stages           # each phase's span
+
 p = gf.predictors.create("adult-income", context="adult",
                          model=exp.best.model, target="income")
 p.environments["production"].state                        # 'ready'
@@ -61,6 +65,9 @@ p.environments["production"].state                        # 'ready'
 out = gf.predictors.predict("adult-income", adult.drop(columns="income").head(5))
 out.to_pandas()            # label, p_<=50K, p_>50K
 out.credits                # 0.01
+
+today = gf.predictors.requests("adult-income")            # requests today, warm and cold p50
+gf.predictors.request("adult-income", today.recent[0].request_id).stages
 
 clf = gf.Classifier("tabicl-v2").fit(adult.drop(columns="income")[:26048],
                                      adult.income[:26048])

@@ -2950,6 +2950,170 @@ export interface SliceList {
   slices: Slice[];
 }
 
+/** one phase of a request or a model's run, in seconds since its origin */
+export interface TelemetrySpan {
+  stage: "start" | "load" | "encode" | "decode";
+  phase: string;
+  from: number;
+  to: number;
+  ongoing: boolean;
+}
+
+/**
+ * how a request's context was read: whole, or a core of rows every query shares; and
+ * whether its encode was a hit
+ */
+export interface TelemetryContext {
+  read: "whole" | "core";
+  rows: number;
+  encode: string | null;
+}
+
+/**
+ * the container that served a request: its GPUs, how it started and how the context was
+ * read
+ */
+export interface TelemetryContainer {
+  id: string | null;
+  gpu: string | null;
+  gpus: number | null;
+  start: string | null;
+  snapshot: string | null;
+  snapshot_seconds: number | null;
+  ready_at: number | null;
+  context: TelemetryContext | null;
+  first_rows: number | null;
+}
+
+/**
+ * one event of a run or a request, in seconds since its origin; docs/telemetry.md in
+ * gfi names each
+ */
+export interface TelemetryEvent {
+  id: number;
+  at: number;
+  level: "info" | "warn";
+  source: "plane" | "modal" | "gf-server" | "engine";
+  event: string;
+  model: string | null;
+  container: string | null;
+  request_id: string | null;
+  message: string;
+}
+
+/** one held-out row a model answered: its id, its answer and its truth */
+export interface LatestAnswer {
+  id: string | number | boolean | null;
+  label: string | number | boolean | null;
+  probabilities: Record<string, number> | null;
+  actual: string | number | boolean | null;
+  at: number | null;
+}
+
+/**
+ * the answers so far by their positive class's probability, in twentieths from 0 to 1
+ */
+export interface ProbabilityHistogram {
+  class: string | number | boolean | null;
+  counts: number[];
+}
+
+/** one model of a run: its rows, its stages and the container that served it */
+export interface ModelTelemetry {
+  model: ModelField;
+  short: string | null;
+  state: string;
+  rows: number;
+  total: number;
+  stage: string | null;
+  container: TelemetryContainer | null;
+  stages: TelemetrySpan[];
+  phases: Record<string, number>;
+  stage_seconds: Record<string, number>;
+  first_rows: number | null;
+  seconds: number | null;
+  latest?: LatestAnswer[];
+  histogram?: ProbabilityHistogram | null;
+}
+
+export interface RunTelemetry {
+  number: number;
+  state: string;
+  started: number | null;
+  now: number;
+  elapsed_seconds: number;
+  held_rows: number;
+  models: ModelTelemetry[];
+  events: TelemetryEvent[];
+  next: string;
+}
+
+/** one request as the recent requests list it */
+export interface RequestSummary {
+  request_id: string;
+  environment: string | null;
+  revision: number | null;
+  model: string | null;
+  received: number;
+  status: "answering" | "answered" | "failed";
+  code: string | null;
+  rows: number | null;
+  start: string | null;
+  context_encode: string | null;
+  container: string | null;
+  gpu: string | null;
+  gpus: number | null;
+  first_row_seconds: number | null;
+  latency_seconds: number | null;
+  seconds: number | null;
+}
+
+export interface RequestsToday {
+  day: string;
+  requests: number;
+  warm_p50_seconds: number | null;
+  cold_p50_seconds: number | null;
+  cold_starts: number;
+  containers: number;
+  containers_state: string | null;
+  recent: RequestSummary[];
+}
+
+/**
+ * one row of a request's answer, as the answer holds it, and when it came in seconds
+ * since the request
+ */
+export interface RowBack {
+  row: Record<string, unknown>;
+  at: number | null;
+}
+
+export interface RequestTelemetry {
+  request_id: string;
+  kind: "predictor" | "experiment";
+  subject: string;
+  environment: string | null;
+  revision: number | null;
+  model: string | null;
+  received: number;
+  status: "answering" | "answered" | "failed";
+  code: string | null;
+  rows: number | null;
+  rows_done: number;
+  start: string | null;
+  context_encode: string | null;
+  container: TelemetryContainer;
+  gpu: string | null;
+  gpus: number | null;
+  first_row_seconds: number | null;
+  latency_seconds: number | null;
+  seconds: number | null;
+  stage: string | null;
+  stages: TelemetrySpan[];
+  events: TelemetryEvent[];
+  rows_back: RowBack[] | null;
+}
+
 /** the held-out rows with one model's predictions beside them */
 export interface HeldRows {
   model: ModelField;
@@ -3137,6 +3301,18 @@ export interface SliceListReply extends Envelope {
   result: SliceList;
 }
 
+export interface RunTelemetryReply extends Envelope {
+  result: RunTelemetry;
+}
+
+export interface RequestsTodayReply extends Envelope {
+  result: RequestsToday;
+}
+
+export interface RequestTelemetryReply extends Envelope {
+  result: RequestTelemetry;
+}
+
 export interface HeldRowsReply extends Envelope {
   result: HeldRows;
 }
@@ -3220,6 +3396,8 @@ export const ROUTES = {
   "environments.metrics": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/metrics", request: "null", reply: "MetricsReply", body: null },
   "environments.logs": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs", request: "null", reply: "LogsReply", body: null },
   "environments.logs.histogram": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/logs/histogram", request: "null", reply: "LogHistogramReply", body: null },
+  "environments.requests": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/requests", request: "null", reply: "RequestsTodayReply", body: null },
+  "environments.request": { method: "GET", path: "/v1/projects/{project}/predictors/{name}/environments/{environment}/requests/{request_id}", request: "null", reply: "RequestTelemetryReply", body: null },
   "predictors.delete": { method: "POST", path: "/v1/projects/{project}/predictors/{name}/delete", request: "EmptyRequest", reply: "PredictorDeletedReply", body: "application/json" },
   "contexts.list": { method: "GET", path: "/v1/projects/{project}/contexts", request: "null", reply: "ContextListReply", body: null },
   "contexts.create": { method: "POST", path: "/v1/projects/{project}/contexts", request: "ContextCreateRequest", reply: "ContextReply", body: "application/json" },
@@ -3243,6 +3421,7 @@ export const ROUTES = {
   "experiments.cancel": { method: "POST", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/cancel", request: "EmptyRequest", reply: "ExperimentRunReply", body: "application/json" },
   "experiments.rows": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/rows", request: "null", reply: "HeldRowsReply", body: null },
   "experiments.slices": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/slices", request: "null", reply: "SliceListReply", body: null },
+  "experiments.telemetry": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/runs/{number}/telemetry", request: "null", reply: "RunTelemetryReply", body: null },
   "experiments.delete": { method: "POST", path: "/v1/projects/{project}/experiments/{name}/delete", request: "EmptyRequest", reply: "DeletedReply", body: "application/json" },
   "experiments.code": { method: "GET", path: "/v1/projects/{project}/experiments/{name}/code", request: "null", reply: "CodeReply", body: null },
   "predictors.list": { method: "GET", path: "/v1/projects/{project}/predictors", request: "null", reply: "PredictorInfoListReply", body: null },

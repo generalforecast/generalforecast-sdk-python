@@ -7782,6 +7782,358 @@ class SliceList(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class TelemetrySpan(Payload):
+    """One phase of a request or a model's run, in seconds since its origin."""
+
+    stage: Literal["start", "load", "encode", "decode"]
+    phase: str
+    from_: float
+    to: float
+    ongoing: bool
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("stage", "stage", True, _literal("start", "load", "encode", "decode")),
+        Field("phase", "phase", True, _text),
+        Field("from", "from_", True, _number),
+        Field("to", "to", True, _number),
+        Field("ongoing", "ongoing", True, _boolean),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class TelemetryContext(Payload):
+    """The TelemetryContext schema.
+
+    how a request's context was read: whole, or a core of rows every query shares; and
+    whether its encode was a hit
+    """
+
+    read: Literal["whole", "core"]
+    rows: int
+    encode: str | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("read", "read", True, _literal("whole", "core")),
+        Field("rows", "rows", True, _integer),
+        Field("encode", "encode", True, _union(_text, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class TelemetryContainer(Payload):
+    """The TelemetryContainer schema.
+
+    the container that served a request: its GPUs, how it started and how the context
+    was read
+    """
+
+    id: str | None
+    gpu: str | None
+    gpus: int | None
+    start: str | None
+    snapshot: str | None
+    snapshot_seconds: float | None
+    ready_at: float | None
+    context: TelemetryContext | None
+    first_rows: float | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("id", "id", True, _union(_text, _null)),
+        Field("gpu", "gpu", True, _union(_text, _null)),
+        Field("gpus", "gpus", True, _union(_integer, _null)),
+        Field("start", "start", True, _union(_text, _null)),
+        Field("snapshot", "snapshot", True, _union(_text, _null)),
+        Field("snapshot_seconds", "snapshot_seconds", True, _union(_number, _null)),
+        Field("ready_at", "ready_at", True, _union(_number, _null)),
+        Field("context", "context", True, _union(_record(TelemetryContext), _null)),
+        Field("first_rows", "first_rows", True, _union(_number, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class TelemetryEvent(Payload):
+    """The TelemetryEvent schema.
+
+    one event of a run or a request, in seconds since its origin; docs/telemetry.md in
+    gfi names each
+    """
+
+    id: int
+    at: float
+    level: Literal["info", "warn"]
+    source: Literal["plane", "modal", "gf-server", "engine"]
+    event: str
+    model: str | None
+    container: str | None
+    request_id: str | None
+    message: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("id", "id", True, _integer),
+        Field("at", "at", True, _number),
+        Field("level", "level", True, _literal("info", "warn")),
+        Field(
+            "source",
+            "source",
+            True,
+            _literal("plane", "modal", "gf-server", "engine"),
+        ),
+        Field("event", "event", True, _text),
+        Field("model", "model", True, _union(_text, _null)),
+        Field("container", "container", True, _union(_text, _null)),
+        Field("request_id", "request_id", True, _union(_text, _null)),
+        Field("message", "message", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class LatestAnswer(Payload):
+    """One held-out row a model answered: its id, its answer and its truth."""
+
+    id: str | float | bool | None
+    label: str | float | bool | None
+    probabilities: dict[str, float] | None
+    actual: str | float | bool | None
+    at: float | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("id", "id", True, _union(_text, _number, _boolean, _null)),
+        Field("label", "label", True, _union(_text, _number, _boolean, _null)),
+        Field("probabilities", "probabilities", True, _union(_mapping(_number), _null)),
+        Field("actual", "actual", True, _union(_text, _number, _boolean, _null)),
+        Field("at", "at", True, _union(_number, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProbabilityHistogram(Payload):
+    """The ProbabilityHistogram schema.
+
+    the answers so far by their positive class's probability, in twentieths from 0 to 1
+    """
+
+    class_: str | float | bool | None
+    counts: tuple[int, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("class", "class_", True, _union(_text, _number, _boolean, _null)),
+        Field("counts", "counts", True, _items(_integer)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelTelemetry(Payload):
+    """One model of a run: its rows, its stages and the container that served it."""
+
+    model: ModelField
+    short: str | None
+    state: str
+    rows: int
+    total: int
+    stage: str | None
+    container: TelemetryContainer | None
+    stages: tuple[TelemetrySpan, ...]
+    phases: dict[str, float]
+    stage_seconds: dict[str, float]
+    first_rows: float | None
+    seconds: float | None
+    latest: tuple[LatestAnswer, ...] | None = None
+    histogram: ProbabilityHistogram | None = None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("model", "model", True, _decode_ModelField),
+        Field("short", "short", True, _union(_text, _null)),
+        Field("state", "state", True, _text),
+        Field("rows", "rows", True, _integer),
+        Field("total", "total", True, _integer),
+        Field("stage", "stage", True, _union(_text, _null)),
+        Field(
+            "container",
+            "container",
+            True,
+            _union(_record(TelemetryContainer), _null),
+        ),
+        Field("stages", "stages", True, _items(_record(TelemetrySpan))),
+        Field("phases", "phases", True, _mapping(_number)),
+        Field("stage_seconds", "stage_seconds", True, _mapping(_number)),
+        Field("first_rows", "first_rows", True, _union(_number, _null)),
+        Field("seconds", "seconds", True, _union(_number, _null)),
+        Field("latest", "latest", False, _items(_record(LatestAnswer))),
+        Field(
+            "histogram",
+            "histogram",
+            False,
+            _union(_record(ProbabilityHistogram), _null),
+        ),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunTelemetry(Payload):
+    """The RunTelemetry schema."""
+
+    number: int
+    state: str
+    started: float | None
+    now: float
+    elapsed_seconds: float
+    held_rows: int
+    models: tuple[ModelTelemetry, ...]
+    events: tuple[TelemetryEvent, ...]
+    next: str
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("number", "number", True, _integer),
+        Field("state", "state", True, _text),
+        Field("started", "started", True, _union(_number, _null)),
+        Field("now", "now", True, _number),
+        Field("elapsed_seconds", "elapsed_seconds", True, _number),
+        Field("held_rows", "held_rows", True, _integer),
+        Field("models", "models", True, _items(_record(ModelTelemetry))),
+        Field("events", "events", True, _items(_record(TelemetryEvent))),
+        Field("next", "next", True, _text),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RequestSummary(Payload):
+    """One request as the recent requests list it."""
+
+    request_id: str
+    environment: str | None
+    revision: int | None
+    model: str | None
+    received: float
+    status: Literal["answering", "answered", "failed"]
+    code: str | None
+    rows: int | None
+    start: str | None
+    context_encode: str | None
+    container: str | None
+    gpu: str | None
+    gpus: int | None
+    first_row_seconds: float | None
+    latency_seconds: float | None
+    seconds: float | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("request_id", "request_id", True, _text),
+        Field("environment", "environment", True, _union(_text, _null)),
+        Field("revision", "revision", True, _union(_integer, _null)),
+        Field("model", "model", True, _union(_text, _null)),
+        Field("received", "received", True, _number),
+        Field("status", "status", True, _literal("answering", "answered", "failed")),
+        Field("code", "code", True, _union(_text, _null)),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("start", "start", True, _union(_text, _null)),
+        Field("context_encode", "context_encode", True, _union(_text, _null)),
+        Field("container", "container", True, _union(_text, _null)),
+        Field("gpu", "gpu", True, _union(_text, _null)),
+        Field("gpus", "gpus", True, _union(_integer, _null)),
+        Field("first_row_seconds", "first_row_seconds", True, _union(_number, _null)),
+        Field("latency_seconds", "latency_seconds", True, _union(_number, _null)),
+        Field("seconds", "seconds", True, _union(_number, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RequestsToday(Payload):
+    """The RequestsToday schema."""
+
+    day: str
+    requests: int
+    warm_p50_seconds: float | None
+    cold_p50_seconds: float | None
+    cold_starts: int
+    containers: int
+    containers_state: str | None
+    recent: tuple[RequestSummary, ...]
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("day", "day", True, _text),
+        Field("requests", "requests", True, _integer),
+        Field("warm_p50_seconds", "warm_p50_seconds", True, _union(_number, _null)),
+        Field("cold_p50_seconds", "cold_p50_seconds", True, _union(_number, _null)),
+        Field("cold_starts", "cold_starts", True, _integer),
+        Field("containers", "containers", True, _integer),
+        Field("containers_state", "containers_state", True, _union(_text, _null)),
+        Field("recent", "recent", True, _items(_record(RequestSummary))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RowBack(Payload):
+    """The RowBack schema.
+
+    one row of a request's answer, as the answer holds it, and when it came in seconds
+    since the request
+    """
+
+    row: dict[str, Any]
+    at: float | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("row", "row", True, _mapping(_any)),
+        Field("at", "at", True, _union(_number, _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RequestTelemetry(Payload):
+    """The RequestTelemetry schema."""
+
+    request_id: str
+    kind: Literal["predictor", "experiment"]
+    subject: str
+    environment: str | None
+    revision: int | None
+    model: str | None
+    received: float
+    status: Literal["answering", "answered", "failed"]
+    code: str | None
+    rows: int | None
+    rows_done: int
+    start: str | None
+    context_encode: str | None
+    container: TelemetryContainer
+    gpu: str | None
+    gpus: int | None
+    first_row_seconds: float | None
+    latency_seconds: float | None
+    seconds: float | None
+    stage: str | None
+    stages: tuple[TelemetrySpan, ...]
+    events: tuple[TelemetryEvent, ...]
+    rows_back: tuple[RowBack, ...] | None
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("request_id", "request_id", True, _text),
+        Field("kind", "kind", True, _literal("predictor", "experiment")),
+        Field("subject", "subject", True, _text),
+        Field("environment", "environment", True, _union(_text, _null)),
+        Field("revision", "revision", True, _union(_integer, _null)),
+        Field("model", "model", True, _union(_text, _null)),
+        Field("received", "received", True, _number),
+        Field("status", "status", True, _literal("answering", "answered", "failed")),
+        Field("code", "code", True, _union(_text, _null)),
+        Field("rows", "rows", True, _union(_integer, _null)),
+        Field("rows_done", "rows_done", True, _integer),
+        Field("start", "start", True, _union(_text, _null)),
+        Field("context_encode", "context_encode", True, _union(_text, _null)),
+        Field("container", "container", True, _record(TelemetryContainer)),
+        Field("gpu", "gpu", True, _union(_text, _null)),
+        Field("gpus", "gpus", True, _union(_integer, _null)),
+        Field("first_row_seconds", "first_row_seconds", True, _union(_number, _null)),
+        Field("latency_seconds", "latency_seconds", True, _union(_number, _null)),
+        Field("seconds", "seconds", True, _union(_number, _null)),
+        Field("stage", "stage", True, _union(_text, _null)),
+        Field("stages", "stages", True, _items(_record(TelemetrySpan))),
+        Field("events", "events", True, _items(_record(TelemetryEvent))),
+        Field("rows_back", "rows_back", True, _union(_items(_record(RowBack)), _null)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class HeldRows(Payload):
     """The held-out rows with one model's predictions beside them."""
 
@@ -8350,6 +8702,63 @@ class SliceListReply(Payload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class RunTelemetryReply(Payload):
+    """The RunTelemetryReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: RunTelemetry
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(RunTelemetry)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RequestsTodayReply(Payload):
+    """The RequestsTodayReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: RequestsToday
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(RequestsToday)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RequestTelemetryReply(Payload):
+    """The RequestTelemetryReply schema."""
+
+    api_version: Literal["gf/v1"] = "gf/v1"
+    project: Name
+    request_id: str
+    resource: Resource
+    result: RequestTelemetry
+
+    FIELDS: ClassVar[tuple[Field, ...]] = (
+        Field("api_version", "api_version", True, _literal("gf/v1")),
+        Field("project", "project", True, _decode_Name),
+        Field("request_id", "request_id", True, _pattern("^[\\x20-\\x7e]+$")),
+        Field("resource", "resource", True, _record(Resource)),
+        Field("result", "result", True, _record(RequestTelemetry)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class HeldRowsReply(Payload):
     """The HeldRowsReply schema."""
 
@@ -8773,6 +9182,22 @@ ROUTES: tuple[Route, ...] = (
         None,
     ),
     Route(
+        "environments.requests",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/requests",
+        None,
+        RequestsTodayReply,
+        None,
+    ),
+    Route(
+        "environments.request",
+        "GET",
+        "/v1/projects/{project}/predictors/{name}/environments/{environment}/requests/{request_id}",
+        None,
+        RequestTelemetryReply,
+        None,
+    ),
+    Route(
         "predictors.delete",
         "POST",
         "/v1/projects/{project}/predictors/{name}/delete",
@@ -8954,6 +9379,14 @@ ROUTES: tuple[Route, ...] = (
         "/v1/projects/{project}/experiments/{name}/runs/{number}/slices",
         None,
         SliceListReply,
+        None,
+    ),
+    Route(
+        "experiments.telemetry",
+        "GET",
+        "/v1/projects/{project}/experiments/{name}/runs/{number}/telemetry",
+        None,
+        RunTelemetryReply,
         None,
     ),
     Route(

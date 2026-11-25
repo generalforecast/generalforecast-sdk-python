@@ -867,6 +867,105 @@ paths:
                         - {at: 1795032000.0, info: 3, warn: 0, error: 0}
                         - {at: 1795033800.0, info: 12, warn: 1, error: 0}
 
+  /v1/projects/{project}/predictors/{name}/environments/{environment}/requests:
+    get:
+      operationId: environments.requests
+      tags: [hosted]
+      summary: "an environment's requests today: their figures and the most recent"
+      description: |
+        Today's requests, in UTC: how many, the median latency of those
+        answered on a warm container and of those that waited on a cold
+        start, the cold starts, the containers up and whether one is still
+        starting, and the 20 most recent, newest first.
+      parameters:
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/predictor"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: today's requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestsTodayReply"
+              examples:
+                read:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-23cb8b3e6455f1f17324abe1a65948b6
+                    resource: {kind: predictor, name: churn}
+                    result:
+                      day: "2026-11-25"
+                      requests: 214
+                      warm_p50_seconds: 0.31
+                      cold_p50_seconds: 11.2
+                      cold_starts: 3
+                      containers: 1
+                      containers_state: starting
+                      recent:
+                      - {request_id: req_52b90d1e, environment: production, revision: 3, model: general-forecast/kumo-tabular-medium-classifier, received: 1795564915.0, status: answered, code: null, rows: 250, start: warm, context_encode: hit, container: m2c8, gpu: H100, gpus: 4, first_row_seconds: 0.21, latency_seconds: 0.29, seconds: 0.29}
+  /v1/projects/{project}/predictors/{name}/environments/{environment}/requests/{request_id}:
+    get:
+      operationId: environments.request
+      tags: [hosted]
+      summary: "one request: its stages, its container, its events and its rows back"
+      description: |
+        Its stages in seconds since it was received, the container that
+        served it and how it started, and its events in that order. Its
+        latest rows back, newest first, are held in memory a short while and
+        given to a caller with `contexts:history` alone; `null` to any other.
+      parameters:
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/predictor"
+        - $ref: "#/components/parameters/environment"
+        - name: request_id
+          in: path
+          required: true
+          description: the request's id
+          schema: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        "200":
+          description: the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestTelemetryReply"
+              examples:
+                read:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-23cb8b3e6455f1f17324abe1a65948b6
+                    resource: {kind: predictor, name: churn}
+                    result:
+                      request_id: req_7c41e2a9
+                      kind: predictor
+                      subject: churn
+                      environment: production
+                      revision: 3
+                      model: general-forecast/kumo-tabular-medium-classifier
+                      received: 1795571527.0
+                      status: answering
+                      code: null
+                      rows: 1000
+                      rows_done: 412
+                      start: cold
+                      context_encode: encoded
+                      gpu: H100
+                      gpus: 4
+                      first_row_seconds: null
+                      latency_seconds: null
+                      seconds: 10.4
+                      stage: decode
+                      container: {id: q7n4, gpu: H100, gpus: 4, start: cold, snapshot: restored, snapshot_seconds: 2.5, ready_at: 7.6, context: {read: whole, rows: 81413, encode: encoded}, first_rows: 10.0}
+                      stages:
+                      - {stage: start, phase: schedule, from: 0.1, to: 1.7, ongoing: false}
+                      - {stage: decode, phase: decode, from: 9.9, to: 10.4, ongoing: true}
+                      events:
+                      - {id: 1, at: 0.0, level: info, source: plane, event: request, model: null, container: null, request_id: req_7c41e2a9, message: "Request req_7c41e2a9, 1,000 rows, production r3"}
+                      rows_back:
+                      - {row: {customer_id: c1042, label: "no", probabilities: {"no": 0.92, "yes": 0.08}}, at: 10.4}
   /v1/projects/{project}/predictors/{name}/delete:
     post:
       operationId: predictors.delete
@@ -2684,6 +2783,70 @@ paths:
                     result:
                       slices:
                       - {column: marital_status, value: Never-married, rows: 2140, score: 0.884, delta: -0.047}
+  /v1/projects/{project}/experiments/{name}/runs/{number}/telemetry:
+    get:
+      operationId: experiments.telemetry
+      tags: [hosted]
+      summary: "where a run's time goes: its models' stages and containers, and its events"
+      description: |
+        Each model's state, its rows answered of its held-out rows, the stage
+        it is in, its stages in seconds since the run started, the container
+        that served it, its seconds by phase and by stage, and the run's
+        events after the cursor `after`, oldest first, with the cursor past
+        them as `next`. Read it again with `after` set to `next` while the run
+        goes. With `contexts:history` too, a model still scoring adds its
+        latest answers and, for two classes, how its positive class's
+        probability spreads, in twentieths.
+      parameters:
+      - $ref: "#/components/parameters/project"
+      - $ref: "#/components/parameters/experiment"
+      - $ref: "#/components/parameters/number"
+      - name: after
+        in: query
+        required: false
+        description: a cursor, a reply's `next`; the events after it
+        schema: {type: string, pattern: "^[0-9]{1,9}$"}
+      responses:
+        "200":
+          description: the run's telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunTelemetryReply"
+              examples:
+                read:
+                  value:
+                    api_version: gf/v1
+                    project: acme
+                    request_id: r-23cb8b3e6455f1f17324abe1a65948b6
+                    resource: {kind: experiment, name: adult-income}
+                    result:
+                      number: 4
+                      state: running
+                      started: 1795571530.2
+                      now: 1795571544.2
+                      elapsed_seconds: 14.0
+                      held_rows: 6513
+                      next: "23"
+                      models:
+                      - model: general-forecast/kumo-tabular-medium-classifier
+                        short: kumo-medium
+                        state: running
+                        rows: 4096
+                        total: 6513
+                        stage: decode
+                        seconds: 13.8
+                        first_rows: 8.6
+                        container: {id: k3f9, gpu: H100, gpus: 4, start: warm, snapshot: null, snapshot_seconds: null, ready_at: 0.0, context: {read: whole, rows: 26048, encode: hit}, first_rows: 8.6}
+                        stages:
+                        - {stage: encode, phase: encode_prepare, from: 0.3, to: 1.4, ongoing: false}
+                        - {stage: encode, phase: fit, from: 1.4, to: 2.0, ongoing: false}
+                        - {stage: encode, phase: encode, from: 2.0, to: 7.9, ongoing: false}
+                        - {stage: decode, phase: decode, from: 7.9, to: 14.0, ongoing: true}
+                        phases: {schedule: 0, snapshot: 0, boot: 0, load: 0, encode_prepare: 1.1, fit: 0.6, encode: 5.9, decode: 6.1}
+                        stage_seconds: {start: 0, load: 0, encode: 7.6, decode: 6.1}
+                      events:
+                      - {id: 22, at: 11.0, level: info, source: plane, event: rows, model: general-forecast/kumo-tabular-medium-classifier, container: null, request_id: r-5f0e, message: "4,096 of 6,513 rows"}
   /v1/projects/{project}/experiments/{name}/delete:
     post:
       operationId: experiments.delete
@@ -13716,6 +13879,213 @@ components:
           items:
             $ref: "#/components/schemas/Slice"
 
+    TelemetrySpan:
+      type: object
+      description: "one phase of a request or a model's run, in seconds since its origin"
+      required: [stage, phase, from, to, ongoing]
+      additionalProperties: false
+      properties:
+        stage: {type: string, enum: [start, load, encode, decode]}
+        phase: {type: string, description: "schedule, snapshot, boot, load, encode_prepare, fit, encode or decode"}
+        from: {type: number}
+        to: {type: number}
+        ongoing: {type: boolean, description: "under way; its `to` is now"}
+
+    TelemetryContainer:
+      type: object
+      description: "the container that served a request: its GPUs, how it started and how the context was read"
+      required: [id, gpu, gpus, start, snapshot, snapshot_seconds, ready_at, context, first_rows]
+      additionalProperties: false
+      properties:
+        id: {type: [string, "null"], description: "the container's short name"}
+        gpu: {type: [string, "null"]}
+        gpus: {type: [integer, "null"]}
+        start: {type: [string, "null"], description: "cold or warm"}
+        snapshot: {type: [string, "null"], description: "restoring, restored, creating or created"}
+        snapshot_seconds: {type: [number, "null"]}
+        ready_at: {type: [number, "null"], description: "seconds since the origin it was ready at"}
+        context:
+          oneOf:
+          - $ref: "#/components/schemas/TelemetryContext"
+          - type: "null"
+        first_rows: {type: [number, "null"]}
+
+    TelemetryContext:
+      type: object
+      description: "how a request's context was read: whole, or a core of rows every query shares; and whether its encode was a hit"
+      required: [read, rows, encode]
+      additionalProperties: false
+      properties:
+        read: {type: string, enum: [whole, core]}
+        rows: {type: integer}
+        encode: {type: [string, "null"], description: "hit (on the container's GPU already), adopted (from the shared store) or encoded (in the call)"}
+
+    TelemetryEvent:
+      type: object
+      description: "one event of a run or a request, in seconds since its origin; docs/telemetry.md in gfi names each"
+      required: [id, at, level, source, event, model, container, request_id, message]
+      additionalProperties: false
+      properties:
+        id: {type: integer}
+        at: {type: number}
+        level: {type: string, enum: [info, warn]}
+        source: {type: string, enum: [plane, modal, gf-server, engine]}
+        event: {type: string}
+        model: {type: [string, "null"]}
+        container: {type: [string, "null"]}
+        request_id: {type: [string, "null"]}
+        message: {type: string}
+
+    ModelTelemetry:
+      type: object
+      description: "one model of a run: its rows, its stages and the container that served it"
+      required: [model, short, state, rows, total, stage, container, stages, phases, stage_seconds, first_rows, seconds]
+      additionalProperties: false
+      properties:
+        model: {$ref: "#/components/schemas/ModelField"}
+        short: {type: [string, "null"]}
+        state: {type: string}
+        rows: {type: integer}
+        total: {type: integer}
+        stage: {type: [string, "null"], description: "start, load, encode or decode; null once ended"}
+        container:
+          oneOf:
+          - $ref: "#/components/schemas/TelemetryContainer"
+          - type: "null"
+        stages: {type: array, items: {$ref: "#/components/schemas/TelemetrySpan"}}
+        phases: {type: object, additionalProperties: {type: number}}
+        stage_seconds: {type: object, additionalProperties: {type: number}}
+        first_rows: {type: [number, "null"]}
+        seconds: {type: [number, "null"]}
+        latest:
+          type: array
+          description: "a scoring model's latest answers, newest first, to a caller with contexts:history"
+          items: {$ref: "#/components/schemas/LatestAnswer"}
+        histogram:
+          oneOf:
+          - $ref: "#/components/schemas/ProbabilityHistogram"
+          - type: "null"
+
+    LatestAnswer:
+      type: object
+      description: "one held-out row a model answered: its id, its answer and its truth"
+      required: [id, label, probabilities, actual, at]
+      additionalProperties: false
+      properties:
+        id: {type: [string, number, boolean, "null"]}
+        label: {type: [string, number, boolean, "null"]}
+        probabilities:
+          oneOf:
+          - type: object
+            additionalProperties: {type: number}
+          - type: "null"
+        actual: {type: [string, number, boolean, "null"]}
+        at: {type: [number, "null"]}
+
+    ProbabilityHistogram:
+      type: object
+      description: "the answers so far by their positive class's probability, in twentieths from 0 to 1"
+      required: [class, counts]
+      additionalProperties: false
+      properties:
+        class: {type: [string, number, boolean, "null"]}
+        counts: {type: array, items: {type: integer}}
+
+    RunTelemetry:
+      type: object
+      required: [number, state, started, now, elapsed_seconds, held_rows, models, events, next]
+      additionalProperties: false
+      properties:
+        number: {type: integer}
+        state: {type: string}
+        started: {type: [number, "null"]}
+        now: {type: number}
+        elapsed_seconds: {type: number}
+        held_rows: {type: integer}
+        models: {type: array, items: {$ref: "#/components/schemas/ModelTelemetry"}}
+        events: {type: array, items: {$ref: "#/components/schemas/TelemetryEvent"}}
+        next: {type: string}
+
+    RequestSummary:
+      type: object
+      description: "one request as the recent requests list it"
+      required: [request_id, environment, revision, model, received, status, code, rows, start, context_encode, container, gpu, gpus, first_row_seconds, latency_seconds, seconds]
+      additionalProperties: false
+      properties:
+        request_id: {type: string}
+        environment: {type: [string, "null"]}
+        revision: {type: [integer, "null"]}
+        model: {type: [string, "null"]}
+        received: {type: number}
+        status: {type: string, enum: [answering, answered, failed]}
+        code: {type: [string, "null"]}
+        rows: {type: [integer, "null"]}
+        start: {type: [string, "null"], description: "cold or warm"}
+        context_encode: {type: [string, "null"], description: "hit, adopted or encoded: how its context's encode came"}
+        container: {type: [string, "null"]}
+        gpu: {type: [string, "null"]}
+        gpus: {type: [integer, "null"]}
+        first_row_seconds: {type: [number, "null"]}
+        latency_seconds: {type: [number, "null"]}
+        seconds: {type: [number, "null"]}
+
+    RequestsToday:
+      type: object
+      required: [day, requests, warm_p50_seconds, cold_p50_seconds, cold_starts, containers, containers_state, recent]
+      additionalProperties: false
+      properties:
+        day: {type: string}
+        requests: {type: integer}
+        warm_p50_seconds: {type: [number, "null"]}
+        cold_p50_seconds: {type: [number, "null"]}
+        cold_starts: {type: integer}
+        containers: {type: integer}
+        containers_state: {type: [string, "null"], description: "starting while one starts, else ready; null with none up"}
+        recent: {type: array, items: {$ref: "#/components/schemas/RequestSummary"}}
+
+    RequestTelemetry:
+      type: object
+      required: [request_id, kind, subject, environment, revision, model, received, status, code, rows, rows_done, start, context_encode, container, gpu, gpus, first_row_seconds, latency_seconds, seconds, stage, stages, events, rows_back]
+      additionalProperties: false
+      properties:
+        request_id: {type: string}
+        kind: {type: string, enum: [predictor, experiment]}
+        subject: {type: string}
+        environment: {type: [string, "null"]}
+        revision: {type: [integer, "null"]}
+        model: {type: [string, "null"]}
+        received: {type: number}
+        status: {type: string, enum: [answering, answered, failed]}
+        code: {type: [string, "null"]}
+        rows: {type: [integer, "null"]}
+        rows_done: {type: integer}
+        start: {type: [string, "null"], description: "cold or warm"}
+        context_encode: {type: [string, "null"], description: "hit, adopted or encoded: how its context's encode came"}
+        container: {$ref: "#/components/schemas/TelemetryContainer"}
+        gpu: {type: [string, "null"]}
+        gpus: {type: [integer, "null"]}
+        first_row_seconds: {type: [number, "null"]}
+        latency_seconds: {type: [number, "null"]}
+        seconds: {type: [number, "null"]}
+        stage: {type: [string, "null"], description: "start, load, encode or decode; null once ended"}
+        stages: {type: array, items: {$ref: "#/components/schemas/TelemetrySpan"}}
+        events: {type: array, items: {$ref: "#/components/schemas/TelemetryEvent"}}
+        rows_back:
+          description: "its latest rows back, newest first, each with when it came in seconds since the request; null without contexts:history"
+          oneOf:
+          - type: array
+            items: {$ref: "#/components/schemas/RowBack"}
+          - type: "null"
+
+    RowBack:
+      type: object
+      description: "one row of a request's answer, as the answer holds it, and when it came in seconds since the request"
+      required: [row, at]
+      additionalProperties: false
+      properties:
+        row: {type: object}
+        at: {type: [number, "null"]}
+
     HeldRows:
       type: object
       description: "the held-out rows with one model's predictions beside them"
@@ -14273,6 +14643,33 @@ components:
         properties:
           result:
             $ref: "#/components/schemas/SliceList"
+
+    RunTelemetryReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/RunTelemetry"
+
+    RequestsTodayReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/RequestsToday"
+
+    RequestTelemetryReply:
+      allOf:
+      - $ref: "#/components/schemas/Envelope"
+      - type: object
+        required: [result]
+        properties:
+          result:
+            $ref: "#/components/schemas/RequestTelemetry"
 
     HeldRowsReply:
       allOf:
