@@ -155,14 +155,12 @@ export interface Selection {
 export type ModelField = ModelId | ModelName;
 
 /**
- * what a call's float32 matrix multiplies run at. `fast` lets them take TensorFloat-32
- * where the GPU has it; `exact` keeps them float32 and is priced higher. `fast_half` is
- * experimental, priced as `fast` and kept for measuring alone: fast's matrix multiplies
- * with half-precision attention (float16 cuDNN on a GPU). It becomes `fast` or goes
- * once measured. A context is fit and encoded apart at each, so an answer at one never
- * reads what another computed. A result says the precision it ran at.
+ * what a call runs at. `fast` lets its float32 matrix multiplies take TensorFloat-32
+ * and its attention float16 where the GPU has them; `exact` keeps both float32 and is
+ * priced higher. A context is fit and encoded apart at each, so an answer at one never
+ * reads what the other computed. A result says the precision it ran at.
  */
-export type Precision = "fast" | "exact" | "fast_half";
+export type Precision = "fast" | "exact";
 
 /** a context the service holds by its digest */
 export interface SnapshotReference {

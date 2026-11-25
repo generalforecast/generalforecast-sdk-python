@@ -487,8 +487,8 @@ ModelField = ModelId | ModelName
 _decode_ModelField: Decoder = _union(_decode_ModelId, _decode_ModelName)
 
 
-Precision = Literal["fast", "exact", "fast_half"]
-_decode_Precision: Decoder = _literal("fast", "exact", "fast_half")
+Precision = Literal["fast", "exact"]
+_decode_Precision: Decoder = _literal("fast", "exact")
 
 
 @dataclass(frozen=True, kw_only=True)

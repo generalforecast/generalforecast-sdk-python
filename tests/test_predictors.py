@@ -210,9 +210,5 @@ def test_predict_runs_at_the_precision_asked_and_says_it(adult):
     # Fast is the service's default, so only exact is named.
     assert sent == [{}, {"precision": "exact"}]
     assert (fast.precision, exact.precision) == ("fast", "exact")
-    # The experimental `fast_half` goes as asked.
-    gf.predictors.predict("adult-income", queries, precision="fast_half")
-    last = adult.calls_to("POST", r".*/predictors/adult-income/predict")[-1]
-    assert last.envelope["payload"] == {"precision": "fast_half"}
     with pytest.raises(gf.InvalidInput, match="precision is fast or exact"):
         gf.predictors.predict("adult-income", queries, precision="tf32")  # type: ignore[arg-type]

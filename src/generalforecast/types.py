@@ -86,11 +86,9 @@ __all__ = [
 ]
 
 Task = Literal["classification", "regression", "forecast"]
-# What a call's float32 matrix multiplies run at: `fast` lets them take
-# TensorFloat-32 on the GPU, `exact` keeps them float32 and costs more.
-# `fast_half` is experimental, for measuring alone: fast with half-precision
-# attention, billed as fast, which becomes `fast` or goes once measured.
-Precision = Literal["fast", "exact", "fast_half"]
+# What a call runs at: `fast` lets its matrix multiplies take TensorFloat-32
+# and its attention float16 on the GPU, `exact` keeps both float32 and costs more.
+Precision = Literal["fast", "exact"]
 ColumnType = Literal["number", "category", "text", "boolean", "date", "timestamp"]
 SourceKind = Literal["bigquery", "gcs", "snowflake", "databricks", "s3", "postgres"]
 TASKS: tuple[str, ...] = typing.get_args(Task)
