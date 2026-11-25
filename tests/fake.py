@@ -635,11 +635,16 @@ def _entries(models: list[str]) -> list[dict[str, Any]]:
 
 
 def _run(
-    fake: Fake, experiment: str, number: int, models: list[str], state: str
+    fake: Fake,
+    experiment: str,
+    number: int,
+    models: list[str],
+    state: str,
+    precision: str = "fast",
 ) -> dict[str, Any]:
     return {
         "experiment": experiment, "number": number, "state": state, "stale": False,
-        "models": [entry(m)["name"] for m in models], "metric": "auroc", "lower_is_better": False,
+        "models": [entry(m)["name"] for m in models], "precision": precision, "metric": "auroc", "lower_is_better": False,
         "held_rows": 6513, "context_rows": 26048, "repeats": 1,
         "leaderboard": [dict(e, state="queued", score=None, interval=None) for e in _entries(models)],
         "rows": 0, "credits": 0.0, "usd": 0.0, "created": NOW, "started": None, "finished": None,
@@ -684,6 +689,7 @@ def experiments_create(fake: Fake, call: Call) -> Any:
                       hint="a similar column exists: `income`", param="target")  # fmt: skip
     task = payload.get("task") or "classification"
     models = payload.pop("models", None) or RECOMMENDED[task]
+    precision = payload.pop("precision", "fast")
     if payload.pop("dry_run", False):
         return ok({"setup": payload, "estimate": {"calls": 6, "rows": 19539, "credits": 39.1, "usd": 0.0391},
                    "warnings": []})  # fmt: skip
@@ -697,7 +703,7 @@ def experiments_create(fake: Fake, call: Call) -> Any:
         "holdout": payload.get("holdout") or {"kind": "random", "fraction": 0.2},
         "metric": "auroc", "origin": origin(), "created": NOW, "updated": NOW,
         "url": fake.link(f"experiments/{name}"),
-        "_runs": [_run(fake, name, 1, models, "queued")], "_setup": payload,
+        "_runs": [_run(fake, name, 1, models, "queued", precision)], "_setup": payload,
     }  # fmt: skip
     out = _experiment_json(fake, name, 1)
     return ok(out)
@@ -741,7 +747,14 @@ def experiments_update(fake: Fake, call: Call, name: str) -> Any:
 def experiments_run(fake: Fake, call: Call, name: str) -> Any:
     exp = fake.experiments[name]
     models = call.payload.get("models") or ["tabicl-v2"]
-    run = _run(fake, name, len(exp["_runs"]) + 1, models, "queued")
+    run = _run(
+        fake,
+        name,
+        len(exp["_runs"]) + 1,
+        models,
+        "queued",
+        call.payload.get("precision", "fast"),
+    )
     exp["_runs"].append(run)
     return ok({k: v for k, v in run.items() if not k.startswith("_")})
 
@@ -1012,6 +1025,7 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
     held = (payload.get("context") or {}).get("snapshot")
     return ok({
         "model": f"{CATALOG[0]['name']}@{CATALOG[0]['artifact']['digest']}", "task": "classification",
+        "precision": payload.get("precision", "fast"),
         "predictor": predictor, "revision": 1 if predictor else None,
         "environment": call.query.get("env", "production") if predictor else None,
         "context": {"source": "snapshot", "name": None, "version": None,
@@ -1025,12 +1039,15 @@ def _answer(fake: Fake, call: Call, predictor: str | None) -> Any:
 
 
 def predictors_predict(fake: Fake, call: Call, name: str) -> Any:
-    # The environment rides in the query; the payload holds only `as_of`, and
-    # gf-server refuses any other field as the engine does.
+    # The environment rides in the query; the payload holds only `as_of` and
+    # `precision`, and gf-server refuses any other field as the engine does.
     assert set(call.query) <= {"env"}, (
         "a predictor call names its environment in the query"
     )
-    if call.envelope is not None and not call.envelope["payload"].keys() <= {"as_of"}:
+    if call.envelope is not None and not call.envelope["payload"].keys() <= {
+        "as_of",
+        "precision",
+    }:
         raise Refusal(422, "ValidationError", "unknown fields are not supported")
     return _answer(fake, call, name)
 

@@ -158,6 +158,7 @@ paths:
                     result:
                       model: general-forecast/tabicl-v2-classifier@sha256:7a01c2e4b6d8f0a2c4e6f8a0b2d4f6a8c0e2f4a6b8d0f2a4c6e8f0a2b4d6f8a0
                       task: classification
+                      precision: fast
                       context: {source: snapshot, name: null, version: null, digest: sha256:5fb6a4c6f24bd5fb3623f97e3c62186e12e28e5b5fb6a4c6f24bd5fb3623f97e, rows: 1840, as_of: null}
                       revision: 7
                       environment: production
@@ -384,6 +385,7 @@ paths:
                     result:
                       model: general-forecast/tabicl-v2-classifier@sha256:7a01c2e4b6d8f0a2c4e6f8a0b2d4f6a8c0e2f4a6b8d0f2a4c6e8f0a2b4d6f8a0
                       task: classification
+                      precision: fast
                       context: {source: request, name: null, version: null, digest: null, rows: 4, as_of: null}
                       predictions:
                         - {id: 1041, label: 0, probabilities: {"0": 0.83, "1": 0.17}}
@@ -397,6 +399,7 @@ paths:
                     result:
                       model: general-forecast/chronos-2@sha256:0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e8f90
                       task: forecast
+                      precision: fast
                       context: {source: request, name: null, version: null, digest: null, rows: 4, as_of: null}
                       predictions:
                         - {value: 18.2, quantiles: {"0.1": 16.1, "0.5": 18.2, "0.9": 20.4}}
@@ -411,6 +414,7 @@ paths:
                     result:
                       model: general-forecast/tabicl-v2-classifier@sha256:7a01c2e4b6d8f0a2c4e6f8a0b2d4f6a8c0e2f4a6b8d0f2a4c6e8f0a2b4d6f8a0
                       task: classification
+                      precision: fast
                       context: {source: request, name: null, version: null, digest: null, rows: 4, as_of: null}
                       predictions:
                         - {id: 1041, label: 0, probabilities: {"0": 0.83, "1": 0.17}}
@@ -499,6 +503,7 @@ paths:
                     result:
                       model: general-forecast/tabicl-v2-classifier@sha256:7a01c2e4b6d8f0a2c4e6f8a0b2d4f6a8c0e2f4a6b8d0f2a4c6e8f0a2b4d6f8a0
                       task: classification
+                      precision: fast
                       context: {source: snapshot, name: null, version: null, digest: sha256:5fb6a4c6f24bd5fb3623f97e3c62186e12e28e5b5fb6a4c6f24bd5fb3623f97e, rows: 1840, as_of: null}
                       revision: 7
                       environment: production
@@ -1835,6 +1840,7 @@ paths:
                           state: finished
                           stale: false
                           models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                          precision: fast
                           metric: auroc
                           lower_is_better: false
                           held_rows: 6513
@@ -1962,6 +1968,7 @@ paths:
                         state: queued
                         stale: false
                         models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                        precision: fast
                         metric: auroc
                         lower_is_better: false
                         held_rows: 6513
@@ -2099,6 +2106,7 @@ paths:
                         state: finished
                         stale: false
                         models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                        precision: fast
                         metric: auroc
                         lower_is_better: false
                         held_rows: 6513
@@ -2246,6 +2254,7 @@ paths:
                         state: finished
                         stale: true
                         models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                        precision: fast
                         metric: auroc
                         lower_is_better: false
                         held_rows: 6513
@@ -2335,6 +2344,7 @@ paths:
                         state: finished
                         stale: false
                         models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                        precision: fast
                         metric: auroc
                         lower_is_better: false
                         held_rows: 6513
@@ -2438,6 +2448,7 @@ paths:
                       state: queued
                       stale: false
                       models: [general-forecast/kumo-tabular-large-classifier]
+                      precision: fast
                       metric: auroc
                       lower_is_better: false
                       held_rows: 6513
@@ -2494,6 +2505,7 @@ paths:
                       state: finished
                       stale: false
                       models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                      precision: fast
                       metric: auroc
                       lower_is_better: false
                       held_rows: 6513
@@ -2589,6 +2601,7 @@ paths:
                       state: cancelled
                       stale: false
                       models: [general-forecast/tabicl-v2-classifier, general-forecast/kumo-tabular-medium-classifier, general-forecast/mitra-2-classifier]
+                      precision: fast
                       metric: auroc
                       lower_is_better: false
                       held_rows: 6513
@@ -8396,6 +8409,7 @@ components:
           items: {type: string, enum: [label, value, probabilities, quantiles]}
           description: defaults by task; classification label+probabilities, regression value, forecast value+quantiles
         selection: {$ref: "#/components/schemas/Selection"}
+        precision: {$ref: "#/components/schemas/Precision"}
         context:
           oneOf:
             - type: array
@@ -8468,6 +8482,17 @@ components:
           properties:
             result: {$ref: "#/components/schemas/HeldSnapshot"}
 
+    Precision:
+      type: string
+      enum: [fast, exact]
+      default: fast
+      description: |
+        what a call's float32 matrix multiplies run at. `fast` lets them
+        take TensorFloat-32 where the GPU has it; `exact` keeps them float32
+        and is priced higher. A context is fit and encoded apart at each, so
+        an answer at one never reads what the other computed. A result says
+        the precision it ran at.
+
     ManifestRequest:
       allOf:
         - $ref: "#/components/schemas/Envelope"
@@ -8479,10 +8504,10 @@ components:
     Queries:
       type: object
       description: |
-        a predictor's payload: the queries, `as_of` for a live context, and
-        `context` for a predictor whose lock takes its context with each
-        request, which only gf serve serves. The environment is the route's
-        `?env=`.
+        a predictor's payload: the queries, `as_of` for a live context,
+        `precision`, and `context` for a predictor whose lock takes its
+        context with each request, which only gf serve serves. The
+        environment is the route's `?env=`.
       required: [queries]
       additionalProperties: false
       properties:
@@ -8491,6 +8516,7 @@ components:
           items: {$ref: "#/components/schemas/Row"}
           minItems: 1
         as_of: {$ref: "#/components/schemas/AsOfRequest"}
+        precision: {$ref: "#/components/schemas/Precision"}
         context:
           type: array
           items: {$ref: "#/components/schemas/Row"}
@@ -8583,11 +8609,12 @@ components:
 
     Result:
       type: object
-      required: [model, task, context, predictions]
+      required: [model, task, precision, context, predictions]
       additionalProperties: false
       properties:
         model: {$ref: "#/components/schemas/ModelId"}
         task: {$ref: "#/components/schemas/Task"}
+        precision: {$ref: "#/components/schemas/Precision"}
         context: {$ref: "#/components/schemas/ContextInfo"}
         predictor:
           oneOf:
@@ -13434,6 +13461,7 @@ components:
           items:
             $ref: "#/components/schemas/ModelField"
           minItems: 1
+        precision: {$ref: "#/components/schemas/Precision"}
         dry_run: {type: boolean}
 
     ExperimentUpdate:
@@ -13505,7 +13533,7 @@ components:
     ExperimentRun:
       type: object
       description: "a run: its models scored on the held-out rows, best first; it pins the context digest, setup digest and model digests, and is `stale` once the setup moved"
-      required: [experiment, number, state, stale, models, metric, lower_is_better, held_rows, context_rows, repeats, leaderboard, rows, credits, usd, created, started, finished, origin, error, url]
+      required: [experiment, number, state, stale, models, precision, metric, lower_is_better, held_rows, context_rows, repeats, leaderboard, rows, credits, usd, created, started, finished, origin, error, url]
       additionalProperties: false
       properties:
         experiment:
@@ -13519,6 +13547,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ModelId"
+        precision: {$ref: "#/components/schemas/Precision"}
         metric: {type: string}
         lower_is_better: {type: boolean}
         held_rows: {type: integer, minimum: 0}
@@ -13670,6 +13699,7 @@ components:
           items:
             $ref: "#/components/schemas/ModelField"
           minItems: 1
+        precision: {$ref: "#/components/schemas/Precision"}
         dry_run: {type: boolean}
 
     ExperimentRunEstimate:
@@ -14016,6 +14046,7 @@ components:
           type: integer
           minimum: 1
           description: "the context's input columns; a context's cells, its rows by its inputs, place it against the large-context line. Left out, a context is taken to have 32"
+        precision: {$ref: "#/components/schemas/Precision"}
 
     Source:
       type: object

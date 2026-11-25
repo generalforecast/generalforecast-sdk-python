@@ -194,3 +194,21 @@ def test_promote_rollback_logs_and_delete(adult):
     gf.predictors.delete("churn")
     with pytest.raises(gf.NotFound):
         gf.predictors.get("churn")
+
+
+def test_predict_runs_at_the_precision_asked_and_says_it(adult):
+    gf.predictors.create(
+        "adult-income", context="adult", model="tabicl-v2", target="income"
+    )
+    queries = pd.DataFrame({"age": [30, 40]})
+    fast = gf.predictors.predict("adult-income", queries)
+    exact = gf.predictors.predict("adult-income", queries, precision="exact")
+    sent = [
+        c.envelope["payload"]
+        for c in adult.calls_to("POST", r".*/predictors/adult-income/predict")
+    ]
+    # Fast is the service's default, so only exact is named.
+    assert sent == [{}, {"precision": "exact"}]
+    assert (fast.precision, exact.precision) == ("fast", "exact")
+    with pytest.raises(gf.InvalidInput, match="precision is fast or exact"):
+        gf.predictors.predict("adult-income", queries, precision="tf32")  # type: ignore[arg-type]

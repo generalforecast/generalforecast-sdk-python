@@ -109,6 +109,21 @@ def test_run_update_cancel_and_reads(adult):
         gf.experiments.get("adult-income")
 
 
+def test_a_run_and_its_estimate_take_a_precision(adult):
+    exp = gf.experiments.create(
+        context="adult", target="income", models=MODELS, precision="exact"
+    )
+    assert exp.run.precision == "exact"
+    second = gf.experiments.run(exp, models=["kumo-large"])
+    assert second.run.precision == "fast"
+    gf.experiments.estimate(
+        context="adult", target="income", models=MODELS, precision="exact"
+    )
+    created, estimated = adult.calls_to("POST", r".*/experiments")
+    assert created.payload["precision"] == estimated.payload["precision"] == "exact"
+    assert "precision" not in adult.calls_to("POST", r".*/runs")[0].payload
+
+
 def test_wait_times_out_and_a_failed_run_is_not_recoverable(adult):
     adult.polls_until_done = 100
     with pytest.raises(gf.Timeout) as timeout:

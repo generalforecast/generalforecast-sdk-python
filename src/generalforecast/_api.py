@@ -487,6 +487,10 @@ ModelField = ModelId | ModelName
 _decode_ModelField: Decoder = _union(_decode_ModelId, _decode_ModelName)
 
 
+Precision = Literal["fast", "exact"]
+_decode_Precision: Decoder = _literal("fast", "exact")
+
+
 @dataclass(frozen=True, kw_only=True)
 class SnapshotReference(Payload):
     """A context the service holds by its digest."""
@@ -530,6 +534,7 @@ class Manifest(Payload):
         tuple[Literal["label", "value", "probabilities", "quantiles"], ...] | None
     ) = None
     selection: Selection | None = None
+    precision: Precision | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("exclude", "exclude", False, _items(_text)),
@@ -558,6 +563,7 @@ class Manifest(Payload):
             _items(_literal("label", "value", "probabilities", "quantiles")),
         ),
         Field("selection", "selection", False, _record(Selection)),
+        Field("precision", "precision", False, _decode_Precision),
         Field(
             "context",
             "context",
@@ -677,18 +683,20 @@ _decode_AsOfRequest: Decoder = _union(_text, _number)
 class Queries(Payload):
     """The Queries schema.
 
-    a predictor's payload: the queries, `as_of` for a live context, and `context` for a
-    predictor whose lock takes its context with each request, which only gf serve
-    serves. The environment is the route's `?env=`.
+    a predictor's payload: the queries, `as_of` for a live context, `precision`, and
+    `context` for a predictor whose lock takes its context with each request, which
+    only gf serve serves. The environment is the route's `?env=`.
     """
 
     queries: tuple[Row, ...]
     as_of: AsOfRequest | None = None
+    precision: Precision | None = None
     context: tuple[Row, ...] | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("queries", "queries", True, _items(_decode_Row)),
         Field("as_of", "as_of", False, _decode_AsOfRequest),
+        Field("precision", "precision", False, _decode_Precision),
         Field("context", "context", False, _items(_decode_Row)),
     )
 
@@ -784,6 +792,7 @@ class Result(Payload):
 
     model: ModelId
     task: Task
+    precision: Precision
     context: ContextInfo
     predictions: tuple[Prediction, ...]
     predictor: Name | None = None
@@ -796,6 +805,7 @@ class Result(Payload):
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("model", "model", True, _decode_ModelId),
         Field("task", "task", True, _decode_Task),
+        Field("precision", "precision", True, _decode_Precision),
         Field("context", "context", True, _record(ContextInfo)),
         Field("predictor", "predictor", False, _union(_decode_Name, _null)),
         Field("revision", "revision", False, _union(_integer, _null)),
@@ -7447,6 +7457,7 @@ class ExperimentCreate(Payload):
     holdout: Holdout | None = None
     sql: str | None = None
     models: tuple[ModelField, ...] | None = None
+    precision: Precision | None = None
     dry_run: bool | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
@@ -7464,6 +7475,7 @@ class ExperimentCreate(Payload):
         Field("holdout", "holdout", False, _record(Holdout)),
         Field("sql", "sql", False, _text),
         Field("models", "models", False, _items(_decode_ModelField)),
+        Field("precision", "precision", False, _decode_Precision),
         Field("dry_run", "dry_run", False, _boolean),
     )
 
@@ -7550,6 +7562,7 @@ class ExperimentRun(Payload):
     state: Literal["queued", "running", "finished", "failed", "cancelled"]
     stale: bool
     models: tuple[ModelId, ...]
+    precision: Precision
     metric: str
     lower_is_better: bool
     held_rows: int
@@ -7577,6 +7590,7 @@ class ExperimentRun(Payload):
         ),
         Field("stale", "stale", True, _boolean),
         Field("models", "models", True, _items(_decode_ModelId)),
+        Field("precision", "precision", True, _decode_Precision),
         Field("metric", "metric", True, _text),
         Field("lower_is_better", "lower_is_better", True, _boolean),
         Field("held_rows", "held_rows", True, _integer),
@@ -7714,10 +7728,12 @@ class ExperimentRunCreate(Payload):
     """The ExperimentRunCreate schema."""
 
     models: tuple[ModelField, ...] | None = None
+    precision: Precision | None = None
     dry_run: bool | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("models", "models", False, _items(_decode_ModelField)),
+        Field("precision", "precision", False, _decode_Precision),
         Field("dry_run", "dry_run", False, _boolean),
     )
 
@@ -7957,6 +7973,7 @@ class EstimateQuery(Payload):
     queries: int
     task: Task | None = None
     inputs: int | None = None
+    precision: Precision | None = None
 
     FIELDS: ClassVar[tuple[Field, ...]] = (
         Field("model", "model", True, _decode_ModelField),
@@ -7964,6 +7981,7 @@ class EstimateQuery(Payload):
         Field("context_rows", "context_rows", True, _integer),
         Field("queries", "queries", True, _integer),
         Field("inputs", "inputs", False, _integer),
+        Field("precision", "precision", False, _decode_Precision),
     )
 
 
