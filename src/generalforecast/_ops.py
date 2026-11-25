@@ -819,7 +819,7 @@ def setup(values: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]
 
 def _precision(value: Any) -> dict[str, str]:
     """A precision as a payload carries it: nothing for `fast`, the service's default."""
-    if value not in ("fast", "exact"):
+    if value not in ("fast", "exact", "fast_half"):
         raise InvalidInput(
             f"precision is fast or exact, not {value!r}",
             hint='"fast", the default, takes TF32 matrix multiplies; "exact" keeps them float32',
