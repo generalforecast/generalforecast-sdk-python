@@ -30,7 +30,14 @@ import pyarrow as pa
 from generalforecast import _data, _ops, _render
 from generalforecast.errors import InvalidInput
 from generalforecast.term import duration, plural
-from generalforecast.types import Context, Estimate, LargeContext, Predictions, money
+from generalforecast.types import (
+    Context,
+    Estimate,
+    LargeContext,
+    Precision,
+    Predictions,
+    money,
+)
 
 __all__ = ["Classifier", "Forecaster", "NotFittedError", "Regressor"]
 
@@ -57,6 +64,7 @@ class _Base:
     """Parameters, the client, the uploaded context and the usage so far."""
 
     model: str
+    precision: Precision
     verbose: bool
     client: Any
     _task: str
@@ -158,7 +166,12 @@ class _Base:
         reference = Context(name="fit", digest=self.context_, rows=self.context_rows_)
         started = monotonic()
         result = client.models.predict(
-            self.model, context=reference, queries=queries, target=target, **fields
+            self.model,
+            context=reference,
+            queries=queries,
+            target=target,
+            precision=self.precision,
+            **fields,
         )
         if result.table.num_rows != queries.num_rows:
             raise InvalidInput("the service answered a different number of rows")
@@ -185,6 +198,7 @@ class _Base:
                 self.context_rows_,
                 queries,
                 self.context_inputs_,
+                self.precision,
             )
         )
 
@@ -259,6 +273,7 @@ class Classifier(_Tabular):
         model: str = "tabicl-v2",
         *,
         inputs: Sequence[str] | None = None,
+        precision: Precision = "fast",
         verbose: bool = True,
         client: Any = None,
     ) -> None:
@@ -267,11 +282,14 @@ class Classifier(_Tabular):
         Args:
             model: A short name such as `tabicl-v2`, or a full id.
             inputs: The columns to read; None reads every column of `X`.
+            precision: What its matrix multiplies run at: `fast` (TF32) or
+                `exact` (float32), which costs more.
             verbose: Print one line to stderr for each call to the service.
             client: The `gf.Client` to call; None uses the module's.
         """
         self.model = model
         self.inputs = inputs
+        self.precision = precision
         self.verbose = verbose
         self.client = client
 
@@ -328,6 +346,7 @@ class Regressor(_Tabular):
         *,
         quantiles: Sequence[float] | None = None,
         inputs: Sequence[str] | None = None,
+        precision: Precision = "fast",
         verbose: bool = True,
         client: Any = None,
     ) -> None:
@@ -337,12 +356,15 @@ class Regressor(_Tabular):
             model: A short name such as `tabicl-v2`, or a full id.
             quantiles: The levels `predict_quantiles` gives by default.
             inputs: The columns to read; None reads every column of `X`.
+            precision: What its matrix multiplies run at: `fast` (TF32) or
+                `exact` (float32), which costs more.
             verbose: Print one line to stderr for each call to the service.
             client: The `gf.Client` to call; None uses the module's.
         """
         self.model = model
         self.quantiles = quantiles
         self.inputs = inputs
+        self.precision = precision
         self.verbose = verbose
         self.client = client
 
@@ -408,6 +430,7 @@ class Forecaster(_Base):
         horizon: int,
         frequency: str | None = None,
         quantiles: Sequence[float] = (0.1, 0.5, 0.9),
+        precision: Precision = "fast",
         verbose: bool = True,
         client: Any = None,
     ) -> None:
@@ -421,6 +444,8 @@ class Forecaster(_Base):
             horizon: How many steps to forecast.
             frequency: The step, such as `1d`; None infers it from the history.
             quantiles: The levels each forecast gives.
+            precision: What its matrix multiplies run at: `fast` (TF32) or
+                `exact` (float32), which costs more.
             verbose: Print one line to stderr for each call to the service.
             client: The `gf.Client` to call; None uses the module's.
         """
@@ -431,6 +456,7 @@ class Forecaster(_Base):
         self.horizon = horizon
         self.frequency = frequency
         self.quantiles = quantiles
+        self.precision = precision
         self.verbose = verbose
         self.client = client
 

@@ -817,19 +817,32 @@ def setup(values: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]
     return out
 
 
+def _precision(value: Any) -> dict[str, str]:
+    """A precision as a payload carries it: nothing for `fast`, the service's default."""
+    if value not in ("fast", "exact", "fast_half"):
+        raise InvalidInput(
+            f"precision is fast or exact, not {value!r}",
+            hint='"fast", the default, takes TF32 matrix multiplies; "exact" keeps them float32',
+            param="precision",
+        )
+    return {} if value == "fast" else {"precision": value}
+
+
 def experiment_create(
     values: Mapping[str, Any],
     models: Any,
     wait: bool,
     timeout: float | None,
     poll: float | None = None,
+    precision: str = "fast",
 ) -> Op:
-    """Creates an experiment and starts run 1."""
+    """Creates an experiment and starts run 1 at `precision`."""
     if values.get("name") is not None:
         _checked_name(values["name"], "experiment")
     payload = setup(values)
     if models is not None:
         payload["models"] = _names(models, "models")
+    payload |= _precision(precision)
     reply = yield _http.experiments_create(payload)
     found = load(Experiment, reply.result)
     yield Reached(found)
@@ -842,11 +855,14 @@ def experiment_create(
     )
 
 
-def experiment_estimate(values: Mapping[str, Any], models: Any) -> Op:
-    """Prices an experiment's run 1 without starting it."""
+def experiment_estimate(
+    values: Mapping[str, Any], models: Any, precision: str = "fast"
+) -> Op:
+    """Prices an experiment's run 1 at `precision` without starting it."""
     payload = setup(values)
     if models is not None:
         payload["models"] = _names(models, "models")
+    payload |= _precision(precision)
     payload["dry_run"] = True
     reply = yield _http.experiments_create(payload)
     result = reply.result or {}
@@ -861,10 +877,11 @@ def experiment_run(
     wait: bool,
     timeout: float | None,
     poll: float | None = None,
+    precision: str = "fast",
 ) -> Op:
-    """Starts another run of an experiment."""
+    """Starts another run of an experiment at `precision`."""
     name = name_of(experiment, "experiment")
-    payload: dict[str, Any] = {}
+    payload: dict[str, Any] = _precision(precision)
     if models is not None:
         payload["models"] = _names(models, "models")
     reply = yield _http.experiments_run(name, payload)
@@ -1265,6 +1282,7 @@ def predictions_of(reply: _http.Reply) -> Predictions:
         context=load(ContextUse, context) if isinstance(context, Mapping) else None,
         notes=tuple(str(n) for n in result.get("notes") or ()),
         calls=int(used("calls", 0)),
+        precision=result.get("precision") or "fast",
     )
 
 
@@ -1319,10 +1337,12 @@ def _scored(
     return combined(answers)
 
 
-def predictor_predict(predictor: Any, queries: Any, *, env: str, as_of: Any) -> Op:
-    """Scores queries with a predictor, in parts by bytes."""
+def predictor_predict(
+    predictor: Any, queries: Any, *, env: str, as_of: Any, precision: str = "fast"
+) -> Op:
+    """Scores queries with a predictor at `precision`, in parts by bytes."""
     name = name_of(predictor, "predictor")
-    payload: dict[str, Any] = {}
+    payload: dict[str, Any] = _precision(precision)
     if as_of is not None:
         payload["as_of"] = (
             as_of.isoformat() if isinstance(as_of, datetime) else str(as_of)
@@ -1416,8 +1436,9 @@ def model_predict(
     target: str,
     task: str | None,
     fields: Mapping[str, Any],
+    precision: str = "fast",
 ) -> Op:
-    """Scores queries with a model, its context sent once by digest."""
+    """Scores queries with a model at `precision`, its context sent once by digest."""
     for key in fields:
         if key not in PREDICTOR_FIELDS or key in ("context", "model", "target", "task"):
             raise InvalidInput(
@@ -1442,6 +1463,7 @@ def model_predict(
         "target": target,
         "context": {"snapshot": digest},
         **spec_json(fields, partial=False),
+        **_precision(precision),
     }
     series = tuple(fields.get("series") or ())
     return (
@@ -1659,8 +1681,9 @@ def predict_estimate(
     context_rows: int,
     queries: int,
     inputs: int | None = None,
+    precision: str = "fast",
 ) -> Op:
-    """Prices a prediction without making it (3.4), the large-context line included.
+    """Prices a prediction at `precision` without making it (3.4), the large-context line included.
 
     `inputs` is the context's input columns, which with its rows place it
     against the large-context line; left out, the service takes 32.
@@ -1669,6 +1692,7 @@ def predict_estimate(
         "model": model,
         "context_rows": context_rows,
         "queries": queries,
+        **_precision(precision),
     }
     if inputs is not None:
         payload["inputs"] = inputs

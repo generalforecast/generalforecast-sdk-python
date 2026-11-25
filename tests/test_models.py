@@ -257,3 +257,11 @@ def test_json_parts_count_values_as_well_as_bytes(monkeypatch):
     monkeypatch.undo()
     parts = _ops.json_parts(list(range(250)), 1000, 100)
     assert [len(p) for p in parts] == [100, 100, 50]
+
+
+def test_predict_names_exact_precision(fake):
+    context, queries = frame(50), frame(5).drop(columns="y")
+    out = gf.models.predict(
+        "tabicl-v2", context=context, queries=queries, target="y", precision="exact"
+    )
+    assert fake.last_prediction["precision"] == "exact" and out.precision == "exact"

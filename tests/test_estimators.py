@@ -86,6 +86,16 @@ def test_estimate_prices_a_predict_and_names_the_large_context_line(fake):
     assert len(fake.calls_to("POST", r".*/predict")) == 0
 
 
+def test_an_exact_estimator_predicts_and_prices_at_exact(fake):
+    clf = gf.Classifier(precision="exact", verbose=False).fit(adult(), income())
+    assert clf.get_params()["precision"] == "exact"
+    clf.estimate(adult(10))
+    clf.predict(adult(10))
+    assert fake.calls_to("POST", r".*/estimate")[-1].payload["precision"] == "exact"
+    assert fake.last_prediction["precision"] == "exact"
+    assert clf.last_usage_.rows == 10
+
+
 def test_regressor_and_forecaster(fake):
     reg = gf.Regressor(quantiles=[0.1, 0.9], verbose=False).fit(
         adult(), np.arange(120.0)

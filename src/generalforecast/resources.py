@@ -33,6 +33,7 @@ from generalforecast.types import (
     Logs,
     Model,
     NewKey,
+    Precision,
     Predictions,
     Predictor,
     PredictorInfo,
@@ -244,6 +245,7 @@ class Experiments(_Sync):
         holdout: str | Holdout | None = None,
         sql: str | None = None,
         models: Sequence[str] | None = None,
+        precision: Precision = "fast",
         wait: bool = True,
         timeout: float | None = None,
         poll: float | None = None,
@@ -253,6 +255,8 @@ class Experiments(_Sync):
         `name` defaults to `<context>-<target>`; `task` is inferred from the
         target; `models=None` runs the recommended set. `holdout` left out is
         the last 20% by `time` when one is declared, else a random 20%.
+        `precision` is what the models' matrix multiplies run at: `fast`
+        (TF32) or `exact` (float32), which costs more.
 
         Raises:
             Error: Not recoverable, when the run fails.
@@ -262,7 +266,9 @@ class Experiments(_Sync):
             name=name, title=title, context=context, target=target, task=task, id=id,
             time=time, inputs=inputs, exclude=exclude, types=types, holdout=holdout, sql=sql,
         )  # fmt: skip
-        return self._run(_ops.experiment_create(values, models, wait, timeout, poll))
+        return self._run(
+            _ops.experiment_create(values, models, wait, timeout, poll, precision)
+        )
 
     def estimate(
         self,
@@ -280,25 +286,29 @@ class Experiments(_Sync):
         holdout: str | Holdout | None = None,
         sql: str | None = None,
         models: Sequence[str] | None = None,
+        precision: Precision = "fast",
     ) -> Estimate:
         """What `create` with the same arguments would cost, without starting it."""
         values = _setup(
             name=name, title=title, context=context, target=target, task=task, id=id,
             time=time, inputs=inputs, exclude=exclude, types=types, holdout=holdout, sql=sql,
         )  # fmt: skip
-        return self._run(_ops.experiment_estimate(values, models))
+        return self._run(_ops.experiment_estimate(values, models, precision))
 
     def run(
         self,
         experiment: str | Experiment,
         *,
         models: Sequence[str] | None = None,
+        precision: Precision = "fast",
         wait: bool = True,
         timeout: float | None = None,
         poll: float | None = None,
     ) -> Experiment:
-        """Starts another run with the same setup."""
-        return self._run(_ops.experiment_run(experiment, models, wait, timeout, poll))
+        """Starts another run with the same setup, at `precision` as `create` takes it."""
+        return self._run(
+            _ops.experiment_run(experiment, models, wait, timeout, poll, precision)
+        )
 
     def update(
         self,
@@ -459,10 +469,13 @@ class Predictors(_Sync):
         *,
         env: str = "production",
         as_of: datetime | str | None = None,
+        precision: Precision = "fast",
     ) -> Predictions:
-        """Scores queries; they go as Arrow, in parts by bytes."""
+        """Scores queries at `precision`, `fast` (TF32) or `exact` (float32, costs more); they go as Arrow, in parts by bytes."""
         return self._run(
-            _ops.predictor_predict(predictor, queries, env=env, as_of=as_of)
+            _ops.predictor_predict(
+                predictor, queries, env=env, as_of=as_of, precision=precision
+            )
         )
 
     def promote(
@@ -618,9 +631,10 @@ class Models(_Sync):
         queries: DataLike,
         target: str,
         task: Task | None = None,
+        precision: Precision = "fast",
         **predictor_fields: Any,
     ) -> Predictions:
-        """Scores queries with a model and a context sent once by digest.
+        """Scores queries with a model and a context sent once by digest, at `precision` as `predictors.predict` takes it.
 
         The context goes up once as an Arrow snapshot named by its digest
         (nothing is sent again for the same rows); the queries go as Arrow
@@ -638,6 +652,7 @@ class Models(_Sync):
                 target=target,
                 task=task,
                 fields=predictor_fields,
+                precision=precision,
             )
         )
 
@@ -988,6 +1003,7 @@ class AsyncExperiments(_Async):
         holdout: str | Holdout | None = None,
         sql: str | None = None,
         models: Sequence[str] | None = None,
+        precision: Precision = "fast",
         wait: bool = True,
         timeout: float | None = None,
         poll: float | None = None,
@@ -998,7 +1014,7 @@ class AsyncExperiments(_Async):
             time=time, inputs=inputs, exclude=exclude, types=types, holdout=holdout, sql=sql,
         )  # fmt: skip
         return await self._run(
-            _ops.experiment_create(values, models, wait, timeout, poll)
+            _ops.experiment_create(values, models, wait, timeout, poll, precision)
         )
 
     async def estimate(
@@ -1017,26 +1033,28 @@ class AsyncExperiments(_Async):
         holdout: str | Holdout | None = None,
         sql: str | None = None,
         models: Sequence[str] | None = None,
+        precision: Precision = "fast",
     ) -> Estimate:
         """See `Experiments.estimate`."""
         values = _setup(
             name=name, title=title, context=context, target=target, task=task, id=id,
             time=time, inputs=inputs, exclude=exclude, types=types, holdout=holdout, sql=sql,
         )  # fmt: skip
-        return await self._run(_ops.experiment_estimate(values, models))
+        return await self._run(_ops.experiment_estimate(values, models, precision))
 
     async def run(
         self,
         experiment: str | Experiment,
         *,
         models: Sequence[str] | None = None,
+        precision: Precision = "fast",
         wait: bool = True,
         timeout: float | None = None,
         poll: float | None = None,
     ) -> Experiment:
         """See `Experiments.run`."""
         return await self._run(
-            _ops.experiment_run(experiment, models, wait, timeout, poll)
+            _ops.experiment_run(experiment, models, wait, timeout, poll, precision)
         )
 
     async def update(
@@ -1188,10 +1206,13 @@ class AsyncPredictors(_Async):
         *,
         env: str = "production",
         as_of: datetime | str | None = None,
+        precision: Precision = "fast",
     ) -> Predictions:
         """See `Predictors.predict`."""
         return await self._run(
-            _ops.predictor_predict(predictor, queries, env=env, as_of=as_of)
+            _ops.predictor_predict(
+                predictor, queries, env=env, as_of=as_of, precision=precision
+            )
         )
 
     async def promote(
@@ -1344,6 +1365,7 @@ class AsyncModels(_Async):
         queries: DataLike,
         target: str,
         task: Task | None = None,
+        precision: Precision = "fast",
         **predictor_fields: Any,
     ) -> Predictions:
         """See `Models.predict`."""
@@ -1356,6 +1378,7 @@ class AsyncModels(_Async):
                 target=target,
                 task=task,
                 fields=predictor_fields,
+                precision=precision,
             )
         )
 

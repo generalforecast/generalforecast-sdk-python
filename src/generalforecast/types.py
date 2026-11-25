@@ -56,6 +56,7 @@ __all__ = [
     "Model",
     "NewKey",
     "Origin",
+    "Precision",
     "Predictions",
     "Predictor",
     "PredictorInfo",
@@ -85,6 +86,11 @@ __all__ = [
 ]
 
 Task = Literal["classification", "regression", "forecast"]
+# What a call's float32 matrix multiplies run at: `fast` lets them take
+# TensorFloat-32 on the GPU, `exact` keeps them float32 and costs more.
+# `fast_half` is experimental, for measuring alone: fast with half-precision
+# attention, billed as fast, which becomes `fast` or goes once measured.
+Precision = Literal["fast", "exact", "fast_half"]
 ColumnType = Literal["number", "category", "text", "boolean", "date", "timestamp"]
 SourceKind = Literal["bigquery", "gcs", "snowflake", "databricks", "s3", "postgres"]
 TASKS: tuple[str, ...] = typing.get_args(Task)
@@ -460,6 +466,7 @@ class Run:
     state: Literal["queued", "running", "finished", "failed", "cancelled"] = "queued"
     stale: bool = False
     models: tuple[str, ...] = ()
+    precision: Precision = "fast"
     metric: str = ""
     lower_is_better: bool = False
     held_rows: int = 0
@@ -1016,7 +1023,7 @@ class Predictions:
     `gpu_seconds` is the large-context meter, set only past its line;
     `timing` keeps queueing and cold start apart from compute. `calls` is
     the model calls the engine made, its `timing.calls`, which the usage
-    copies.
+    copies. `precision` is what the call ran at, which it was billed at.
     """
 
     predictor: str | None
@@ -1034,6 +1041,7 @@ class Predictions:
     context: ContextUse | None = None
     notes: tuple[str, ...] = ()
     calls: int = 0
+    precision: Precision = "fast"
 
     def to_pandas(self) -> pandas.DataFrame:
         """The predictions as a DataFrame."""

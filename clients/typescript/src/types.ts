@@ -154,6 +154,16 @@ export interface Selection {
  */
 export type ModelField = ModelId | ModelName;
 
+/**
+ * what a call's float32 matrix multiplies run at. `fast` lets them take TensorFloat-32
+ * where the GPU has it; `exact` keeps them float32 and is priced higher. `fast_half` is
+ * experimental, priced as `fast` and kept for measuring alone: fast's matrix multiplies
+ * with half-precision attention (float16 cuDNN on a GPU). It becomes `fast` or goes
+ * once measured. A context is fit and encoded apart at each, so an answer at one never
+ * reads what another computed. A result says the precision it ran at.
+ */
+export type Precision = "fast" | "exact" | "fast_half";
+
 /** a context the service holds by its digest */
 export interface SnapshotReference {
   snapshot: Digest;
@@ -184,6 +194,7 @@ export interface Manifest {
   quantiles?: number[];
   outputs?: Array<"label" | "value" | "probabilities" | "quantiles">;
   selection?: Selection;
+  precision?: Precision;
   context: Row[] | SnapshotReference;
   queries: Row[];
 }
@@ -236,13 +247,14 @@ export interface ManifestRequest extends Envelope {
 export type AsOfRequest = string | number;
 
 /**
- * a predictor's payload: the queries, `as_of` for a live context, and `context` for a
- * predictor whose lock takes its context with each request, which only gf serve serves.
- * The environment is the route's `?env=`.
+ * a predictor's payload: the queries, `as_of` for a live context, `precision`, and
+ * `context` for a predictor whose lock takes its context with each request, which only
+ * gf serve serves. The environment is the route's `?env=`.
  */
 export interface Queries {
   queries: Row[];
   as_of?: AsOfRequest;
+  precision?: Precision;
   context?: Row[];
 }
 
@@ -293,6 +305,7 @@ export interface Prediction {
 export interface Result {
   model: ModelId;
   task: Task;
+  precision: Precision;
   context: ContextInfo;
   predictor?: Name | null;
   revision?: number | null;
@@ -2811,6 +2824,7 @@ export interface ExperimentCreate {
   holdout?: Holdout;
   sql?: string;
   models?: ModelField[];
+  precision?: Precision;
   dry_run?: boolean;
 }
 
@@ -2854,6 +2868,7 @@ export interface ExperimentRun {
   state: "queued" | "running" | "finished" | "failed" | "cancelled";
   stale: boolean;
   models: ModelId[];
+  precision: Precision;
   metric: string;
   lower_is_better: boolean;
   held_rows: number;
@@ -2925,6 +2940,7 @@ export interface ExperimentList {
 
 export interface ExperimentRunCreate {
   models?: ModelField[];
+  precision?: Precision;
   dry_run?: boolean;
 }
 
@@ -3030,6 +3046,7 @@ export interface EstimateQuery {
   context_rows: number;
   queries: number;
   inputs?: number;
+  precision?: Precision;
 }
 
 export interface SourceCreate {
